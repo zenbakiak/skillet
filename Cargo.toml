@@ -1,0 +1,20 @@
+[package]
+name = "skillet"
+version = "0.0.1"
+edition = "2021"
+description = "Skillet: micro expression language (phase 1: arithmetic)"
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "skillet"
+path = "src/lib.rs"
+
+[dependencies]
+chrono = { version = "0.4", features = ["serde"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+lazy_static = "1.4"
+rquickjs = "0.6"
+
+[dev-dependencies]
+tempfile = "3.0"
