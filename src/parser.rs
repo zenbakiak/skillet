@@ -218,7 +218,7 @@ impl<'a> Parser<'a> {
             Token::String(s) => { self.bump()?; Ok(Expr::StringLit(s)) }
             Token::Null => { self.bump()?; Ok(Expr::Null) }
             Token::Colon => {
-                // Variable: ':' identifier
+                // Variable: ':' identifier (let postfix handle property chains and method calls)
                 self.bump()?; // consume ':'
                 match self.lookahead.clone() {
                     Token::Identifier(name) => {
@@ -316,7 +316,7 @@ impl<'a> Parser<'a> {
                     self.bump()?; // '.'
                     let name = match self.lookahead.clone() {
                         Token::Identifier(s) => { self.bump()?; s }
-                        _ => return self.err_here("Expected method name after '.'"),
+                        _ => return self.err_here("Expected property or method name after '.'"),
                     };
                     // Predicate style: name?
                     if let Token::QMark = self.lookahead {
@@ -324,7 +324,7 @@ impl<'a> Parser<'a> {
                         node = Expr::MethodCall { target: Box::new(node), name: name.to_lowercase(), args: vec![], predicate: true };
                         continue;
                     }
-                    // Otherwise expect '(' args ')' for methods
+                    // Check for method call: '(' args ')'
                     match self.lookahead {
                         Token::LParen => {
                             self.bump()?; // '('
@@ -340,14 +340,17 @@ impl<'a> Parser<'a> {
                                         Token::RParen => break,
                                         _ => return self.err_here("Expected ',' or ')' in method args"),
                                     }
+                                }
                             }
+                            self.bump()?; // ')'
+                            node = Expr::MethodCall { target: Box::new(node), name: name.to_lowercase(), args, predicate: false };
                         }
-                        self.bump()?; // ')'
-                        node = Expr::MethodCall { target: Box::new(node), name: name.to_lowercase(), args, predicate: false };
+                        _ => {
+                            // No parentheses, treat as property access
+                            node = Expr::PropertyAccess { target: Box::new(node), property: name };
+                        }
                     }
-                    _ => return self.err_here("Expected '(' or '?' after method name"),
                 }
-            }
             Token::LBracket => {
                 // Indexing or slicing
                 self.bump()?; // '['
