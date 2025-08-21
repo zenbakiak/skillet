@@ -112,6 +112,10 @@ Run the test suite:
 cargo test
 ```
 
+## Author
+
+[@zenbakiak](/zenbakiak)
+
 ## License
 
 MIT OR Apache-2.0
