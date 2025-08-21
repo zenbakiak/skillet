@@ -1,8 +1,13 @@
-use skillet::{evaluate_with_custom, Value, JSPluginLoader};
+use skillet::{evaluate_with_custom, Value, JSPluginLoader, register_function, SqliteQueryFunction};
 use std::collections::HashMap;
+use std::time::Instant;
+use serde_json::json;
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    
+    // Register built-in Rust functions
+    let _ = register_function(Box::new(SqliteQueryFunction));
     
     // Auto-load JavaScript functions from hooks directory
     let hooks_dir = std::env::var("SKILLET_HOOKS_DIR").unwrap_or_else(|_| "hooks".to_string());
@@ -20,68 +25,129 @@ fn main() {
     }
     
     if args.is_empty() {
-        eprintln!("Usage: sk \"=SUM(:sales, 1000)\" [var=value ...] OR sk \"=SUM(:sales, 1000)\" --json '{{\"sales\": 5000}}'");
+        eprintln!("Usage: sk \"expression\" [options] [var=value ...]");
+        eprintln!("       sk \"expression\" --json '{{\"var\": \"value\"}}'");
+        eprintln!("");
+        eprintln!("Options:");
+        eprintln!("  --output-json    Output result in JSON format with type and timing");
+        eprintln!("  --json JSON      Use JSON string for variable values");
+        eprintln!("");
         eprintln!("Examples:");
-        eprintln!("  # Key-value variables:");
+        eprintln!("  # Basic usage:");
         eprintln!("  sk \"=2 + 3 * 4\"");
+        eprintln!("  sk \"=2 + 3 * 4\" --output-json");
+        eprintln!("");
+        eprintln!("  # Key-value variables:");
         eprintln!("  sk \"=SUM(:sales, 1000)\" sales=5000");
-        eprintln!("  sk \"=:name.upper()\" name=\"hello world\"");
+        eprintln!("  sk \"=:name.upper()\" name=\"hello world\" --output-json");
         eprintln!("  sk \"=:price * :quantity\" price=19.99 quantity=3");
         eprintln!("");
         eprintln!("  # JSON variables:");
         eprintln!("  sk \"=SUM(:sales, :bonus)\" --json '{{\"sales\": 5000, \"bonus\": 1000}}'");
-        eprintln!("  sk \"=:user.name.upper()\" --json '{{\"user\": {{\"name\": \"alice\"}}}}'");
+        eprintln!("  sk \"=:user.name.upper()\" --json '{{\"user\": {{\"name\": \"alice\"}}}}' --output-json");
         eprintln!("  sk \"=:numbers.length()\" --json '{{\"numbers\": [1, 2, 3, 4, 5]}}'");
         std::process::exit(1);
     }
 
-    // Check if we're using JSON mode
-    if args.len() >= 3 && args[1] == "--json" {
-        let expr = &args[0];
-        let json_str = &args[2];
-        
-        let result = skillet::evaluate_with_json_custom(expr, json_str);
-        match result {
-            Ok(val) => println!("{:?}", val),
-            Err(e) => {
-                eprintln!("Error: {}", e);
-                std::process::exit(2);
-            }
-        }
-        return;
-    }
-
-    // Original key-value mode
-    let expr = &args[0];
-    
-    // Parse variable assignments from remaining arguments
+    // Parse arguments and flags
+    let mut expr = "";
+    let mut json_input = None;
+    let mut output_json = false;
     let mut vars = HashMap::new();
-    for arg in &args[1..] {
-        if arg == "--json" {
-            eprintln!("Error: --json flag requires expression and JSON string");
-            eprintln!("Usage: sk \"expression\" --json '{{\"var\": \"value\"}}'");
-            std::process::exit(1);
-        }
+    let mut i = 0;
+    
+    while i < args.len() {
+        let arg = &args[i];
         
-        if let Some((name, value_str)) = arg.split_once('=') {
+        if i == 0 {
+            // First argument is always the expression
+            expr = arg;
+        } else if arg == "--json" {
+            // --json flag requires a JSON string argument
+            if i + 1 >= args.len() {
+                eprintln!("Error: --json flag requires a JSON string argument");
+                eprintln!("Usage: sk \"expression\" --json '{{\"var\": \"value\"}}'");
+                std::process::exit(1);
+            }
+            json_input = Some(args[i + 1].clone());
+            i += 1; // Skip the JSON string argument
+        } else if arg == "--output-json" {
+            output_json = true;
+        } else if let Some((name, value_str)) = arg.split_once('=') {
+            // Variable assignment
             let value = parse_value(value_str);
             vars.insert(name.to_string(), value);
         } else {
             eprintln!("Invalid variable assignment: '{}'. Use format: var=value", arg);
             std::process::exit(1);
         }
+        
+        i += 1;
     }
-
-    // Always use evaluate_with_custom to properly handle variables and custom functions
-    let result = evaluate_with_custom(expr, &vars);
+    
+    // Measure execution time
+    let start_time = Instant::now();
+    
+    let result = if let Some(json_str) = json_input {
+        skillet::evaluate_with_json_custom(expr, &json_str)
+    } else {
+        evaluate_with_custom(expr, &vars)
+    };
+    
+    let execution_time = start_time.elapsed();
+    let execution_time_ms = execution_time.as_secs_f64() * 1000.0;
 
     match result {
-        Ok(val) => println!("{:?}", val),
+        Ok(val) => {
+            if output_json {
+                println!("{}", format_json_output(&val, execution_time_ms));
+            } else {
+                println!("{:?}", val);
+            }
+        },
         Err(e) => {
             eprintln!("Error: {}", e);
             std::process::exit(2);
         }
     }
+}
+
+fn format_json_output(value: &Value, execution_time_ms: f64) -> String {
+    let (result_value, type_name) = match value {
+        Value::Number(n) => (json!(n), "Number"),
+        Value::String(s) => (json!(s), "String"),
+        Value::Boolean(b) => (json!(b), "Boolean"),
+        Value::Currency(c) => (json!(c), "Currency"),
+        Value::DateTime(dt) => (json!(dt), "DateTime"),
+        Value::Array(arr) => {
+            let json_arr: Vec<serde_json::Value> = arr.iter().map(|v| match v {
+                Value::Number(n) => json!(n),
+                Value::String(s) => json!(s),
+                Value::Boolean(b) => json!(b),
+                Value::Currency(c) => json!(c),
+                Value::DateTime(dt) => json!(dt),
+                Value::Null => json!(null),
+                Value::Array(_) => json!(format!("{:?}", v)), // Nested arrays as debug string for now
+                Value::Json(s) => serde_json::from_str(s).unwrap_or_else(|_| json!(s)),
+            }).collect();
+            (json!(json_arr), "Array")
+        },
+        Value::Null => (json!(null), "Null"),
+        Value::Json(s) => {
+            match serde_json::from_str(s) {
+                Ok(parsed) => (parsed, "Json"),
+                Err(_) => (json!(s), "Json")
+            }
+        }
+    };
+    
+    let output = json!({
+        "result": result_value,
+        "type": type_name,
+        "execution_time": format!("{:.2} ms", execution_time_ms)
+    });
+    
+    serde_json::to_string_pretty(&output).unwrap_or_else(|_| "{}".to_string())
 }
 
 fn parse_value(s: &str) -> Value {

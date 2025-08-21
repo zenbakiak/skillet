@@ -8,7 +8,7 @@ pub mod runtime;
 pub mod types;
 
 pub use ast::Expr;
-pub use custom::{CustomFunction, FunctionRegistry};
+pub use custom::{CustomFunction, FunctionRegistry, SqliteQueryFunction};
 pub use error::Error;
 pub use js_plugin::{JavaScriptFunction, JSPluginLoader};
 pub use types::Value;
