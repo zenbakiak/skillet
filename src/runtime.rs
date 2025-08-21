@@ -206,6 +206,7 @@ pub fn eval(expr: &Expr) -> Result<Value, Error> {
             exec_method(name, *predicate, &recv, args, None)
         }
         Expr::Variable(_) => Err(Error::new("Use eval_with_vars for variables", None)),
+        Expr::PropertyAccess { .. } => Err(Error::new("Use eval_with_vars for property access", None)),
         Expr::Spread(_) => Err(Error::new("Spread not allowed here", None)),
     }
 }
@@ -292,6 +293,21 @@ pub fn eval_with_vars(expr: &Expr, vars: &HashMap<String, Value>) -> Result<Valu
             .get(name)
             .cloned()
             .ok_or_else(|| Error::new(format!("Missing variable: :{}", name), None)),
+        Expr::PropertyAccess { target, property } => {
+            let target_value = eval_with_vars(target, vars)?;
+            match target_value {
+                Value::Json(json_str) => {
+                    let parsed: serde_json::Value = serde_json::from_str(&json_str)
+                        .map_err(|e| Error::new(format!("Invalid JSON: {}", e), None))?;
+                    if let Some(prop_value) = parsed.get(property) {
+                        crate::json_to_value(prop_value.clone())
+                    } else {
+                        Err(Error::new(format!("Property '{}' not found", property), None))
+                    }
+                }
+                _ => Err(Error::new(format!("Property access only supported on JSON objects, got: {:?}", target_value), None)),
+            }
+        }
         Expr::FunctionCall { name, args } => {
             if name == "__TERNARY__" {
                 if args.len() != 3 { return Err(Error::new("Ternary expects 3 args", None)); }
@@ -488,6 +504,21 @@ pub fn eval_with_vars_and_custom(expr: &Expr, vars: &HashMap<String, Value>, cus
         }
         Expr::Variable(name) => {
             vars.get(name).cloned().ok_or_else(|| Error::new(format!("Undefined variable: {}", name), None))
+        }
+        Expr::PropertyAccess { target, property } => {
+            let target_value = eval_with_vars_and_custom(target, vars, custom_registry)?;
+            match target_value {
+                Value::Json(json_str) => {
+                    let parsed: serde_json::Value = serde_json::from_str(&json_str)
+                        .map_err(|e| Error::new(format!("Invalid JSON: {}", e), None))?;
+                    if let Some(prop_value) = parsed.get(property) {
+                        crate::json_to_value(prop_value.clone())
+                    } else {
+                        Err(Error::new(format!("Property '{}' not found in JSON object", property), None))
+                    }
+                }
+                _ => Err(Error::new(format!("Property access only supported on JSON objects, got {:?}", target_value), None)),
+            }
         }
         Expr::Array(exprs) => {
             let mut items = Vec::new();

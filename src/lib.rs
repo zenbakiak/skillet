@@ -65,7 +65,7 @@ pub fn evaluate_with_json(input: &str, json_vars: &str) -> Result<Value, Error> 
 }
 
 /// Convert serde_json::Value to skillet::Value with type inference
-fn json_to_value(json: serde_json::Value) -> Result<Value, Error> {
+pub fn json_to_value(json: serde_json::Value) -> Result<Value, Error> {
     match json {
         serde_json::Value::Null => Ok(Value::Null),
         serde_json::Value::Bool(b) => Ok(Value::Boolean(b)),
