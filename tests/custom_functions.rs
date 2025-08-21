@@ -1,5 +1,9 @@
 use skillet::{register_function, unregister_function, evaluate_with_custom, CustomFunction, Value, Error};
 use std::collections::HashMap;
+use std::sync::Mutex;
+
+// Global test mutex to prevent concurrent access to the global function registry
+static TEST_MUTEX: Mutex<()> = Mutex::new(());
 
 /// Example custom function that doubles a number
 struct DoubleFunction;
@@ -42,6 +46,8 @@ impl CustomFunction for PrefixFunction {
 
 #[test]
 fn test_custom_function_registration() {
+    let _lock = TEST_MUTEX.lock().unwrap();
+    
     // Clean up any existing DOUBLE function first
     unregister_function("DOUBLE");
     
@@ -59,6 +65,8 @@ fn test_custom_function_registration() {
 
 #[test]
 fn test_custom_function_with_variables() {
+    let _lock = TEST_MUTEX.lock().unwrap();
+    
     // Clean up any existing DOUBLE function first
     unregister_function("DOUBLE");
     
@@ -78,6 +86,8 @@ fn test_custom_function_with_variables() {
 
 #[test]
 fn test_custom_function_priority_over_builtin() {
+    let _lock = TEST_MUTEX.lock().unwrap();
+    
     // Clean up any existing SUM function first
     unregister_function("SUM");
     
@@ -111,6 +121,8 @@ fn test_custom_function_priority_over_builtin() {
 
 #[test]
 fn test_string_custom_function() {
+    let _lock = TEST_MUTEX.lock().unwrap();
+    
     // Clean up any existing PREFIX function first
     unregister_function("PREFIX");
     
@@ -132,6 +144,8 @@ fn test_string_custom_function() {
 
 #[test]
 fn test_custom_function_error_handling() {
+    let _lock = TEST_MUTEX.lock().unwrap();
+    
     // Clean up any existing DOUBLE function first
     unregister_function("DOUBLE");
     
