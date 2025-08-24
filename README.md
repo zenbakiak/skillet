@@ -189,6 +189,8 @@ cargo test
 
 [@zenbakiak](/zenbakiak)
 
+[Github repo](https://github.com/zenbakiak/skillet)
+
 ## License
 
 MIT OR Apache-2.0
