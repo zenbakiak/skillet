@@ -5,3 +5,4 @@ skillet-micro-lang-**
 *.db
 
 skillet-node
+skillet-wasm
