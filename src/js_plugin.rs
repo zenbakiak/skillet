@@ -149,77 +149,6 @@ impl JavaScriptFunction {
         Ok(())
     }
     
-    /// Add SQLite functions to the JavaScript context
-    fn add_sqlite_functions(ctx: &Ctx) -> Result<(), Error> {
-        use rusqlite::Connection;
-        
-        // Create a SQLite query function
-        let sqlite_query_fn = rquickjs::Function::new(ctx.clone(), |db_path: String, query: String| {
-            match Connection::open(&db_path) {
-                Ok(conn) => {
-                    match Self::execute_sqlite_query(&conn, &query) {
-                        Ok(result) => serde_json::to_string(&result).unwrap_or_else(|_| "[]".to_string()),
-                        Err(e) => format!("SQLite query error: {}", e),
-                    }
-                }
-                Err(e) => format!("SQLite connection error: {}", e),
-            }
-        }).map_err(|e| Error::new(format!("Failed to create SQLite query function: {}", e), None))?;
-        
-        // Create a SQLite execute function (for non-query statements)
-        let sqlite_exec_fn = rquickjs::Function::new(ctx.clone(), |db_path: String, statement: String| {
-            match Connection::open(&db_path) {
-                Ok(conn) => {
-                    match conn.execute(&statement, []) {
-                        Ok(rows_affected) => format!("OK: {} rows affected", rows_affected),
-                        Err(e) => format!("SQLite execution error: {}", e),
-                    }
-                }
-                Err(e) => format!("SQLite connection error: {}", e),
-            }
-        }).map_err(|e| Error::new(format!("Failed to create SQLite exec function: {}", e), None))?;
-        
-        // Add the functions to global scope
-        ctx.globals().set("sqliteQuery", sqlite_query_fn)
-            .map_err(|e| Error::new(format!("Failed to set SQLite query function: {}", e), None))?;
-            
-        ctx.globals().set("sqliteExec", sqlite_exec_fn)
-            .map_err(|e| Error::new(format!("Failed to set SQLite exec function: {}", e), None))?;
-            
-        Ok(())
-    }
-    
-    /// Execute a SQLite query and return results as JSON-serializable data
-    fn execute_sqlite_query(conn: &rusqlite::Connection, query: &str) -> Result<Vec<serde_json::Map<String, serde_json::Value>>, rusqlite::Error> {
-        let mut stmt = conn.prepare(query)?;
-        let column_count = stmt.column_count();
-        let column_names: Vec<String> = (0..column_count)
-            .map(|i| stmt.column_name(i).unwrap_or("").to_string())
-            .collect();
-        
-        let rows = stmt.query_map([], |row| {
-            let mut map = serde_json::Map::new();
-            for (i, column_name) in column_names.iter().enumerate() {
-                let value: rusqlite::types::Value = row.get(i)?;
-                let json_value = match value {
-                    rusqlite::types::Value::Null => serde_json::Value::Null,
-                    rusqlite::types::Value::Integer(i) => serde_json::Value::Number(serde_json::Number::from(i)),
-                    rusqlite::types::Value::Real(f) => serde_json::Value::Number(serde_json::Number::from_f64(f).unwrap_or_else(|| serde_json::Number::from(0))),
-                    rusqlite::types::Value::Text(s) => serde_json::Value::String(s),
-                    rusqlite::types::Value::Blob(b) => serde_json::Value::String(format!("BLOB({} bytes)", b.len())),
-                };
-                map.insert(column_name.clone(), json_value);
-            }
-            Ok(map)
-        })?;
-        
-        let mut results = Vec::new();
-        for row_result in rows {
-            results.push(row_result?);
-        }
-        
-        Ok(results)
-    }
 
     /// Convert JavaScript value to Skillet Value
     fn js_to_value<'js>(ctx: &Ctx<'js>, js_val: rquickjs::Value<'js>) -> Result<Value, Error> {
@@ -285,8 +214,7 @@ impl CustomFunction for JavaScriptFunction {
             // Add HTTP functionality to the JavaScript context
             Self::add_http_functions(&ctx)?;
             
-            // Add SQLite functionality to the JavaScript context
-            Self::add_sqlite_functions(&ctx)?;
+            // SQLite integration removed
             
             // Execute the JavaScript code
             ctx.eval::<(), _>(self.js_code.as_bytes())
