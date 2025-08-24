@@ -1,4 +1,4 @@
-use skillet::{evaluate_with_custom, Value, JSPluginLoader, register_function, SqliteQueryFunction};
+use skillet::{evaluate_with_custom, Value, JSPluginLoader};
 use std::collections::HashMap;
 use std::time::Instant;
 use serde_json::json;
@@ -6,8 +6,7 @@ use serde_json::json;
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     
-    // Register built-in Rust functions
-    let _ = register_function(Box::new(SqliteQueryFunction));
+    // Register built-in Rust functions (none by default)
     
     // Auto-load JavaScript functions from hooks directory
     let hooks_dir = std::env::var("SKILLET_HOOKS_DIR").unwrap_or_else(|_| "hooks".to_string());
@@ -186,4 +185,3 @@ fn parse_value(s: &str) -> Value {
     // Default to string if nothing else matches
     Value::String(s.to_string())
 }
-
