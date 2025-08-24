@@ -1,4 +1,7 @@
 target
 skillet-micro-lang-**
 .DS_STORE
+.DS_Store
 *.db
+
+skillet-node
