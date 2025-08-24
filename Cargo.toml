@@ -4,6 +4,19 @@ version = "0.0.1"
 edition = "2021"
 description = "Skillet: micro expression language (phase 1: arithmetic)"
 license = "MIT OR Apache-2.0"
+readme = "README.md"
+# documentation will work after first publish
+documentation = "https://docs.rs/skillet"
+keywords = ["excel", "formula", "expression", "language", "eval"]
+
+# Keep the published crate small and clean
+include = [
+  "Cargo.toml",
+  "README.md",
+  "DOCUMENTATION.md",
+  "src/**",
+  "tests/**"
+]
 
 [lib]
 name = "skillet"
