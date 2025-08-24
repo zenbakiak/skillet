@@ -7,10 +7,12 @@
 1. [Command Line Interface (CLI)](#command-line-interface-cli)
 2. [Rust Integration](#rust-integration)
 3. [Extending the Language](#extending-the-language)
-4. [Excel Formula Examples](#excel-formula-examples)
-5. [Built-in Functions Reference](#built-in-functions-reference)
-6. [JSON Integration](#json-integration)
-7. [Advanced Features](#advanced-features)
+4. [JavaScript/Node Addon](#javascriptnode-addon)
+5. [API Surface](#api-surface)
+6. [Excel Formula Examples](#excel-formula-examples)
+7. [Built-in Functions Reference](#built-in-functions-reference)
+8. [JSON Integration](#json-integration)
+9. [Advanced Features](#advanced-features)
 
 ---
 
@@ -112,12 +114,30 @@ sk "=5 + \"hello\""
 
 ### Adding Skillet to Your Project
 
-Add to your `Cargo.toml`:
+Add to your `Cargo.toml` from crates.io:
 
 ```toml
 [dependencies]
-skillet = { path = "./path/to/skillet" }
+skillet = "0.0.1"
 ```
+
+## JavaScript/Node Addon
+
+See `skillet-node/README.md` for the Node.js addon built with napi-rs. It exposes `evalFormula`, `evalFormulaWith`, and async custom-function support. This addon is packaged separately for npm.
+
+## API Surface
+
+- `parse(&str) -> Result<Expr, Error>`
+- `evaluate(&str) -> Result<Value, Error>`
+- `evaluate_with(&str, &HashMap<String, Value>) -> Result<Value, Error>`
+- `evaluate_with_json(&str, &str) -> Result<Value, Error>`
+- `evaluate_with_custom(&str, &HashMap<String, Value>) -> Result<Value, Error>`
+- `evaluate_with_json_custom(&str, &str) -> Result<Value, Error>`
+- Custom functions:
+  - `register_function(Box<dyn CustomFunction>) -> Result<(), Error>`
+  - `unregister_function(&str) -> bool`
+  - `list_custom_functions() -> Vec<String>`
+- Types: `Value`, `Error`, `Expr`
 
 ### Basic Evaluation
 

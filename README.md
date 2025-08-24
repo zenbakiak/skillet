@@ -2,6 +2,9 @@
 
 # Skillet — “Lightning-fast formulas, Rust-powered.”
 
+[![Crates.io](https://img.shields.io/crates/v/skillet.svg)](https://crates.io/crates/skillet)
+[![Docs.rs](https://docs.rs/skillet/badge.svg)](https://docs.rs/skillet)
+
 Skillet is a tiny, embeddable expression engine (written in Rust) inspired by Excel formulas and Ruby-style chaining. It parses expressions into an AST and evaluates them with a small runtime.
 
 This MVP supports numbers, strings, booleans, nulls, arrays, method chaining, functions (built-ins), comparisons, logical ops, ternary, array indexing/slicing, spread `...`, lambdas with named parameters, and basic type casting via `::Type`.
@@ -32,11 +35,17 @@ Notes:
 
 ## Library Usage
 
-Add to your Cargo project (path example):
+Add to your Cargo project (from crates.io):
 
 ```toml
 [dependencies]
-skillet = { path = "../skillet" }
+skillet = "0.0.1"
+```
+
+Or with cargo-edit:
+
+```
+cargo add skillet@0.0.1
 ```
 
 Evaluate expressions:
@@ -101,8 +110,72 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ## Notes
 
 - This is an MVP; error messages and type coverage are intentionally minimal.
-- No external dependencies (serde/chrono) are used yet.
 - For variables beyond numbers/strings/arrays (e.g., dates, currency), see `Value` in `src/types.rs`.
+
+## Install CLI
+
+If you want the CLI tool `sk` installed system-wide:
+
+```
+cargo install skillet
+```
+
+## JavaScript SDK (Node)
+
+- Node addon lives in `skillet-node` (separate npm package): see `skillet-node/README.md` for usage and build.
+- Quick usage (after building the addon):
+
+```
+import { evalFormula, evalFormulaWith } from '@skillet-lang/node'
+
+console.log(await evalFormula('=2 + 3 * 4')) // 14
+console.log(await evalFormulaWith('=SUM(:a,:b)', { a: 1, b: 2 })) // 3
+```
+
+## Features
+
+- Expressions: numbers, strings, booleans, nulls, arrays
+- Operators: arithmetic (+ - * / % ^), comparisons (>, <, >=, <=, ==, !=), logical (AND/OR/NOT, &&/||/!)
+- Methods: chaining on numbers/strings/arrays (e.g., `.sum()`, `.upper()`)
+- Functions: `SUM`, `AVG`, `MIN`, `MAX`, `ROUND`, `CEIL`, `FLOOR`, `ABS`, `SQRT`, `POW`, more
+- Arrays: literals, indexing with negative indices, slicing, `...` spread in arg lists
+- Conditionals: ternary `? :`, `IF`, `IFS`, `XOR`, `AND`, `OR`, `NOT`
+- Functional helpers: `FILTER`, `MAP`, `REDUCE`, `SUMIF`, `AVGIF`, `COUNTIF`
+- Types and casts: `::Integer|Float|String|Boolean|Array|Currency|DateTime|Json`
+- Extensibility: register custom Rust functions; Node addon supports JS custom functions
+
+## API Surface (Rust)
+
+- `parse(input: &str) -> Result<Expr, Error>`: parse into AST
+- `evaluate(input: &str) -> Result<Value, Error>`: evaluate without variables
+- `evaluate_with(input: &str, vars: &HashMap<String, Value>) -> Result<Value, Error>`
+- `evaluate_with_json(input: &str, json_vars: &str) -> Result<Value, Error>`
+- `evaluate_with_custom(input: &str, vars: &HashMap<String, Value>) -> Result<Value, Error>`
+- `evaluate_with_json_custom(input: &str, json_vars: &str) -> Result<Value, Error>`
+- Custom functions:
+  - `register_function(Box<dyn CustomFunction>) -> Result<(), Error>`
+  - `unregister_function(name: &str) -> bool`
+  - `list_custom_functions() -> Vec<String>`
+- Types:
+  - `Value` enum: `Number(f64) | Array(Vec<Value>) | Boolean(bool) | String(String) | Null | Currency(f64) | DateTime(i64) | Json(String)`
+  - `Error` with `message` and optional `position`
+
+## Vanilla JavaScript (Browser)
+
+To use Skillet in plain browser JavaScript, use the WebAssembly build (`@skillet-lang/wasm`). This targets modern browsers and bundlers without native builds.
+
+- Status: planned package. The Rust crate uses a few non‑WASM deps that will be feature‑gated for the WASM build (disabling plugins/SQLite).
+- Expected usage:
+
+```
+import init, { evalFormula, evalFormulaWith } from '@skillet-lang/wasm'
+
+await init()
+console.log(evalFormula('= 2 + 3 * 4')) // 14
+console.log(evalFormulaWith('=SUM(:a,:b)', { a: 1, b: 2 })) // 3
+```
+
+Repo folder `skillet-wasm` contains the scaffold; build with `wasm-pack build --target bundler`.
 
 ## Tests
 

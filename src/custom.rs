@@ -167,6 +167,7 @@ mod tests {
         assert!(!registry.has_function("TEST"));
     }
     
+    #[cfg(feature = "sqlite")]
     #[test]
     fn test_sqlite_query_function() {
         use tempfile::TempDir;
@@ -238,8 +239,10 @@ mod tests {
 }
 
 /// Example SQLite function for Rust custom functions
+#[cfg(feature = "sqlite")]
 pub struct SqliteQueryFunction;
 
+#[cfg(feature = "sqlite")]
 impl CustomFunction for SqliteQueryFunction {
     fn name(&self) -> &str { "SQLITE_QUERY" }
     fn min_args(&self) -> usize { 2 }

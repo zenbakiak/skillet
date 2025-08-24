@@ -27,9 +27,14 @@ chrono = { version = "0.4", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 lazy_static = "1.4"
-rquickjs = "0.6"
-rusqlite = { version = "0.29", features = ["bundled"] }
+rquickjs = { version = "0.6", optional = true }
+rusqlite = { version = "0.29", features = ["bundled"], optional = true }
 
 [dev-dependencies]
 tempfile = "3.0"
 chrono = { version = "0.4", features = ["serde"] }
+
+[features]
+default = ["plugins", "sqlite"]
+plugins = ["rquickjs"]
+sqlite = ["rusqlite"]

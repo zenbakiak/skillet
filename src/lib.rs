@@ -1,6 +1,7 @@
 pub mod ast;
 pub mod custom;
 pub mod error;
+#[cfg(feature = "plugins")]
 pub mod js_plugin;
 pub mod lexer;
 pub mod parser;
@@ -8,8 +9,11 @@ pub mod runtime;
 pub mod types;
 
 pub use ast::Expr;
-pub use custom::{CustomFunction, FunctionRegistry, SqliteQueryFunction};
+pub use custom::{CustomFunction, FunctionRegistry};
+#[cfg(feature = "sqlite")]
+pub use custom::SqliteQueryFunction;
 pub use error::Error;
+#[cfg(feature = "plugins")]
 pub use js_plugin::{JavaScriptFunction, JSPluginLoader};
 pub use types::Value;
 use std::collections::HashMap;
