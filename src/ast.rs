@@ -14,6 +14,8 @@ pub enum Expr {
     Index { target: Box<Expr>, index: Box<Expr> },
     Slice { target: Box<Expr>, start: Option<Box<Expr>>, end: Option<Box<Expr>> },
     TypeCast { expr: Box<Expr>, ty: TypeName },
+    Assignment { variable: String, value: Box<Expr> },
+    Sequence(Vec<Expr>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

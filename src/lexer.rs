@@ -35,9 +35,12 @@ pub enum Token {
     AndAnd,
     OrOr,
     QMark,
+    Semicolon,
+    ColonEquals,
     Eof,
 }
 
+#[derive(Clone)]
 pub struct Lexer<'a> {
     input: &'a [u8],
     pos: usize,
@@ -191,7 +194,15 @@ impl<'a> Lexer<'a> {
             b']' => Token::RBracket,
             b',' => Token::Comma,
             b':' => {
-                if matches!(self.peek(), Some(b':')) { self.bump(); Token::DoubleColon } else { Token::Colon }
+                if matches!(self.peek(), Some(b':')) { 
+                    self.bump(); 
+                    Token::DoubleColon 
+                } else if matches!(self.peek(), Some(b'=')) {
+                    self.bump(); 
+                    Token::ColonEquals
+                } else { 
+                    Token::Colon 
+                }
             },
             b'>' => {
                 if matches!(self.peek(), Some(b'=')) { self.bump(); Token::Ge } else { Token::Greater }
@@ -209,11 +220,15 @@ impl<'a> Lexer<'a> {
             b'|' => {
                 if matches!(self.peek(), Some(b'|')) { self.bump(); Token::OrOr } else { return Err(Error::new("Unexpected '|'", Some(self.pos - 1))); }
             }
+            b';' => Token::Semicolon,
             _ => return Err(Error::new("Unexpected character", Some(self.pos - 1))),
         };
         // For single-char tokens not handled above, mark last positions
-        if matches!(tok, Token::Plus|Token::Minus|Token::Star|Token::Slash|Token::Percent|Token::Caret|Token::Bang|Token::QMark|Token::LParen|Token::RParen|Token::LBracket|Token::RBracket|Token::Comma|Token::Colon|Token::Greater|Token::Less) {
+        if matches!(tok, Token::Plus|Token::Minus|Token::Star|Token::Slash|Token::Percent|Token::Caret|Token::Bang|Token::QMark|Token::LParen|Token::RParen|Token::LBracket|Token::RBracket|Token::Comma|Token::Colon|Token::Greater|Token::Less|Token::Semicolon) {
             self.last_start = self.pos - 1;
+            self.last_end = self.pos;
+        } else if matches!(tok, Token::ColonEquals|Token::DoubleColon|Token::Ge|Token::Le|Token::EqEq|Token::NotEq|Token::AndAnd|Token::OrOr) {
+            self.last_start = self.pos - 2;
             self.last_end = self.pos;
         }
         Ok(tok)

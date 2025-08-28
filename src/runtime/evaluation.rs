@@ -213,6 +213,8 @@ pub fn eval(expr: &Expr) -> Result<Value, Error> {
         Expr::Variable(_) => Err(Error::new("Use eval_with_vars for variables", None)),
         Expr::PropertyAccess { .. } => Err(Error::new("Use eval_with_vars for property access", None)),
         Expr::Spread(_) => Err(Error::new("Spread not allowed here", None)),
+        Expr::Assignment { .. } => Err(Error::new("Use eval_with_vars for assignments", None)),
+        Expr::Sequence(_) => Err(Error::new("Use eval_with_vars for sequences", None)),
     }
 }
 
@@ -355,6 +357,20 @@ pub fn eval_with_vars(expr: &Expr, vars: &HashMap<String, Value>) -> Result<Valu
             exec_method(name, *predicate, &recv, args, Some(vars))
         }
         Expr::Spread(_) => Err(Error::new("Spread not allowed here", None)),
+        Expr::Assignment { variable: _, value } => {
+            let result = eval_with_vars(value, vars)?;
+            // For assignments, we need a mutable variables map, but the current API doesn't support that
+            // This is a limitation - assignments need to be handled at a higher level
+            // For now, we'll return the assigned value but not actually store it
+            Ok(result)
+        }
+        Expr::Sequence(exprs) => {
+            let mut last_result = Value::Null;
+            for expr in exprs {
+                last_result = eval_with_vars(expr, vars)?;
+            }
+            Ok(last_result)
+        }
     }
 }
 
@@ -654,5 +670,45 @@ pub fn eval_with_vars_and_custom(expr: &Expr, vars: &HashMap<String, Value>, cus
             exec_method_with_custom(name, *predicate, &recv, args, Some(vars), custom_registry)
         }
         Expr::Spread(_) => Err(Error::new("Spread not allowed here", None)),
+        Expr::Assignment { variable: _, value } => {
+            let result = eval_with_vars_and_custom(value, vars, custom_registry)?;
+            // For assignments, we need a mutable variables map, but the current API doesn't support that
+            // This is a limitation - assignments need to be handled at a higher level
+            // For now, we'll return the assigned value but not actually store it
+            Ok(result)
+        }
+        Expr::Sequence(exprs) => {
+            let mut last_result = Value::Null;
+            for expr in exprs {
+                last_result = eval_with_vars_and_custom(expr, vars, custom_registry)?;
+            }
+            Ok(last_result)
+        }
+    }
+}
+
+/// Evaluate with support for assignments and sequences
+/// This function properly handles variable assignments by maintaining a mutable variable context
+pub fn eval_with_assignments(expr: &Expr, vars: &HashMap<String, Value>) -> Result<Value, Error> {
+    let mut context = vars.clone();
+    eval_with_assignments_context(expr, &mut context)
+}
+
+fn eval_with_assignments_context(expr: &Expr, context: &mut HashMap<String, Value>) -> Result<Value, Error> {
+    match expr {
+        Expr::Assignment { variable, value } => {
+            let result = eval_with_assignments_context(value, context)?;
+            context.insert(variable.clone(), result.clone());
+            Ok(result)
+        }
+        Expr::Sequence(exprs) => {
+            let mut last_result = Value::Null;
+            for expr in exprs {
+                last_result = eval_with_assignments_context(expr, context)?;
+            }
+            Ok(last_result)
+        }
+        // For all other expressions, delegate to eval_with_vars with current context
+        _ => eval_with_vars(expr, context)
     }
 }
