@@ -12,6 +12,12 @@ fn array_builtins() {
     assert!(matches!(evaluate("LAST([9,8,7])").unwrap(), Value::Number(7.0)));
     // CONTAINS
     assert!(b(evaluate("CONTAINS([1,2,3], 2)").unwrap()));
+    // IN - similar to CONTAINS but with different parameter order
+    assert!(b(evaluate("IN([1,2,3], 2)").unwrap()));
+    assert!(!b(evaluate("IN([1,2,3], 4)").unwrap()));
+    // COUNT
+    assert!(matches!(evaluate("COUNT([1,2,3,4,5])").unwrap(), Value::Number(5.0)));
+    assert!(matches!(evaluate("COUNT([])").unwrap(), Value::Number(0.0)));
     // UNIQUE
     match evaluate("UNIQUE([1,2,2,3])").unwrap() { Value::Array(v) => assert_eq!(v, vec![Value::Number(1.0), Value::Number(2.0), Value::Number(3.0)]), _ => panic!() }
     // SORT and REVERSE
