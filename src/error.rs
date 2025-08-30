@@ -8,7 +8,10 @@ pub struct Error {
 
 impl Error {
     pub fn new<M: Into<String>>(message: M, position: Option<usize>) -> Self {
-        Self { message: message.into(), position }
+        Self {
+            message: message.into(),
+            position,
+        }
     }
 }
 
