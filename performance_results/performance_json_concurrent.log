@@ -1,0 +1,8 @@
+Command: cargo test --test sk_concurrency test_concurrent_json_operations --release
+Started at: Sun Aug 31 02:53:15 CST 2025
+----------------------------------------
+    Finished `release` profile [optimized] target(s) in 0.02s
+     Running tests/sk_concurrency.rs (/Users/zenbakiak/Sandbox/Skillet-lang/skillet/target/release/deps/sk_concurrency-6bd965f2d2277d24)
+
+running 1 test
+test tests::test_concurrent_json_operations has been running for over 60 seconds
