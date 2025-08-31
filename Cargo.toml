@@ -1,6 +1,6 @@
 [package]
 name = "skillet"
-version = "0.0.2"
+version = "0.1.1"
 edition = "2021"
 description = "Skillet: micro expression language (arithmetic, logical, functions, arrays, conditionals, excel formulas)"
 license = "MIT OR Apache-2.0"
@@ -28,6 +28,13 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 lazy_static = "1.4"
 rquickjs = { version = "0.6", optional = true }
+# High-performance dependencies
+dashmap = "5.5"
+threadpool = "1.8"
+num_cpus = "1.16"
+# Daemon support
+libc = "0.2"
+ctrlc = "3.4"
 
 [dev-dependencies]
 tempfile = "3.0"
@@ -36,3 +43,16 @@ chrono = { version = "0.4", features = ["serde"] }
 [features]
 default = ["plugins"]
 plugins = ["rquickjs"]
+
+# Binary targets
+[[bin]]
+name = "sk"
+path = "src/bin/sk.rs"
+
+[[bin]]
+name = "sk_server"
+path = "src/bin/sk_server.rs"
+
+[[bin]]
+name = "sk_client"
+path = "src/bin/sk_client.rs"
