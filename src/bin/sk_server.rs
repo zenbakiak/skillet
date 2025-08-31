@@ -15,6 +15,7 @@ struct EvalRequest {
     expression: String,
     variables: Option<HashMap<String, serde_json::Value>>,
     output_json: Option<bool>,
+    token: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -54,7 +55,12 @@ impl ServerStats {
     }
 }
 
-fn handle_client(mut stream: TcpStream, stats: Arc<ServerStats>, request_counter: Arc<AtomicU64>) {
+fn handle_client(
+    mut stream: TcpStream,
+    stats: Arc<ServerStats>,
+    request_counter: Arc<AtomicU64>,
+    server_token: Arc<Option<String>>,
+) {
     let reader = BufReader::new(stream.try_clone().unwrap());
     
     for line in reader.lines() {
@@ -71,7 +77,24 @@ fn handle_client(mut stream: TcpStream, stats: Arc<ServerStats>, request_counter
         let start_time = Instant::now();
         
         let response = match serde_json::from_str::<EvalRequest>(&line) {
-            Ok(req) => process_request(req, request_id),
+            Ok(req) => {
+                if let Some(cfg_token) = server_token.as_ref() {
+                    let supplied = req.token.as_deref().unwrap_or("");
+                    if supplied != cfg_token {
+                        EvalResponse {
+                            success: false,
+                            result: None,
+                            error: Some("Unauthorized: invalid token".to_string()),
+                            execution_time_ms: 0.0,
+                            request_id,
+                        }
+                    } else {
+                        process_request(req, request_id)
+                    }
+                } else {
+                    process_request(req, request_id)
+                }
+            },
             Err(e) => EvalResponse {
                 success: false,
                 result: None,
@@ -306,13 +329,17 @@ fn main() {
         eprintln!("");
         eprintln!("Options:");
         eprintln!("  -d, --daemon         Run as daemon (background process)");
+        eprintln!("  -H, --host <addr>    Bind host/interface (default: 127.0.0.1)");
         eprintln!("  --pid-file <file>    Write PID to file (default: skillet-server.pid)");
         eprintln!("  --log-file <file>    Write logs to file (daemon mode only)");
+        eprintln!("  --token <value>      Require token for requests (or set SKILLET_AUTH_TOKEN)");
         eprintln!("");
         eprintln!("Examples:");
         eprintln!("  sk_server 8080              # Start server on port 8080");
         eprintln!("  sk_server 8080 16           # Start with 16 worker threads");
         eprintln!("  sk_server 8080 8 -d         # Run as daemon with 8 threads");
+        eprintln!("  sk_server 8080 --host 0.0.0.0   # Expose on all interfaces");
+        eprintln!("  sk_server 8080 --host 0.0.0.0 --token <secret>");
         eprintln!("  sk_server 8080 -d --pid-file /var/run/skillet.pid");
         eprintln!("");
         eprintln!("Protocol: Send JSON requests as newline-delimited messages");
@@ -327,6 +354,8 @@ fn main() {
     
     // Parse arguments
     let mut num_threads: usize = num_cpus::get();
+    let mut bind_host: String = std::env::var("SKILLET_BIND_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
+    let mut auth_token: Option<String> = std::env::var("SKILLET_AUTH_TOKEN").ok();
     let mut daemon_mode = false;
     let mut pid_file = "skillet-server.pid".to_string();
     let mut _log_file: Option<String> = None;
@@ -336,6 +365,15 @@ fn main() {
         match args[i].as_str() {
             "-d" | "--daemon" => {
                 daemon_mode = true;
+            }
+            "-H" | "--host" => {
+                if i + 1 < args.len() {
+                    bind_host = args[i + 1].clone();
+                    i += 1;
+                } else {
+                    eprintln!("Error: --host requires an address (e.g. 0.0.0.0)");
+                    std::process::exit(1);
+                }
             }
             "--pid-file" => {
                 if i + 1 < args.len() {
@@ -352,6 +390,15 @@ fn main() {
                     i += 1;
                 } else {
                     eprintln!("Error: --log-file requires a filename");
+                    std::process::exit(1);
+                }
+            }
+            "--token" => {
+                if i + 1 < args.len() {
+                    auth_token = Some(args[i + 1].clone());
+                    i += 1;
+                } else {
+                    eprintln!("Error: --token requires a value");
                     std::process::exit(1);
                 }
             }
@@ -414,9 +461,9 @@ fn main() {
         }
     }
     
-    let listener = TcpListener::bind(format!("127.0.0.1:{}", port))
+    let listener = TcpListener::bind(format!("{}:{}", bind_host, port))
         .unwrap_or_else(|e| {
-            eprintln!("Error: Failed to bind to port {}: {}", port, e);
+            eprintln!("Error: Failed to bind to {}:{}: {}", bind_host, port, e);
             std::process::exit(1);
         });
 
@@ -432,8 +479,9 @@ fn main() {
     let request_counter = Arc::new(AtomicU64::new(0));
     
     if !daemon_mode {
-        eprintln!("🚀 Skillet Server started on port {}", port);
+        eprintln!("🚀 Skillet Server started on {}:{}", bind_host, port);
         eprintln!("📊 Worker threads: {}", num_threads);
+        if auth_token.is_some() { eprintln!("🔒 Token auth: enabled"); }
         eprintln!("🔧 Ready for high-throughput expression evaluation");
         eprintln!("");
     }
@@ -442,13 +490,15 @@ fn main() {
     let pool = threadpool::ThreadPool::new(num_threads);
 
     // Accept loop that can be interrupted by Ctrl+C
+    let server_token = Arc::new(auth_token);
     while running.load(Ordering::Relaxed) {
         match listener.accept() {
             Ok((stream, _addr)) => {
                 let stats = Arc::clone(&stats);
                 let request_counter = Arc::clone(&request_counter);
+                let server_token = Arc::clone(&server_token);
                 pool.execute(move || {
-                    handle_client(stream, stats, request_counter);
+                    handle_client(stream, stats, request_counter, server_token);
                 });
             }
             Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {

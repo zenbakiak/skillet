@@ -9,6 +9,7 @@ struct EvalRequest {
     expression: String,
     variables: Option<HashMap<String, serde_json::Value>>,
     output_json: Option<bool>,
+    token: Option<String>,
 }
 
 #[allow(dead_code)]
@@ -34,6 +35,7 @@ fn main() {
         eprintln!("  sk_client localhost:8080 '=SUM(:sales, :bonus)' sales=1000 bonus=500");
         eprintln!("  sk_client localhost:8080 '=:user.name' --json '{{\"user\": {{\"name\": \"Alice\"}}}}'");
         eprintln!("  sk_client localhost:8080 --benchmark '=2+3*4' 1000");
+        eprintln!("  sk_client localhost:8080 '=2+3' --token <secret>");
         std::process::exit(1);
     }
     
@@ -51,6 +53,7 @@ fn main() {
     let mut variables = HashMap::new();
     let mut json_input = None;
     let mut output_json = false;
+    let mut token: Option<String> = std::env::var("SKILLET_SERVER_TOKEN").ok();
     let mut i = 3;
     
     while i < args.len() {
@@ -65,6 +68,13 @@ fn main() {
             i += 1;
         } else if arg == "--output-json" {
             output_json = true;
+        } else if arg == "--token" {
+            if i + 1 >= args.len() {
+                eprintln!("Error: --token flag requires a value");
+                std::process::exit(1);
+            }
+            token = Some(args[i + 1].clone());
+            i += 1;
         } else if let Some((name, value_str)) = arg.split_once('=') {
             let value = parse_value_to_json(value_str);
             variables.insert(name.to_string(), value);
@@ -84,6 +94,7 @@ fn main() {
                 expression: expression.clone(),
                 variables: Some(vars),
                 output_json: Some(output_json),
+                token: token.clone(),
             },
             Err(e) => {
                 eprintln!("Error: Invalid JSON: {}", e);
@@ -95,12 +106,14 @@ fn main() {
             expression: expression.clone(),
             variables: Some(variables),
             output_json: Some(output_json),
+            token: token.clone(),
         }
     } else {
         EvalRequest {
             expression: expression.clone(),
             variables: None,
             output_json: Some(output_json),
+            token: token.clone(),
         }
     };
     
@@ -151,6 +164,7 @@ fn run_benchmark(server_addr: &str, expression: &str, iterations: usize) {
         expression: expression.to_string(),
         variables: None,
         output_json: Some(false),
+        token: std::env::var("SKILLET_SERVER_TOKEN").ok(),
     };
     
     // Warmup

@@ -127,12 +127,15 @@ Skillet includes a high-performance evaluation server that keeps the interpreter
 - Start the server: `sk_server 8080` (binds to 127.0.0.1:8080)
 - Daemonize (Unix): `sk_server 8080 -d` (writes PID to `skillet-server.pid` in CWD)
 - Stop daemon: `kill $(cat skillet-server.pid)`
+- Bind host/IP: `sk_server 8080 --host 0.0.0.0` (listen on all interfaces)
+- Optional token auth: `sk_server 8080 --host 0.0.0.0 --token <secret>` (or set `SKILLET_AUTH_TOKEN`)
 
 Client and benchmarks:
 - One-off eval: `sk_client localhost:8080 '=2+3*4'`
 - With variables: `sk_client localhost:8080 '=SUM(:a,:b)' a=10 b=5`
 - JSON vars: `sk_client localhost:8080 '=:user.name' --json '{"user":{"name":"Alice"}}'`
 - Benchmark: `sk_client localhost:8080 --benchmark '=2+3*4' 10000`
+- With token: `sk_client localhost:8080 '=2+3*4' --token <secret>` (or set `SKILLET_SERVER_TOKEN`)
 
 Scripts:
 - Build + run multi-test benchmark: `bash scripts/benchmark_server.sh [port] [iterations] [threads]`
