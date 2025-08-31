@@ -1,10 +1,11 @@
 pub mod ast;
+pub mod concurrent_registry;
 pub mod custom;
 pub mod error;
 #[cfg(feature = "plugins")]
-#[cfg(feature = "plugins")]
 pub mod js_plugin;
 pub mod lexer;
+pub mod memory_pool;
 pub mod parser;
 pub mod runtime;
 pub mod types;
