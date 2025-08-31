@@ -34,12 +34,56 @@ impl<'a> Parser<'a> {
     fn err_here<T>(&self, msg: &str) -> Result<T, Error> { Err(Error::new(msg, Some(self.look_pos))) }
 
     pub fn parse(&mut self) -> Result<Expr, Error> {
-        let expr = self.parse_expr()?;
-        // allow trailing whitespace and EOF
-        Ok(expr)
+        let mut exprs = Vec::new();
+        
+        // Parse first expression
+        exprs.push(self.parse_expr()?);
+        
+        // Parse semicolon-separated expressions
+        while matches!(self.lookahead, Token::Semicolon) {
+            self.bump()?; // consume ';'
+            if matches!(self.lookahead, Token::Eof) {
+                break; // Allow trailing semicolon
+            }
+            exprs.push(self.parse_expr()?);
+        }
+        
+        // If only one expression, return it directly; otherwise wrap in sequence
+        if exprs.len() == 1 {
+            Ok(exprs.into_iter().next().unwrap())
+        } else {
+            Ok(Expr::Sequence(exprs))
+        }
     }
 
     fn parse_expr(&mut self) -> Result<Expr, Error> {
+        self.parse_assignment()
+    }
+    
+    fn parse_assignment(&mut self) -> Result<Expr, Error> {
+        // Check for assignment pattern: :variable_name := expression
+        if matches!(self.lookahead, Token::Colon) {
+            // Look ahead to see if this is an assignment
+            let mut temp_lexer = self.lexer.clone();
+            let next1 = temp_lexer.next_token().unwrap_or(Token::Eof);
+            let next2 = temp_lexer.next_token().unwrap_or(Token::Eof);
+            
+            if matches!((next1, next2), (Token::Identifier(_), Token::ColonEquals)) {
+                // This is an assignment
+                self.bump()?; // consume ':'
+                if let Token::Identifier(var_name) = &self.lookahead.clone() {
+                    let var_name = var_name.clone();
+                    self.bump()?; // consume identifier
+                    if matches!(self.lookahead, Token::ColonEquals) {
+                        self.bump()?; // consume ':='
+                        let value = self.parse_ternary()?;
+                        return Ok(Expr::Assignment { variable: var_name, value: Box::new(value) });
+                    }
+                }
+                return self.err_here("Invalid assignment syntax");
+            }
+        }
+        
         self.parse_ternary()
     }
 

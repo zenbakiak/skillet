@@ -1,4 +1,4 @@
-use skillet::{evaluate_with_custom, Value, JSPluginLoader};
+use skillet::{evaluate_with_custom, evaluate_with_assignments, Value, JSPluginLoader};
 use std::collections::HashMap;
 use std::time::Instant;
 use serde_json::json;
@@ -88,7 +88,42 @@ fn main() {
     let start_time = Instant::now();
     
     let result = if let Some(json_str) = json_input {
-        skillet::evaluate_with_json_custom(expr, &json_str)
+        // For JSON input, first check if expression contains assignments/sequences
+        if expr.contains(";") || expr.contains(":=") {
+            // Need to parse JSON and pass to assignment evaluator
+            let json_value: serde_json::Value = match serde_json::from_str(&json_str) {
+                Ok(val) => val,
+                Err(e) => {
+                    eprintln!("Error: Invalid JSON: {}", e);
+                    std::process::exit(1);
+                }
+            };
+            let vars = match json_value {
+                serde_json::Value::Object(map) => {
+                    let mut result = HashMap::new();
+                    for (key, value) in map {
+                        let skillet_value = match skillet::json_to_value(value) {
+                            Ok(v) => v,
+                            Err(e) => {
+                                eprintln!("Error converting JSON: {}", e);
+                                std::process::exit(1);
+                            }
+                        };
+                        result.insert(key, skillet_value);
+                    }
+                    result
+                }
+                _ => {
+                    eprintln!("Error: JSON must be an object with key-value pairs");
+                    std::process::exit(1);
+                }
+            };
+            evaluate_with_assignments(expr, &vars)
+        } else {
+            skillet::evaluate_with_json_custom(expr, &json_str)
+        }
+    } else if expr.contains(";") || expr.contains(":=") {
+        evaluate_with_assignments(expr, &vars)
     } else {
         evaluate_with_custom(expr, &vars)
     };

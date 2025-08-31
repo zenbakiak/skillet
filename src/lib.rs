@@ -158,6 +158,12 @@ pub fn evaluate_with_json_custom(input: &str, json_vars: &str) -> Result<Value, 
     evaluate_with_custom(input, &vars)
 }
 
+/// Evaluate with assignments and sequences - handles complex expressions with variable assignments
+pub fn evaluate_with_assignments(input: &str, vars: &HashMap<String, Value>) -> Result<Value, Error> {
+    let expr = parse(input)?;
+    runtime::eval_with_assignments(&expr, vars)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
