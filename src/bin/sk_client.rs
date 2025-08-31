@@ -11,6 +11,7 @@ struct EvalRequest {
     output_json: Option<bool>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct EvalResponse {
     success: bool,

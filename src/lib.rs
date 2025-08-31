@@ -18,7 +18,6 @@ pub use js_plugin::{JavaScriptFunction, JSPluginLoader};
 pub use types::Value;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
-use serde_json;
 
 // Global function registry
 lazy_static::lazy_static! {

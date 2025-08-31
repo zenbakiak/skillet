@@ -187,7 +187,7 @@ impl CowVariableContext {
     }
 }
 
-/// Thread-local variable context pools for zero contention
+// Thread-local variable context pools for zero contention
 thread_local! {
     static CONTEXT_POOL: Arc<VariableContextPool> = Arc::new(VariableContextPool::new(50));
 }

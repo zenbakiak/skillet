@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::{TcpListener, TcpStream};
 use std::io::{BufRead, BufReader, Write};
-use std::sync::{Arc, atomic::{AtomicU64, Ordering}};
+use std::sync::{Arc, atomic::{AtomicU64, AtomicBool, Ordering}};
 use std::time::Instant;
 
 /// High-performance Skillet evaluation server
@@ -287,15 +287,15 @@ fn write_pid_file(pid_file: &str) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn setup_signal_handlers() {
+fn setup_signal_handlers() -> Arc<AtomicBool> {
     // Handle SIGTERM and SIGINT gracefully
-    let running = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let running = Arc::new(AtomicBool::new(true));
     let r = running.clone();
-    
     ctrlc::set_handler(move || {
         eprintln!("Received shutdown signal, gracefully stopping...");
-        r.store(false, std::sync::atomic::Ordering::SeqCst);
+        r.store(false, Ordering::SeqCst);
     }).expect("Error setting signal handler");
+    running
 }
 
 fn main() {
@@ -329,7 +329,7 @@ fn main() {
     let mut num_threads: usize = num_cpus::get();
     let mut daemon_mode = false;
     let mut pid_file = "skillet-server.pid".to_string();
-    let mut log_file: Option<String> = None;
+    let mut _log_file: Option<String> = None;
     let mut i = 2;
     
     while i < args.len() {
@@ -348,7 +348,7 @@ fn main() {
             }
             "--log-file" => {
                 if i + 1 < args.len() {
-                    log_file = Some(args[i + 1].clone());
+                    _log_file = Some(args[i + 1].clone());
                     i += 1;
                 } else {
                     eprintln!("Error: --log-file requires a filename");
@@ -382,7 +382,7 @@ fn main() {
             }
             
             // Write PID file after successful daemonization
-            if let Err(e) = write_pid_file(&pid_file) {
+            if let Err(_e) = write_pid_file(&pid_file) {
                 // Log to syslog or a file since we can't use stderr
                 std::process::exit(1);
             }
@@ -394,8 +394,8 @@ fn main() {
         }
     }
     
-    // Setup signal handlers
-    setup_signal_handlers();
+    // Setup signal handlers and running flag
+    let running = setup_signal_handlers();
     
     // Auto-load JavaScript functions
     let hooks_dir = std::env::var("SKILLET_HOOKS_DIR").unwrap_or_else(|_| "hooks".to_string());
@@ -419,6 +419,14 @@ fn main() {
             eprintln!("Error: Failed to bind to port {}: {}", port, e);
             std::process::exit(1);
         });
+
+    // Make listener non-blocking so we can check shutdown flag
+    listener
+        .set_nonblocking(true)
+        .unwrap_or_else(|e| {
+            eprintln!("Error: Failed to set non-blocking mode: {}", e);
+            std::process::exit(1);
+        });
     
     let stats = Arc::new(ServerStats::new());
     let request_counter = Arc::new(AtomicU64::new(0));
@@ -432,20 +440,29 @@ fn main() {
     
     // Use a thread pool for handling connections
     let pool = threadpool::ThreadPool::new(num_threads);
-    
-    for stream in listener.incoming() {
-        match stream {
-            Ok(stream) => {
+
+    // Accept loop that can be interrupted by Ctrl+C
+    while running.load(Ordering::Relaxed) {
+        match listener.accept() {
+            Ok((stream, _addr)) => {
                 let stats = Arc::clone(&stats);
                 let request_counter = Arc::clone(&request_counter);
-                
                 pool.execute(move || {
                     handle_client(stream, stats, request_counter);
                 });
             }
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                // No pending connections; sleep briefly and check again
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
             Err(e) => {
                 eprintln!("Error accepting connection: {}", e);
+                std::thread::sleep(std::time::Duration::from_millis(100));
             }
         }
     }
+
+    // Wait for outstanding tasks to complete
+    pool.join();
+    eprintln!("Server shutdown complete.");
 }

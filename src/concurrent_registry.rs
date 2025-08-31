@@ -1,4 +1,4 @@
-use crate::custom::{CustomFunction, FunctionRegistry};
+use crate::custom::CustomFunction;
 use crate::error::Error;
 use crate::types::Value;
 use std::sync::Arc;
