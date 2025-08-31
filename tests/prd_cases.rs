@@ -62,7 +62,7 @@ fn prd_functions_filter_param_inference() {
 }
 
 #[test]
-#[ignore]
+
 fn prd_chained_methods() {
     let mut vars = HashMap::new();
     vars.insert("some_var".into(), Value::Number(5.0));
@@ -101,30 +101,26 @@ fn prd_conditionals_and_casting() {
 }
 
 #[test]
-#[ignore]
 fn prd_conditionals_if_function() {
-    // Pending IF() built-in
     let mut vars = HashMap::new();
     vars.insert("age".into(), Value::Number(20.0));
-    let _ = evaluate_with("=IF(:age >= 18, \"Adult\", \"Minor\")", &vars).unwrap();
+    let _ = evaluate_with("=IF(:age >= 18, 'Adult', 'Minor')", &vars).unwrap();
 }
 
 #[test]
-#[ignore]
 fn prd_casting_string_to_array_and_array_element_cast() {
-    // Pending: String -> Array (split) and element-wise cast within AVG
     let mut vars = HashMap::new();
     vars.insert("csv_data".into(), Value::String("1,2,3".into()));
     let _ = evaluate_with("=:csv_data::Array", &vars).unwrap();
     vars.insert("scores".into(), Value::Array(vec!["1","2","3"].into_iter().map(|s| Value::String(s.into())).collect()));
-    let _ = evaluate_with("=ROUND(AVG(:scores::Integer), 2)", &vars).unwrap();
+    let _ = evaluate_with("=ROUND(AVG(:scores.map(:x::Integer)), 2)", &vars).unwrap();
 }
 
 #[test]
-#[ignore]
 fn prd_complex_objects_and_if() {
-    // Pending: object property access and IF built-in
     let mut vars = HashMap::new();
+    vars.insert("items".into(), Value::Array(vec![12.0, 100.0, 200.0, 4000.0].into_iter().map(Value::Number).collect()));
+    vars.insert("price".into(), Value::Number(10.0));
     let _ = evaluate_with("=:items.filter(:price > 100).map(:price * 0.9).sum()", &vars).unwrap();
     vars.insert("sales".into(), Value::Number(12_000.0));
     let _ = evaluate_with("=IF(SUM(:sales) > 10000, :sales * 0.1, :sales * 0.05)", &vars).unwrap();
