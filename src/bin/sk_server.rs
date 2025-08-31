@@ -453,11 +453,13 @@ fn main() {
             }
             Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                 // No pending connections; sleep briefly and check again
-                std::thread::sleep(std::time::Duration::from_millis(50));
+                // Keep this very small to avoid per-connection latency
+                std::thread::sleep(std::time::Duration::from_millis(1));
             }
             Err(e) => {
                 eprintln!("Error accepting connection: {}", e);
-                std::thread::sleep(std::time::Duration::from_millis(100));
+                // Back off briefly on accept errors, but keep it tight
+                std::thread::sleep(std::time::Duration::from_millis(10));
             }
         }
     }

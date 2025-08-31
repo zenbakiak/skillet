@@ -12,6 +12,9 @@ This guide shows how to use the high-performance Skillet server for fast express
 
 # Or specify number of worker threads (recommended: CPU cores)
 ./target/release/sk_server 8080 8
+
+or just sk_server 8080 if you instelled the binaries
+
 ```
 
 Server output:
@@ -78,20 +81,20 @@ class SkilletClient:
     def __init__(self, host='localhost', port=8080):
         self.host = host
         self.port = port
-    
+
     def evaluate(self, expression, variables=None):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.connect((self.host, self.port))
-            
+
             request = {
                 'expression': expression,
                 'variables': variables,
                 'output_json': False
             }
-            
+
             s.send((json.dumps(request) + '\n').encode())
             response = json.loads(s.recv(4096).decode())
-            
+
             if response['success']:
                 return response['result']
             else:
@@ -128,30 +131,30 @@ class SkilletClient {
         this.host = host;
         this.port = port;
     }
-    
+
     evaluate(expression, variables = null) {
         return new Promise((resolve, reject) => {
             const client = net.createConnection(this.port, this.host);
-            
+
             const request = {
                 expression,
                 variables,
                 output_json: false
             };
-            
+
             client.write(JSON.stringify(request) + '\n');
-            
+
             client.on('data', (data) => {
                 const response = JSON.parse(data.toString());
                 client.end();
-                
+
                 if (response.success) {
                     resolve(response.result);
                 } else {
                     reject(new Error(response.error));
                 }
             });
-            
+
             client.on('error', reject);
         });
     }
@@ -164,7 +167,7 @@ const client = new SkilletClient();
     // Basic calculation
     const result1 = await client.evaluate('=2 + 3 * 4');
     console.log(`Result: ${result1}`);  // 14
-    
+
     // Financial calculation
     const result2 = await client.evaluate('=:principal * (1 + :rate) ^ :years', {
         principal: 1000,
@@ -172,7 +175,7 @@ const client = new SkilletClient();
         years: 10
     });
     console.log(`Compound interest: $${result2.toFixed(2)}`);
-    
+
     // String operations
     const result3 = await client.evaluate('=CONCAT(:first, " ", :last)', {
         first: "John",
@@ -205,7 +208,7 @@ sk_eval() {
     local vars="$2"
     local host="${SKILLET_HOST:-localhost}"
     local port="${SKILLET_PORT:-8080}"
-    
+
     if [ -z "$vars" ]; then
         echo "{\"expression\": \"$expr\", \"variables\": null}" | nc "$host" "$port"
     else
@@ -235,13 +238,13 @@ class SkilletPool:
         self.port = port
         self.pool = []
         self.lock = threading.Lock()
-        
+
         # Pre-create connections
         for _ in range(pool_size):
             conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             conn.connect((host, port))
             self.pool.append(conn)
-    
+
     def evaluate(self, expression, variables=None):
         with self.lock:
             if not self.pool:
@@ -250,21 +253,21 @@ class SkilletPool:
                 conn.connect((self.host, self.port))
             else:
                 conn = self.pool.pop()
-        
+
         try:
             request = {
                 'expression': expression,
                 'variables': variables,
                 'output_json': False
             }
-            
+
             conn.send((json.dumps(request) + '\n').encode())
             response = json.loads(conn.recv(4096).decode())
-            
+
             # Return connection to pool
             with self.lock:
                 self.pool.append(conn)
-            
+
             if response['success']:
                 return response['result']
             else:
@@ -289,7 +292,7 @@ expressions = [
 
 with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
     results = list(executor.map(lambda args: pool.evaluate(*args), expressions))
-    
+
 print("Results:", results)
 ```
 
@@ -301,7 +304,7 @@ For extreme throughput, run multiple server instances:
 # Terminal 1
 ./target/release/sk_server 8081 4 &
 
-# Terminal 2  
+# Terminal 2
 ./target/release/sk_server 8082 4 &
 
 # Terminal 3
@@ -320,7 +323,7 @@ upstream skillet_servers {
 
 server {
     listen 8080;
-    
+
     location / {
         proxy_pass http://skillet_servers;
         proxy_http_version 1.1;
@@ -369,7 +372,7 @@ Processed 1000 requests, avg execution time: 1.23ms
 # Basic benchmark
 ./target/release/sk_client localhost:8080 --benchmark "=2+3*4" 1000
 
-# Complex expression benchmark  
+# Complex expression benchmark
 ./target/release/sk_client localhost:8080 --benchmark "=SUM(1,2,3,4,5) * AVG(10,20,30)" 500
 
 # Variable-heavy benchmark

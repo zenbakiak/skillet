@@ -39,13 +39,13 @@ Add to your Cargo project (from crates.io):
 
 ```toml
 [dependencies]
-skillet = "0.0.1"
+skillet = "0.2.0"
 ```
 
 Or with cargo-edit:
 
 ```
-cargo add skillet@0.0.1
+cargo add skillet@0.2.0
 ```
 
 Evaluate expressions:
@@ -112,37 +112,43 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 - This is an MVP; error messages and type coverage are intentionally minimal.
 - For variables beyond numbers/strings/arrays (e.g., dates, currency), see `Value` in `src/types.rs`.
 
-## Install CLI
+## Install Binaries
 
-If you want the CLI tool `sk` installed system-wide:
+If you want the binaries such as `sk`, `sk_server` and `sk_client` installed system-wide:
 
 ```
 cargo install skillet
 ```
 
-## JavaScript SDK (Node)
+## Server Mode
 
-- Node addon lives in `skillet-node` (separate npm package): see `skillet-node/README.md` for usage and build.
-- Quick usage (after building the addon):
+Skillet includes a high-performance evaluation server that keeps the interpreter warm and eliminates per-process overhead.
 
-```
-import { evalFormula, evalFormulaWith } from '@skillet-lang/node'
+- Start the server: `sk_server 8080` (binds to 127.0.0.1:8080)
+- Daemonize (Unix): `sk_server 8080 -d` (writes PID to `skillet-server.pid` in CWD)
+- Stop daemon: `kill $(cat skillet-server.pid)`
 
-console.log(await evalFormula('=2 + 3 * 4')) // 14
-console.log(await evalFormulaWith('=SUM(:a,:b)', { a: 1, b: 2 })) // 3
-```
+Client and benchmarks:
+- One-off eval: `sk_client localhost:8080 '=2+3*4'`
+- With variables: `sk_client localhost:8080 '=SUM(:a,:b)' a=10 b=5`
+- JSON vars: `sk_client localhost:8080 '=:user.name' --json '{"user":{"name":"Alice"}}'`
+- Benchmark: `sk_client localhost:8080 --benchmark '=2+3*4' 10000`
 
-## Features
+Scripts:
+- Build + run multi-test benchmark: `bash scripts/benchmark_server.sh [port] [iterations] [threads]`
 
-- Expressions: numbers, strings, booleans, nulls, arrays
-- Operators: arithmetic (+ - * / % ^), comparisons (>, <, >=, <=, ==, !=), logical (AND/OR/NOT, &&/||/!)
-- Methods: chaining on numbers/strings/arrays (e.g., `.sum()`, `.upper()`)
-- Functions: `SUM`, `AVG`, `MIN`, `MAX`, `ROUND`, `CEIL`, `FLOOR`, `ABS`, `SQRT`, `POW`, more
-- Arrays: literals, indexing with negative indices, slicing, `...` spread in arg lists
-- Conditionals: ternary `? :`, `IF`, `IFS`, `XOR`, `AND`, `OR`, `NOT`
-- Functional helpers: `FILTER`, `MAP`, `REDUCE`, `SUMIF`, `AVGIF`, `COUNTIF`
-- Types and casts: `::Integer|Float|String|Boolean|Array|Currency|DateTime|Json`
-- Extensibility: register custom Rust functions; Node addon supports JS custom functions
+> take a look at the [Server Usage Guide](SERVER_USAGE_GUIDE.md) for more details about how to use it and consume in different langauages
+
+## Built-in Functions
+
+- Arithmetic: `SUM`, `AVG`/`AVERAGE`, `MIN`, `MAX`, `ROUND`, `CEIL`, `CEILING`, `FLOOR`, `ABS`, `SQRT`, `POW`/`POWER`, `MOD`, `INT`
+- Logical: `AND`, `OR`, `NOT`, `XOR`, `IF`, `IFS`
+- String: `LENGTH`, `CONCAT`, `UPPER`, `LOWER`, `TRIM`, `SUBSTRING`, `SPLIT`, `REPLACE`, `REVERSE`, `ISBLANK`, `ISNUMBER`, `ISTEXT`
+- Array: `ARRAY`, `FLATTEN`, `FIRST`, `LAST`, `CONTAINS`, `IN`, `COUNT`, `UNIQUE`, `SORT`, `REVERSE`, `JOIN`
+- Date/Time: `NOW`, `DATE`, `TIME`, `YEAR`, `MONTH`, `DAY`, `DATEADD`, `DATEDIFF`
+- Financial: `PMT`, `DB`, `FV`, `IPMT`
+- Statistical: `MEDIAN`, `MODE.SNGL` (`MODESNGL`, `MODE_SNGL`), `STDEV.P` (`STDEVP`, `STDEV_P`), `VAR.P` (`VARP`, `VAR_P`), `PERCENTILE.INC` (`PERCENTILEINC`, `PERCENTILE_INC`), `QUARTILE.INC` (`QUARTILEINC`, `QUARTILE_INC`)
+- Functional: `FILTER(array, expr, [param])`, `MAP(array, expr, [param])`, `REDUCE(array, expr, initial, [valParam], [accParam])`, `SUMIF(array, expr)`, `AVGIF(array, expr)`, `COUNTIF(array, expr)`
 
 ## API Surface (Rust)
 
@@ -160,22 +166,6 @@ console.log(await evalFormulaWith('=SUM(:a,:b)', { a: 1, b: 2 })) // 3
   - `Value` enum: `Number(f64) | Array(Vec<Value>) | Boolean(bool) | String(String) | Null | Currency(f64) | DateTime(i64) | Json(String)`
   - `Error` with `message` and optional `position`
 
-## Vanilla JavaScript (Browser)
-
-To use Skillet in plain browser JavaScript, use the WebAssembly build (`@skillet-lang/wasm`). This targets modern browsers and bundlers without native builds.
-
-- Status: planned package. The Rust crate uses a few non‑WASM deps that will be feature‑gated for the WASM build (disabling plugins/SQLite).
-- Expected usage:
-
-```
-import init, { evalFormula, evalFormulaWith } from '@skillet-lang/wasm'
-
-await init()
-console.log(evalFormula('= 2 + 3 * 4')) // 14
-console.log(evalFormulaWith('=SUM(:a,:b)', { a: 1, b: 2 })) // 3
-```
-
-Repo folder `skillet-wasm` contains the scaffold; build with `wasm-pack build --target bundler`.
 
 ## Tests
 
