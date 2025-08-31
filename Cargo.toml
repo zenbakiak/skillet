@@ -1,8 +1,8 @@
 [package]
 name = "skillet"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
-description = "Skillet: micro expression language (arithmetic, logical, functions, arrays, conditionals, excel formulas)"
+description = "Skillet: micro expression language (arithmetic, logical, functions, arrays, conditionals, excel formulas) made in Rust bin cli and server"
 license = "MIT OR Apache-2.0"
 readme = "README.md"
 # documentation will work after first publish
