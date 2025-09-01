@@ -73,19 +73,79 @@ fn sanitize_json_key(key: &str) -> String {
         .collect()
 }
 
+fn read_complete_http_request(stream: &mut TcpStream) -> Result<String, std::io::Error> {
+    let mut buffer = Vec::new();
+    let mut temp_buffer = [0; 1024];
+    let mut headers_complete = false;
+    let mut content_length: usize = 0;
+    let mut headers_end_pos = 0;
+
+    // First, read until we have complete headers
+    while !headers_complete {
+        let bytes_read = stream.read(&mut temp_buffer)?;
+        if bytes_read == 0 {
+            break;
+        }
+        
+        buffer.extend_from_slice(&temp_buffer[..bytes_read]);
+        
+        // Check if we have complete headers (ending with \r\n\r\n)
+        if let Some(pos) = find_headers_end(&buffer) {
+            headers_complete = true;
+            headers_end_pos = pos + 4;
+            
+            // Parse the headers to get Content-Length
+            let headers_str = String::from_utf8_lossy(&buffer[..pos]);
+            content_length = parse_content_length(&headers_str);
+        }
+    }
+
+    // Now read the remaining body if needed
+    let body_bytes_read = buffer.len() - headers_end_pos;
+    let remaining_bytes = content_length.saturating_sub(body_bytes_read);
+    
+    if remaining_bytes > 0 {
+        let mut body_buffer = vec![0; remaining_bytes];
+        let mut total_read = 0;
+        
+        while total_read < remaining_bytes {
+            let bytes_read = stream.read(&mut body_buffer[total_read..])?;
+            if bytes_read == 0 {
+                break;
+            }
+            total_read += bytes_read;
+        }
+        
+        buffer.extend_from_slice(&body_buffer[..total_read]);
+    }
+
+    String::from_utf8(buffer).map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid UTF-8"))
+}
+
+fn find_headers_end(buffer: &[u8]) -> Option<usize> {
+    let pattern = b"\r\n\r\n";
+    buffer.windows(pattern.len()).position(|window| window == pattern)
+}
+
+fn parse_content_length(headers: &str) -> usize {
+    for line in headers.lines() {
+        if line.to_lowercase().starts_with("content-length:") {
+            if let Some(value) = line.split(':').nth(1) {
+                return value.trim().parse().unwrap_or(0);
+            }
+        }
+    }
+    0
+}
+
 fn handle_http_request(
     mut stream: TcpStream,
     stats: Arc<ServerStats>,
     request_counter: Arc<AtomicU64>,
     server_token: Arc<Option<String>>,
 ) {
-    let mut buffer = [0; 8192];
-    let bytes_read = match stream.read(&mut buffer) {
-        Ok(size) => size,
-        Err(_) => return,
-    };
-
-    let request = match std::str::from_utf8(&buffer[..bytes_read]) {
+    // Read the complete HTTP request properly
+    let request = match read_complete_http_request(&mut stream) {
         Ok(req) => req,
         Err(_) => return,
     };
@@ -110,10 +170,10 @@ fn handle_http_request(
     let path_only = path.split('?').next().unwrap_or(path);
 
     match (method, path_only) {
-        ("GET", "/health") => handle_health(&mut stream, &stats, request, server_token),
+        ("GET", "/health") => handle_health(&mut stream, &stats, &request, server_token),
         ("GET", "/") => handle_root(&mut stream),
-        ("POST", "/eval") => handle_eval_post(&mut stream, request, stats, request_counter, server_token),
-        ("GET", "/eval") => handle_eval_get(&mut stream, request, stats, request_counter, server_token),
+        ("POST", "/eval") => handle_eval_post(&mut stream, &request, stats, request_counter, server_token),
+        ("GET", "/eval") => handle_eval_get(&mut stream, &request, stats, request_counter, server_token),
         ("OPTIONS", _) => handle_cors_preflight(&mut stream),
         _ => send_http_error(&mut stream, 404, "Not Found"),
     }
