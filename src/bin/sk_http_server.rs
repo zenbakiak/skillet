@@ -494,6 +494,75 @@ fn send_http_error(stream: &mut TcpStream, status: u16, message: &str) {
     send_http_response(stream, status, "application/json", &error_json.to_string());
 }
 
+fn daemonize() -> Result<(), Box<dyn std::error::Error>> {
+    use std::fs::OpenOptions;
+    use std::os::unix::io::AsRawFd;
+    
+    // Fork the process
+    match unsafe { libc::fork() } {
+        -1 => return Err("Failed to fork process".into()),
+        0 => {
+            // Child process continues
+        }
+        _ => {
+            // Parent process exits
+            std::process::exit(0);
+        }
+    }
+    
+    // Create a new session
+    if unsafe { libc::setsid() } == -1 {
+        return Err("Failed to create new session".into());
+    }
+    
+    // Fork again to ensure we're not a session leader
+    match unsafe { libc::fork() } {
+        -1 => return Err("Failed to fork second time".into()),
+        0 => {
+            // Grandchild continues
+        }
+        _ => {
+            // Child exits
+            std::process::exit(0);
+        }
+    }
+    
+    // DON'T change working directory to root - stay in current directory
+    // This allows relative paths to work (like hooks directory)
+    
+    // Close standard file descriptors
+    unsafe {
+        libc::close(libc::STDIN_FILENO);
+        libc::close(libc::STDOUT_FILENO);
+        libc::close(libc::STDERR_FILENO);
+    }
+    
+    // Redirect stdin, stdout, stderr to /dev/null
+    let dev_null = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/null")?;
+    
+    let null_fd = dev_null.as_raw_fd();
+    unsafe {
+        libc::dup2(null_fd, libc::STDIN_FILENO);
+        libc::dup2(null_fd, libc::STDOUT_FILENO);
+        libc::dup2(null_fd, libc::STDERR_FILENO);
+    }
+    
+    Ok(())
+}
+
+fn write_pid_file(pid_file: &str) -> Result<(), Box<dyn std::error::Error>> {
+    use std::fs::File;
+    use std::io::Write;
+    
+    let pid = std::process::id();
+    let mut file = File::create(pid_file)?;
+    writeln!(file, "{}", pid)?;
+    Ok(())
+}
+
 fn setup_signal_handlers() -> Arc<AtomicBool> {
     let running = Arc::new(AtomicBool::new(true));
     let r = running.clone();
@@ -511,13 +580,18 @@ fn main() {
         eprintln!("Usage: sk_http_server <port> [options]");
         eprintln!("");
         eprintln!("Options:");
+        eprintln!("  -d, --daemon         Run as daemon (background process)");
         eprintln!("  -H, --host <addr>    Bind host/interface (default: 127.0.0.1)");
+        eprintln!("  --pid-file <file>    Write PID to file (default: skillet-http-server.pid)");
+        eprintln!("  --log-file <file>    Write logs to file (daemon mode only)");
         eprintln!("  --token <value>      Require token for requests");
         eprintln!("");
         eprintln!("Examples:");
         eprintln!("  sk_http_server 5074");
         eprintln!("  sk_http_server 5074 --host 0.0.0.0");
         eprintln!("  sk_http_server 5074 --host 0.0.0.0 --token secret123");
+        eprintln!("  sk_http_server 5074 -d --pid-file /var/run/skillet-http.pid");
+        eprintln!("  sk_http_server 5074 -d --host 0.0.0.0 --token secret123");
         eprintln!("");
         eprintln!("Endpoints:");
         eprintln!("  GET  /health          - Health check");
@@ -534,16 +608,40 @@ fn main() {
 
     let mut bind_host = "127.0.0.1".to_string();
     let mut auth_token: Option<String> = None;
+    let mut daemon_mode = false;
+    let mut pid_file = "skillet-http-server.pid".to_string();
+    let mut _log_file: Option<String> = None;
     let mut i = 2;
 
     while i < args.len() {
         match args[i].as_str() {
+            "-d" | "--daemon" => {
+                daemon_mode = true;
+            }
             "-H" | "--host" => {
                 if i + 1 < args.len() {
                     bind_host = args[i + 1].clone();
                     i += 1;
                 } else {
                     eprintln!("Error: --host requires an address");
+                    std::process::exit(1);
+                }
+            }
+            "--pid-file" => {
+                if i + 1 < args.len() {
+                    pid_file = args[i + 1].clone();
+                    i += 1;
+                } else {
+                    eprintln!("Error: --pid-file requires a filename");
+                    std::process::exit(1);
+                }
+            }
+            "--log-file" => {
+                if i + 1 < args.len() {
+                    _log_file = Some(args[i + 1].clone());
+                    i += 1;
+                } else {
+                    eprintln!("Error: --log-file requires a filename");
                     std::process::exit(1);
                 }
             }
@@ -564,6 +662,33 @@ fn main() {
         i += 1;
     }
 
+    // Handle daemon mode before any output
+    if daemon_mode {
+        #[cfg(unix)]
+        {
+            // Print startup message before daemonizing
+            eprintln!("Starting Skillet HTTP server as daemon...");
+            eprintln!("Port: {}, Host: {}, PID file: {}", port, bind_host, pid_file);
+            if auth_token.is_some() { eprintln!("Token auth: enabled"); }
+            
+            if let Err(e) = daemonize() {
+                eprintln!("Failed to daemonize: {}", e);
+                std::process::exit(1);
+            }
+            
+            // Write PID file after successful daemonization
+            if let Err(_e) = write_pid_file(&pid_file) {
+                // Log to syslog or a file since we can't use stderr
+                std::process::exit(1);
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            eprintln!("Error: Daemon mode not supported on this platform");
+            std::process::exit(1);
+        }
+    }
+
     // Setup signal handlers
     let running = setup_signal_handlers();
 
@@ -573,12 +698,14 @@ fn main() {
 
     match js_loader.auto_register() {
         Ok(count) => {
-            if count > 0 {
+            if count > 0 && !daemon_mode {
                 eprintln!("Loaded {} custom JavaScript function(s)", count);
             }
         }
         Err(e) => {
-            eprintln!("Warning: Failed to load JavaScript functions: {}", e);
+            if !daemon_mode {
+                eprintln!("Warning: Failed to load JavaScript functions: {}", e);
+            }
         }
     }
 
@@ -598,11 +725,13 @@ fn main() {
     let request_counter = Arc::new(AtomicU64::new(0));
     let server_token = Arc::new(auth_token.clone());
 
-    eprintln!("🚀 Skillet HTTP Server started on http://{}:{}", bind_host, port);
-    if auth_token.is_some() { eprintln!("🔒 Token auth: enabled"); }
-    eprintln!("🌐 Ready for HTTP requests and Cloudflare tunneling");
-    eprintln!("📖 Visit http://{}:{} for API documentation", bind_host, port);
-    eprintln!("");
+    if !daemon_mode {
+        eprintln!("🚀 Skillet HTTP Server started on http://{}:{}", bind_host, port);
+        if auth_token.is_some() { eprintln!("🔒 Token auth: enabled"); }
+        eprintln!("🌐 Ready for HTTP requests and Cloudflare tunneling");
+        eprintln!("📖 Visit http://{}:{} for API documentation", bind_host, port);
+        eprintln!("");
+    }
 
     // Accept loop
     while running.load(Ordering::Relaxed) {
@@ -620,11 +749,15 @@ fn main() {
                 std::thread::sleep(std::time::Duration::from_millis(1));
             }
             Err(e) => {
-                eprintln!("Error accepting connection: {}", e);
+                if !daemon_mode {
+                    eprintln!("Error accepting connection: {}", e);
+                }
                 std::thread::sleep(std::time::Duration::from_millis(10));
             }
         }
     }
 
-    eprintln!("Server shutdown complete.");
+    if !daemon_mode {
+        eprintln!("Server shutdown complete.");
+    }
 }
