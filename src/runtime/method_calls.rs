@@ -368,6 +368,78 @@ pub fn exec_method(
             )),
             _ => Err(Error::new("compact expects array receiver", None)),
         },
+        
+        // Type casting methods
+        "to_s" => match recv {
+            Value::String(s) => Ok(Value::String(s.clone())),
+            Value::Number(n) => Ok(Value::String(n.to_string())),
+            Value::Boolean(b) => Ok(Value::String(if *b { "TRUE".into() } else { "FALSE".into() })),
+            Value::Null => Ok(Value::String(String::new())),
+            Value::Array(items) => Ok(Value::String(format!("{:?}", items))),
+            Value::Currency(n) => Ok(Value::String(format!("{:.4}", n))),
+            Value::DateTime(ts) => Ok(Value::String(ts.to_string())),
+            Value::Json(s) => Ok(Value::String(s.clone())),
+        },
+        "to_i" => match recv {
+            Value::Number(n) => Ok(Value::Number((*n as i64) as f64)),
+            Value::Currency(n) => Ok(Value::Number((*n as i64) as f64)),
+            Value::String(s) => {
+                let mut clean_s = String::new();
+                let mut has_dot = false;
+                for (i, c) in s.chars().enumerate() {
+                    if i == 0 && (c == '-' || c == '+') {
+                        clean_s.push(c);
+                    } else if c.is_ascii_digit() {
+                        clean_s.push(c);
+                    } else if c == '.' && !has_dot {
+                        clean_s.push(c);
+                        has_dot = true;
+                    } else {
+                        break;
+                    }
+                }
+                Ok(Value::Number(
+                    clean_s.parse::<f64>()
+                        .unwrap_or(0.0)
+                        .trunc(),
+                ))
+            },
+            Value::Boolean(b) => Ok(Value::Number(if *b { 1.0 } else { 0.0 })),
+            Value::Null => Ok(Value::Number(0.0)),
+            _ => Err(Error::new("Cannot cast to Integer", None)),
+        },
+        "to_number" => match recv {
+            Value::Number(n) => Ok(Value::Number(*n)),
+            Value::Currency(n) => Ok(Value::Number(*n)),
+            Value::String(s) => Ok(Value::Number(
+                s.parse::<f64>()
+                    .map_err(|_| Error::new("Cannot cast String to Number", None))?,
+            )),
+            Value::Boolean(b) => Ok(Value::Number(if *b { 1.0 } else { 0.0 })),
+            Value::Null => Ok(Value::Number(0.0)),
+            _ => Err(Error::new("Cannot cast to Number", None)),
+        },
+        "to_currency" => match recv {
+            Value::Currency(n) => Ok(Value::Currency(*n)),
+            Value::Number(n) => Ok(Value::Currency(*n)),
+            Value::String(s) => Ok(Value::Currency(
+                s.parse::<f64>()
+                    .map_err(|_| Error::new("Cannot cast String to Currency", None))?,
+            )),
+            Value::Boolean(b) => Ok(Value::Currency(if *b { 1.0 } else { 0.0 })),
+            Value::Null => Ok(Value::Currency(0.0)),
+            _ => Err(Error::new("Cannot cast to Currency", None)),
+        },
+        "to_boolean" => match recv {
+            Value::Boolean(b) => Ok(Value::Boolean(*b)),
+            Value::Number(n) => Ok(Value::Boolean(*n != 0.0)),
+            Value::Currency(n) => Ok(Value::Boolean(*n != 0.0)),
+            Value::String(s) => Ok(Value::Boolean(!s.trim().is_empty())),
+            Value::Array(items) => Ok(Value::Boolean(!items.is_empty())),
+            Value::Null => Ok(Value::Boolean(false)),
+            Value::DateTime(ts) => Ok(Value::Boolean(*ts != 0)),
+            Value::Json(s) => Ok(Value::Boolean(!s.trim().is_empty())),
+        },
 
         _ => Err(Error::new(format!("Unknown method: .{}()", name), None)),
     }
@@ -734,6 +806,78 @@ pub fn exec_method_with_custom(
                     .collect(),
             )),
             _ => Err(Error::new("compact expects array receiver", None)),
+        },
+        
+        // Type casting methods
+        "to_s" => match recv {
+            Value::String(s) => Ok(Value::String(s.clone())),
+            Value::Number(n) => Ok(Value::String(n.to_string())),
+            Value::Boolean(b) => Ok(Value::String(if *b { "TRUE".into() } else { "FALSE".into() })),
+            Value::Null => Ok(Value::String(String::new())),
+            Value::Array(items) => Ok(Value::String(format!("{:?}", items))),
+            Value::Currency(n) => Ok(Value::String(format!("{:.4}", n))),
+            Value::DateTime(ts) => Ok(Value::String(ts.to_string())),
+            Value::Json(s) => Ok(Value::String(s.clone())),
+        },
+        "to_i" => match recv {
+            Value::Number(n) => Ok(Value::Number((*n as i64) as f64)),
+            Value::Currency(n) => Ok(Value::Number((*n as i64) as f64)),
+            Value::String(s) => {
+                let mut clean_s = String::new();
+                let mut has_dot = false;
+                for (i, c) in s.chars().enumerate() {
+                    if i == 0 && (c == '-' || c == '+') {
+                        clean_s.push(c);
+                    } else if c.is_ascii_digit() {
+                        clean_s.push(c);
+                    } else if c == '.' && !has_dot {
+                        clean_s.push(c);
+                        has_dot = true;
+                    } else {
+                        break;
+                    }
+                }
+                Ok(Value::Number(
+                    clean_s.parse::<f64>()
+                        .unwrap_or(0.0)
+                        .trunc(),
+                ))
+            },
+            Value::Boolean(b) => Ok(Value::Number(if *b { 1.0 } else { 0.0 })),
+            Value::Null => Ok(Value::Number(0.0)),
+            _ => Err(Error::new("Cannot cast to Integer", None)),
+        },
+        "to_number" => match recv {
+            Value::Number(n) => Ok(Value::Number(*n)),
+            Value::Currency(n) => Ok(Value::Number(*n)),
+            Value::String(s) => Ok(Value::Number(
+                s.parse::<f64>()
+                    .map_err(|_| Error::new("Cannot cast String to Number", None))?,
+            )),
+            Value::Boolean(b) => Ok(Value::Number(if *b { 1.0 } else { 0.0 })),
+            Value::Null => Ok(Value::Number(0.0)),
+            _ => Err(Error::new("Cannot cast to Number", None)),
+        },
+        "to_currency" => match recv {
+            Value::Currency(n) => Ok(Value::Currency(*n)),
+            Value::Number(n) => Ok(Value::Currency(*n)),
+            Value::String(s) => Ok(Value::Currency(
+                s.parse::<f64>()
+                    .map_err(|_| Error::new("Cannot cast String to Currency", None))?,
+            )),
+            Value::Boolean(b) => Ok(Value::Currency(if *b { 1.0 } else { 0.0 })),
+            Value::Null => Ok(Value::Currency(0.0)),
+            _ => Err(Error::new("Cannot cast to Currency", None)),
+        },
+        "to_boolean" => match recv {
+            Value::Boolean(b) => Ok(Value::Boolean(*b)),
+            Value::Number(n) => Ok(Value::Boolean(*n != 0.0)),
+            Value::Currency(n) => Ok(Value::Boolean(*n != 0.0)),
+            Value::String(s) => Ok(Value::Boolean(!s.trim().is_empty())),
+            Value::Array(items) => Ok(Value::Boolean(!items.is_empty())),
+            Value::Null => Ok(Value::Boolean(false)),
+            Value::DateTime(ts) => Ok(Value::Boolean(*ts != 0)),
+            Value::Json(s) => Ok(Value::Boolean(!s.trim().is_empty())),
         },
 
         _ => Err(Error::new(format!("Unknown method: .{}()", name), None)),

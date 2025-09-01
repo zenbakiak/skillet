@@ -3,6 +3,19 @@ use std::collections::HashMap;
 use std::time::Instant;
 use serde_json::json;
 
+/// Sanitize JSON keys by replacing special characters with underscores
+fn sanitize_json_key(key: &str) -> String {
+    key.chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     
@@ -109,7 +122,8 @@ fn main() {
                                 std::process::exit(1);
                             }
                         };
-                        result.insert(key, skillet_value);
+                        let sanitized_key = sanitize_json_key(&key);
+                        result.insert(sanitized_key, skillet_value);
                     }
                     result
                 }

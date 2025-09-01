@@ -44,7 +44,7 @@ fn main() {
     // Check for benchmark mode
     if args.len() > 3 && args[2] == "--benchmark" {
         // Parse benchmark options: expression [--json JSON] [var=val ...] [--output-json] [--token TOKEN] [iterations]
-        let mut expression = args[3].clone();
+        let expression = args[3].clone();
         let mut variables = HashMap::new();
         let mut json_input: Option<String> = None;
         let mut output_json = false;
