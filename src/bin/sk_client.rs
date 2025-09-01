@@ -43,7 +43,53 @@ fn main() {
     
     // Check for benchmark mode
     if args.len() > 3 && args[2] == "--benchmark" {
-        run_benchmark(server_addr, &args[3], args.get(4).and_then(|s| s.parse().ok()).unwrap_or(100));
+        // Parse benchmark options: expression [--json JSON] [var=val ...] [--output-json] [--token TOKEN] [iterations]
+        let mut expression = args[3].clone();
+        let mut variables = HashMap::new();
+        let mut json_input: Option<String> = None;
+        let mut output_json = false;
+        let mut token: Option<String> = std::env::var("SKILLET_SERVER_TOKEN").ok();
+        let mut iterations: usize = 100;
+
+        let mut i = 4;
+        while i < args.len() {
+            let arg = &args[i];
+            if arg == "--json" {
+                if i + 1 >= args.len() { eprintln!("Error: --json flag requires a JSON string argument"); std::process::exit(1); }
+                json_input = Some(args[i + 1].clone());
+                i += 1;
+            } else if arg == "--output-json" {
+                output_json = true;
+            } else if arg == "--token" {
+                if i + 1 >= args.len() { eprintln!("Error: --token flag requires a value"); std::process::exit(1); }
+                token = Some(args[i + 1].clone());
+                i += 1;
+            } else if let Some((name, value_str)) = arg.split_once('=') {
+                let value = parse_value_to_json(value_str);
+                variables.insert(name.to_string(), value);
+            } else if let Ok(n) = arg.parse::<usize>() {
+                iterations = n;
+            } else {
+                eprintln!("Invalid argument in benchmark: '{}'", arg);
+                std::process::exit(1);
+            }
+            i += 1;
+        }
+
+        // Build request
+        let request = if let Some(json_str) = json_input {
+            let json_vars: Result<HashMap<String, serde_json::Value>, _> = serde_json::from_str(&json_str);
+            match json_vars {
+                Ok(vars) => EvalRequest { expression, variables: Some(vars), output_json: Some(output_json), token },
+                Err(e) => { eprintln!("Error: Invalid JSON: {}", e); std::process::exit(1); }
+            }
+        } else if !variables.is_empty() {
+            EvalRequest { expression, variables: Some(variables), output_json: Some(output_json), token }
+        } else {
+            EvalRequest { expression, variables: None, output_json: Some(output_json), token }
+        };
+
+        run_benchmark_with_request(server_addr, request, iterations);
         return;
     }
     
@@ -152,20 +198,13 @@ fn send_request(server_addr: &str, request: &EvalRequest) -> Result<EvalResponse
     Ok(response)
 }
 
-fn run_benchmark(server_addr: &str, expression: &str, iterations: usize) {
+fn run_benchmark_with_request(server_addr: &str, request: EvalRequest, iterations: usize) {
     println!("🚀 Benchmarking Skillet Server Performance");
     println!("==========================================");
     println!("Server: {}", server_addr);
-    println!("Expression: {}", expression);
+    println!("Expression: {}", request.expression);
     println!("Iterations: {}", iterations);
     println!("");
-    
-    let request = EvalRequest {
-        expression: expression.to_string(),
-        variables: None,
-        output_json: Some(false),
-        token: std::env::var("SKILLET_SERVER_TOKEN").ok(),
-    };
     
     // Warmup
     print!("Warming up...");
@@ -284,6 +323,17 @@ fn run_benchmark(server_addr: &str, expression: &str, iterations: usize) {
     println!("Server mode: {:.2}ms per operation", avg_server_time);
     println!("Improvement: {:.1}x faster", improvement_factor);
     println!("Estimated max throughput: {:.0} ops/second", 1000.0 / avg_server_time);
+}
+
+// Back-compat simple benchmark without variables
+fn run_benchmark(server_addr: &str, expression: &str, iterations: usize) {
+    let req = EvalRequest {
+        expression: expression.to_string(),
+        variables: None,
+        output_json: Some(false),
+        token: std::env::var("SKILLET_SERVER_TOKEN").ok(),
+    };
+    run_benchmark_with_request(server_addr, req, iterations);
 }
 
 fn parse_value_to_json(s: &str) -> serde_json::Value {
