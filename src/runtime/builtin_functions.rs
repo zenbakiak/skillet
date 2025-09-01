@@ -30,8 +30,8 @@ pub fn exec_builtin(name: &str, args: &[Value]) -> Result<Value, Error> {
     }
     
     // Try datetime functions
-    if let Ok(result) = datetime::exec_datetime(name, args) {
-        return Ok(result);
+    if datetime::is_datetime_function(name) {
+        return datetime::exec_datetime(name, args);
     }
     
     // Try financial functions
