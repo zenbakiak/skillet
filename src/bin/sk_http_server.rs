@@ -1,4 +1,4 @@
-use skillet::{evaluate_with_custom, evaluate_with_assignments, Value, JSPluginLoader};
+use skillet::{evaluate_with_custom, evaluate_with_assignments, evaluate_with_assignments_and_context, Value, JSPluginLoader};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -12,14 +12,17 @@ use std::time::Instant;
 #[derive(Debug, Deserialize)]
 struct EvalRequest {
     expression: String,
-    variables: Option<HashMap<String, serde_json::Value>>,
+    arguments: Option<HashMap<String, serde_json::Value>>,
     output_json: Option<bool>,
+    include_variables: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
 struct EvalResponse {
     success: bool,
     result: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    variables: Option<HashMap<String, serde_json::Value>>,
     error: Option<String>,
     execution_time_ms: f64,
     request_id: u64,
@@ -231,7 +234,7 @@ fn handle_root(stream: &mut TcpStream) {
         <p>Evaluate expressions via JSON POST request</p>
         <pre>{
   "expression": "=2 + 3 * 4",
-  "variables": {"x": 10, "y": 20},
+  "arguments": {"x": 10, "y": 20},
   "output_json": true
 }</pre>
     </div>
@@ -254,7 +257,7 @@ curl -X POST http://localhost:5074/eval \
 # With variables
 curl -X POST http://localhost:5074/eval \
   -H "Content-Type: application/json" \
-  -d '{"expression": "=:x + :y", "variables": {"x": 10, "y": 20}}'
+  -d '{"expression": "=:x + :y", "arguments": {"x": 10, "y": 20}}'
 
 # GET request
 curl "http://localhost:5074/eval?expr=2%2B3*4"</pre>
@@ -368,6 +371,7 @@ fn handle_eval_get(
     let mut expression = String::new();
     let mut variables = HashMap::new();
     let mut output_json = false;
+    let mut include_variables = false;
 
     for param in query.split('&') {
         if let Some((key, value)) = param.split_once('=') {
@@ -375,6 +379,7 @@ fn handle_eval_get(
             match key {
                 "expr" | "expression" => expression = decoded_value.to_string(),
                 "output_json" => output_json = decoded_value == "true",
+                "include_variables" => include_variables = decoded_value == "true",
                 _ => {
                     // Treat as variable
                     if let Ok(num) = decoded_value.parse::<f64>() {
@@ -398,8 +403,9 @@ fn handle_eval_get(
 
     let eval_request = EvalRequest {
         expression,
-        variables: if variables.is_empty() { None } else { Some(variables) },
+        arguments: if variables.is_empty() { None } else { Some(variables) },
         output_json: Some(output_json),
+        include_variables: Some(include_variables),
     };
 
     let response = process_eval_request(eval_request, stats, request_counter);
@@ -416,7 +422,7 @@ fn process_eval_request(
     let start_time = Instant::now();
 
     // Convert JSON variables to Skillet values with key sanitization
-    let vars = match req.variables {
+    let vars = match req.arguments {
         Some(json_vars) => {
             let mut result = HashMap::new();
             for (key, value) in json_vars {
@@ -429,6 +435,7 @@ fn process_eval_request(
                         return EvalResponse {
                             success: false,
                             result: None,
+                            variables: None,
                             error: Some(format!("Error converting variable '{}': {}", key, e)),
                             execution_time_ms: start_time.elapsed().as_secs_f64() * 1000.0,
                             request_id,
@@ -442,10 +449,18 @@ fn process_eval_request(
     };
 
     // Evaluate expression
-    let result = if req.expression.contains(";") || req.expression.contains(":=") {
-        evaluate_with_assignments(&req.expression, &vars)
+    let (result, variable_context) = if req.expression.contains(";") || req.expression.contains(":=") {
+        // Use the new function that returns both result and variable context
+        if req.include_variables.unwrap_or(false) {
+            match evaluate_with_assignments_and_context(&req.expression, &vars) {
+                Ok((val, ctx)) => (Ok(val), Some(ctx)),
+                Err(e) => (Err(e), None),
+            }
+        } else {
+            (evaluate_with_assignments(&req.expression, &vars), None)
+        }
     } else {
-        evaluate_with_custom(&req.expression, &vars)
+        (evaluate_with_custom(&req.expression, &vars), None)
     };
 
     let execution_time = start_time.elapsed();
@@ -460,9 +475,25 @@ fn process_eval_request(
                 format_simple_output(&val)
             };
 
+            // Convert variable context to JSON if requested
+            let variables_json = if let Some(ctx) = variable_context {
+                let mut json_vars = HashMap::new();
+                for (key, value) in ctx {
+                    // Include all variables that were assigned during evaluation
+                    // Skip initial arguments that haven't changed
+                    if !vars.contains_key(&key) || vars.get(&key) != Some(&value) {
+                        json_vars.insert(key, format_simple_output(&value));
+                    }
+                }
+                if json_vars.is_empty() { None } else { Some(json_vars) }
+            } else {
+                None
+            };
+
             EvalResponse {
                 success: true,
                 result: Some(result_json),
+                variables: variables_json,
                 error: None,
                 execution_time_ms,
                 request_id,
@@ -471,6 +502,7 @@ fn process_eval_request(
         Err(e) => EvalResponse {
             success: false,
             result: None,
+            variables: None,
             error: Some(e.to_string()),
             execution_time_ms,
             request_id,

@@ -181,6 +181,12 @@ pub fn evaluate_with_assignments(input: &str, vars: &HashMap<String, Value>) -> 
     runtime::eval_with_assignments(&expr, vars)
 }
 
+/// Evaluate with assignments and sequences, returning both result and variable context
+pub fn evaluate_with_assignments_and_context(input: &str, vars: &HashMap<String, Value>) -> Result<(Value, HashMap<String, Value>), Error> {
+    let expr = parse(input)?;
+    runtime::eval_with_assignments_and_context(&expr, vars)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
