@@ -105,6 +105,19 @@ pub fn exec_method(
                 .ok_or_else(|| Error::new("ceil expects number receiver", None))?
                 .ceil(),
         )),
+        "between" => {
+            let value = recv.as_number()
+                .ok_or_else(|| Error::new("between expects number receiver", None))?;
+            let a = eval_args(args_expr)?;
+            if a.len() != 2 {
+                return Err(Error::new("between expects 2 arguments: min, max", None));
+            }
+            let min = a[0].as_number()
+                .ok_or_else(|| Error::new("between min must be a number", None))?;
+            let max = a[1].as_number()
+                .ok_or_else(|| Error::new("between max must be a number", None))?;
+            Ok(Value::Boolean(value >= min && value <= max))
+        }
 
         // String transforms
         "upper" => match recv {
@@ -276,6 +289,38 @@ pub fn exec_method(
                 Ok(Value::Array(out))
             }
             _ => Err(Error::new("filter expects array receiver", None)),
+        },
+        "find" => match recv {
+            Value::Array(items) => {
+                let expr = args_expr
+                    .get(0)
+                    .cloned()
+                    .ok_or_else(|| Error::new("find expects an expression", None))?;
+                // Optional param name as second arg
+                let param_vals = eval_args(&args_expr[1..])?;
+                let param_name = match param_vals.get(0) {
+                    Some(Value::String(s)) => s.clone(),
+                    _ => "x".to_string(),
+                };
+                for it in items {
+                    let mut env = HashMap::new();
+                    env.insert(param_name.clone(), it.clone());
+                    if let Some(base) = base_vars {
+                        for (k, v) in base.iter() {
+                            env.insert(k.clone(), v.clone());
+                        }
+                    }
+                    let matches = match eval_with_vars(&expr, &env)? {
+                        Value::Boolean(b) => b,
+                        _ => false,
+                    };
+                    if matches {
+                        return Ok(it.clone());
+                    }
+                }
+                Ok(Value::Null)
+            }
+            _ => Err(Error::new("find expects array receiver", None)),
         },
         "map" => match recv {
             Value::Array(items) => {
@@ -544,6 +589,19 @@ pub fn exec_method_with_custom(
                 .ok_or_else(|| Error::new("ceil expects number receiver", None))?
                 .ceil(),
         )),
+        "between" => {
+            let value = recv.as_number()
+                .ok_or_else(|| Error::new("between expects number receiver", None))?;
+            let a = eval_args(args_expr)?;
+            if a.len() != 2 {
+                return Err(Error::new("between expects 2 arguments: min, max", None));
+            }
+            let min = a[0].as_number()
+                .ok_or_else(|| Error::new("between min must be a number", None))?;
+            let max = a[1].as_number()
+                .ok_or_else(|| Error::new("between max must be a number", None))?;
+            Ok(Value::Boolean(value >= min && value <= max))
+        }
 
         // String transforms
         "upper" => match recv {
@@ -715,6 +773,38 @@ pub fn exec_method_with_custom(
                 Ok(Value::Array(out))
             }
             _ => Err(Error::new("filter expects array receiver", None)),
+        },
+        "find" => match recv {
+            Value::Array(items) => {
+                let expr = args_expr
+                    .get(0)
+                    .cloned()
+                    .ok_or_else(|| Error::new("find expects an expression", None))?;
+                // Optional param name as second arg
+                let param_vals = eval_args(&args_expr[1..])?;
+                let param_name = match param_vals.get(0) {
+                    Some(Value::String(s)) => s.clone(),
+                    _ => "x".to_string(),
+                };
+                for it in items {
+                    let mut env = HashMap::new();
+                    env.insert(param_name.clone(), it.clone());
+                    if let Some(base) = base_vars {
+                        for (k, v) in base.iter() {
+                            env.insert(k.clone(), v.clone());
+                        }
+                    }
+                    let matches = match eval_with_vars_and_custom(&expr, &env, custom_registry)? {
+                        Value::Boolean(b) => b,
+                        _ => false,
+                    };
+                    if matches {
+                        return Ok(it.clone());
+                    }
+                }
+                Ok(Value::Null)
+            }
+            _ => Err(Error::new("find expects array receiver", None)),
         },
         "map" => match recv {
             Value::Array(items) => {

@@ -862,6 +862,12 @@ sk "=[1, 2, 3, 4, 5].filter(:x > 3)"           # [4, 5]
 sk "=[1, 2, 3].map(:x * 2)"                    # [2, 4, 6]
 sk "=[1, 2, 3, 4].reduce(:acc + :x, 0)"         # 10
 sk "=[[1, 2], [3, 4], [5]].flatten()"         # [1, 2, 3, 4, 5]
+
+# Find and range functions
+sk "=FIND([1, 2, 3, 4, 5], :x > 3)"            # 4 (first match)
+sk "=[1, 2, 3, 4, 5].find(:x > 3)"             # 4 (method form)
+sk "=BETWEEN(10, 20, 15)"                      # true
+sk "=(17).between(10, 20)"                     # true (method form)
 ```
 
 ### Mathematical Functions
@@ -1009,11 +1015,13 @@ sk "=:sales * IF(:sales > 100000, 0.08, IF(:sales > 50000, 0.06, 0.04))" sales=7
 
 ### Array Functions
 - `FILTER(array, expression)` - Filter array elements
+- `FIND(array, expression)` - Find first element matching expression (returns element or Null)
 - `MAP(array, expression)` - Transform array elements
 - `REDUCE(array, expression, initial)` - Reduce array to single value
 - `SUMIF(array, condition)` - Conditional sum
 - `AVGIF(array, condition)` - Conditional average
 - `COUNTIF(array, condition)` - Conditional count
+- `BETWEEN(min, max, value)` - Check if value is within range (inclusive)
 
 ### Financial Functions
 - `PMT(rate, nper, pv, [fv], [type])` - Calculate loan payment
@@ -1104,6 +1112,9 @@ sk "=[5, 2, 8, 2, 1, 9, 2].unique().sort().reverse()"  # [9, 8, 5, 2, 1]
 
 # Complex chaining
 sk "=:data.filter(x > 0).map(x * 2).sum()" data=[1,-2,3,-4,5]  # 18
+
+# Range checking method
+sk "=(75).between(60, 100)"                    # true
 ```
 
 ### Predicate Methods

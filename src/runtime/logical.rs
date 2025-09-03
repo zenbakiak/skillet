@@ -59,6 +59,13 @@ pub fn exec_logical(name: &str, args: &[Value]) -> Result<Value, Error> {
             }
             Ok(Value::Boolean(false))
         }
+        "BETWEEN" => {
+            if args.len() != 3 { return Err(Error::new("BETWEEN expects 3 arguments: (min, max, value)", None)); }
+            let min = args[0].as_number().ok_or_else(|| Error::new("BETWEEN min must be a number", None))?;
+            let max = args[1].as_number().ok_or_else(|| Error::new("BETWEEN max must be a number", None))?;
+            let value = args[2].as_number().ok_or_else(|| Error::new("BETWEEN value must be a number", None))?;
+            Ok(Value::Boolean(value >= min && value <= max))
+        }
         _ => Err(Error::new(format!("Unknown logical function: {}", name), None)),
     }
 }

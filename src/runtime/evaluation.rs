@@ -144,6 +144,24 @@ pub fn eval(expr: &Expr) -> Result<Value, Error> {
                     }
                     _ => Err(Error::new("FILTER first arg must be array", None)),
                 }
+            } else if name == "FIND" {
+                if args.len() < 2 { return Err(Error::new("FIND expects (array, expr, [param])", None)); }
+                let arr_v = eval(&args[0])?;
+                let lambda = &args[1];
+                let param_name = if args.len() > 2 { if let Value::String(s) = eval(&args[2])? { s } else { "x".into() } } else { "x".into() };
+                match arr_v {
+                    Value::Array(items) => {
+                        for it in items {
+                            let mut env = HashMap::new(); env.insert(param_name.clone(), it.clone());
+                            if let Expr::Spread(_) = lambda { return Err(Error::new("Invalid lambda", None)); }
+                            if let Value::Boolean(b) = eval_with_vars(lambda, &env)? { 
+                                if b { return Ok(it); } 
+                            }
+                        }
+                        Ok(Value::Null)
+                    }
+                    _ => Err(Error::new("FIND first arg must be array", None)),
+                }
             } else if name == "MAP" {
                 if args.len() < 2 { return Err(Error::new("MAP expects (array, expr, [param])", None)); }
                 let arr_v = eval(&args[0])?;
@@ -613,6 +631,22 @@ pub fn eval_with_vars_and_custom(expr: &Expr, vars: &HashMap<String, Value>, cus
                         Ok(Value::Array(out))
                     }
                     _ => Err(Error::new("FILTER first arg must be array", None)),
+                }
+            } else if name == "FIND" {
+                if args.len() < 2 { return Err(Error::new("FIND expects (array, expr)", None)); }
+                let arr_v = eval_with_vars_and_custom(&args[0], vars, custom_registry)?;
+                let lambda = &args[1];
+                match arr_v {
+                    Value::Array(items) => {
+                        for it in items {
+                            let mut env = vars.clone(); env.insert("x".into(), it.clone());
+                            if let Value::Boolean(true) = eval_with_vars_and_custom(lambda, &env, custom_registry)? {
+                                return Ok(it);
+                            }
+                        }
+                        Ok(Value::Null)
+                    }
+                    _ => Err(Error::new("FIND first arg must be array", None)),
                 }
             } else if name == "MAP" {
                 if args.len() < 2 { return Err(Error::new("MAP expects (array, expr)", None)); }

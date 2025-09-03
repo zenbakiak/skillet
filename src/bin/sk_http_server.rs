@@ -11,10 +11,51 @@ use std::time::Instant;
 
 #[derive(Debug, Deserialize)]
 struct EvalRequest {
+    #[serde(deserialize_with = "deserialize_expression")]
     expression: String,
     arguments: Option<HashMap<String, serde_json::Value>>,
     output_json: Option<bool>,
     include_variables: Option<bool>,
+}
+
+fn deserialize_expression<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::{self, Visitor};
+    use std::fmt;
+
+    struct ExpressionVisitor;
+
+    impl<'de> Visitor<'de> for ExpressionVisitor {
+        type Value = String;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("a string or array of strings")
+        }
+
+        fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(value.to_string())
+        }
+
+        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+        where
+            A: de::SeqAccess<'de>,
+        {
+            let mut expressions = Vec::new();
+            
+            while let Some(expr) = seq.next_element::<String>()? {
+                expressions.push(expr);
+            }
+            
+            Ok(expressions.join(""))
+        }
+    }
+
+    deserializer.deserialize_any(ExpressionVisitor)
 }
 
 #[derive(Debug, Serialize)]
