@@ -1,4 +1,5 @@
-use skillet::{evaluate_with_custom, evaluate_with_assignments, evaluate_with_assignments_and_context, Value, JSPluginLoader};
+use skillet::{evaluate_with_custom, evaluate_with_assignments, evaluate_with_assignments_and_context, Value, JSPluginLoader, CustomFunction};
+use skillet::js_plugin::JavaScriptFunction;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -46,11 +47,11 @@ where
             A: de::SeqAccess<'de>,
         {
             let mut expressions = Vec::new();
-            
+
             while let Some(expr) = seq.next_element::<String>()? {
                 expressions.push(expr);
             }
-            
+
             Ok(expressions.join(""))
         }
     }
@@ -75,6 +76,87 @@ struct HealthResponse {
     version: String,
     requests_processed: u64,
     avg_execution_time_ms: f64,
+}
+
+#[derive(Debug, Deserialize)]
+struct UploadJSRequest {
+    filename: String,
+    js_code: String,
+}
+
+#[derive(Debug, Serialize)]
+struct UploadJSResponse {
+    success: bool,
+    message: String,
+    function_name: Option<String>,
+    validation_results: Option<ValidationResults>,
+    error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct ValidationResults {
+    syntax_valid: bool,
+    structure_valid: bool,
+    example_test_passed: bool,
+    example_result: Option<String>,
+    example_error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct ReloadHooksResponse {
+    success: bool,
+    message: String,
+    functions_loaded: usize,
+    error: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct UpdateJSRequest {
+    filename: String,
+    js_code: String,
+}
+
+#[derive(Debug, Serialize)]
+struct UpdateJSResponse {
+    success: bool,
+    message: String,
+    function_name: Option<String>,
+    validation_results: Option<ValidationResults>,
+    error: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DeleteJSRequest {
+    filename: String,
+}
+
+#[derive(Debug, Serialize)]
+struct DeleteJSResponse {
+    success: bool,
+    message: String,
+    error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct JSFunctionInfo {
+    filename: String,
+    function_name: Option<String>,
+    description: Option<String>,
+    example: Option<String>,
+    min_args: Option<usize>,
+    max_args: Option<usize>,
+    file_size: u64,
+    last_modified: String,
+    is_valid: bool,
+    validation_error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct ListJSResponse {
+    success: bool,
+    functions: Vec<JSFunctionInfo>,
+    total_count: usize,
+    error: Option<String>,
 }
 
 struct ServerStats {
@@ -130,14 +212,14 @@ fn read_complete_http_request(stream: &mut TcpStream) -> Result<String, std::io:
         if bytes_read == 0 {
             break;
         }
-        
+
         buffer.extend_from_slice(&temp_buffer[..bytes_read]);
-        
+
         // Check if we have complete headers (ending with \r\n\r\n)
         if let Some(pos) = find_headers_end(&buffer) {
             headers_complete = true;
             headers_end_pos = pos + 4;
-            
+
             // Parse the headers to get Content-Length
             let headers_str = String::from_utf8_lossy(&buffer[..pos]);
             content_length = parse_content_length(&headers_str);
@@ -147,11 +229,11 @@ fn read_complete_http_request(stream: &mut TcpStream) -> Result<String, std::io:
     // Now read the remaining body if needed
     let body_bytes_read = buffer.len() - headers_end_pos;
     let remaining_bytes = content_length.saturating_sub(body_bytes_read);
-    
+
     if remaining_bytes > 0 {
         let mut body_buffer = vec![0; remaining_bytes];
         let mut total_read = 0;
-        
+
         while total_read < remaining_bytes {
             let bytes_read = stream.read(&mut body_buffer[total_read..])?;
             if bytes_read == 0 {
@@ -159,7 +241,7 @@ fn read_complete_http_request(stream: &mut TcpStream) -> Result<String, std::io:
             }
             total_read += bytes_read;
         }
-        
+
         buffer.extend_from_slice(&body_buffer[..total_read]);
     }
 
@@ -187,6 +269,7 @@ fn handle_http_request(
     stats: Arc<ServerStats>,
     request_counter: Arc<AtomicU64>,
     server_token: Arc<Option<String>>,
+    server_admin_token: Arc<Option<String>>,
 ) {
     // Read the complete HTTP request properly
     let request = match read_complete_http_request(&mut stream) {
@@ -218,15 +301,20 @@ fn handle_http_request(
         ("GET", "/") => handle_root(&mut stream),
         ("POST", "/eval") => handle_eval_post(&mut stream, &request, stats, request_counter, server_token),
         ("GET", "/eval") => handle_eval_get(&mut stream, &request, stats, request_counter, server_token),
+        ("POST", "/upload-js") => handle_upload_js(&mut stream, &request, server_admin_token),
+        ("PUT", "/update-js") => handle_update_js(&mut stream, &request, server_admin_token),
+        ("DELETE", "/delete-js") => handle_delete_js(&mut stream, &request, server_admin_token),
+        ("GET", "/list-js") => handle_list_js(&mut stream, &request, server_admin_token),
+        ("POST", "/reload-hooks") => handle_reload_hooks(&mut stream, &request, server_admin_token),
         ("OPTIONS", _) => handle_cors_preflight(&mut stream),
         _ => send_http_error(&mut stream, 404, "Not Found"),
     }
 }
 
 fn handle_health(
-    stream: &mut TcpStream, 
-    stats: &ServerStats, 
-    request: &str, 
+    stream: &mut TcpStream,
+    stats: &ServerStats,
+    request: &str,
     server_token: Arc<Option<String>>
 ) {
     // Check authentication
@@ -260,7 +348,7 @@ fn handle_root(stream: &mut TcpStream) {
     </style>
 </head>
 <body>
-    <h1>🥘 Skillet Expression Server</h1>
+    <h1>Skillet Expression Server</h1>
     <p>A high-performance mathematical and logical expression evaluation server.</p>
 
     <h2>API Endpoints</h2>
@@ -286,6 +374,49 @@ fn handle_root(stream: &mut TcpStream) {
         <p>Example: <code>/eval?expr=2+3*4&x=10&y=20</code></p>
     </div>
 
+    <div class="endpoint">
+        <h3>POST /upload-js</h3>
+        <p>Upload and validate JavaScript functions</p>
+        <p><strong>⚠️ Requires admin token authentication</strong></p>
+        <pre>{
+  "filename": "myfunction.js",
+  "js_code": "// @name: MYFUNCTION\n// @min_args: 1\n// @max_args: 1\n// @example: MYFUNCTION(5) returns 10\nfunction execute(args) { return args[0] * 2; }"
+}</pre>
+    </div>
+
+    <div class="endpoint">
+        <h3>GET /list-js</h3>
+        <p>List all JavaScript functions in hooks directory</p>
+        <p>Returns detailed information about each function including validation status</p>
+        <p><strong>⚠️ Requires admin token authentication</strong></p>
+    </div>
+
+    <div class="endpoint">
+        <h3>PUT /update-js</h3>
+        <p>Update an existing JavaScript function</p>
+        <p><strong>⚠️ Requires admin token authentication</strong></p>
+        <pre>{
+  "filename": "myfunction.js",
+  "js_code": "// @name: MYFUNCTION\n// @min_args: 1\n// @max_args: 1\n// @example: MYFUNCTION(10) returns 20\nfunction execute(args) { return args[0] * 2; }"
+}</pre>
+    </div>
+
+    <div class="endpoint">
+        <h3>DELETE /delete-js</h3>
+        <p>Delete a JavaScript function file</p>
+        <p><strong>⚠️ Requires admin token authentication</strong></p>
+        <pre>{
+  "filename": "myfunction.js"
+}</pre>
+    </div>
+
+    <div class="endpoint">
+        <h3>POST /reload-hooks</h3>
+        <p>Reload all JavaScript functions from hooks directory</p>
+        <p><strong>⚠️ Requires admin token authentication</strong></p>
+        <pre>{}</pre>
+    </div>
+
     <h2>Examples</h2>
     <pre># Health check
 curl http://localhost:5074/health
@@ -301,7 +432,35 @@ curl -X POST http://localhost:5074/eval \
   -d '{"expression": "=:x + :y", "arguments": {"x": 10, "y": 20}}'
 
 # GET request
-curl "http://localhost:5074/eval?expr=2%2B3*4"</pre>
+curl "http://localhost:5074/eval?expr=2%2B3*4"
+
+# JavaScript function management (requires admin token)
+# List all JS functions
+curl -H "Authorization: admin456" http://localhost:5074/list-js
+
+# Upload a JS function
+curl -X POST http://localhost:5074/upload-js \
+  -H "Content-Type: application/json" \
+  -H "Authorization: admin456" \
+  -d '{"filename": "double.js", "js_code": "// @name: DOUBLE\n// @example: DOUBLE(5) returns 10\nfunction execute(args) { return args[0] * 2; }"}'
+
+# Update a JS function
+curl -X PUT http://localhost:5074/update-js \
+  -H "Content-Type: application/json" \
+  -H "Authorization: admin456" \
+  -d '{"filename": "double.js", "js_code": "// @name: DOUBLE\n// @example: DOUBLE(5) returns 20\nfunction execute(args) { return args[0] * 4; }"}'
+
+# Delete a JS function
+curl -X DELETE http://localhost:5074/delete-js \
+  -H "Content-Type: application/json" \
+  -H "Authorization: admin456" \
+  -d '{"filename": "double.js"}'
+
+# Reload hooks
+curl -X POST http://localhost:5074/reload-hooks \
+  -H "Content-Type: application/json" \
+  -H "Authorization: admin456" \
+  -d '{}'</pre>
 </body>
 </html>"#;
 
@@ -311,7 +470,7 @@ curl "http://localhost:5074/eval?expr=2%2B3*4"</pre>
 fn handle_cors_preflight(stream: &mut TcpStream) {
     let response = "HTTP/1.1 200 OK\r\n\
         Access-Control-Allow-Origin: *\r\n\
-        Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n\
+        Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS\r\n\
         Access-Control-Allow-Headers: Content-Type, Authorization\r\n\
         Content-Length: 0\r\n\
         \r\n";
@@ -342,6 +501,21 @@ fn check_authentication(request: &str, server_token: &Option<String>) -> Option<
             let error_response = serde_json::json!({
                 "success": false,
                 "error": "Unauthorized: invalid token"
+            });
+            return Some(error_response.to_string());
+        }
+    }
+    None
+}
+
+fn check_admin_authentication(request: &str, server_admin_token: &Option<String>) -> Option<String> {
+    if let Some(cfg_admin_token) = server_admin_token {
+        let auth_token = extract_auth_header(request);
+        let supplied = auth_token.as_deref().unwrap_or("");
+        if supplied != cfg_admin_token {
+            let error_response = serde_json::json!({
+                "success": false,
+                "error": "Unauthorized: invalid admin token. JavaScript function management requires admin authentication."
             });
             return Some(error_response.to_string());
         }
@@ -606,7 +780,7 @@ fn send_http_response(stream: &mut TcpStream, status: u16, content_type: &str, b
     let response = format!(
         "HTTP/1.1 {} {}\r\n\
          Access-Control-Allow-Origin: *\r\n\
-         Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n\
+         Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS\r\n\
          Access-Control-Allow-Headers: Content-Type, Authorization\r\n\
          Content-Type: {}\r\n\
          Content-Length: {}\r\n\
@@ -627,10 +801,609 @@ fn send_http_error(stream: &mut TcpStream, status: u16, message: &str) {
     send_http_response(stream, status, "application/json", &error_json.to_string());
 }
 
+fn handle_list_js(
+    stream: &mut TcpStream,
+    request: &str,
+    server_admin_token: Arc<Option<String>>,
+) {
+    // Check admin authentication first
+    if let Some(error_response) = check_admin_authentication(request, &server_admin_token) {
+        send_http_response(stream, 401, "application/json", &error_response);
+        return;
+    }
+
+    let hooks_dir = std::env::var("SKILLET_HOOKS_DIR").unwrap_or_else(|_| "hooks".to_string());
+
+    match list_js_functions(&hooks_dir) {
+        Ok(functions) => {
+            let response = ListJSResponse {
+                success: true,
+                total_count: functions.len(),
+                functions,
+                error: None,
+            };
+            let json = serde_json::to_string(&response).unwrap_or_default();
+            send_http_response(stream, 200, "application/json", &json);
+        }
+        Err(e) => {
+            let response = ListJSResponse {
+                success: false,
+                functions: Vec::new(),
+                total_count: 0,
+                error: Some(e),
+            };
+            let json = serde_json::to_string(&response).unwrap_or_default();
+            send_http_response(stream, 500, "application/json", &json);
+        }
+    }
+}
+
+fn handle_update_js(
+    stream: &mut TcpStream,
+    request: &str,
+    server_admin_token: Arc<Option<String>>,
+) {
+    // Check admin authentication first
+    if let Some(error_response) = check_admin_authentication(request, &server_admin_token) {
+        send_http_response(stream, 401, "application/json", &error_response);
+        return;
+    }
+
+    // Parse JSON body
+    let body_start = match request.find("\r\n\r\n") {
+        Some(pos) => pos + 4,
+        None => {
+            send_http_error(stream, 400, "Invalid HTTP request");
+            return;
+        }
+    };
+
+    let body = &request[body_start..];
+    let update_request: UpdateJSRequest = match serde_json::from_str(body) {
+        Ok(req) => req,
+        Err(e) => {
+            send_http_error(stream, 400, &format!("Invalid JSON: {}", e));
+            return;
+        }
+    };
+
+    // Validate filename ends with .js
+    if !update_request.filename.ends_with(".js") {
+        let response = UpdateJSResponse {
+            success: false,
+            message: "Filename must end with .js extension".to_string(),
+            function_name: None,
+            validation_results: None,
+            error: Some("Invalid file extension".to_string()),
+        };
+        let json = serde_json::to_string(&response).unwrap_or_default();
+        send_http_response(stream, 400, "application/json", &json);
+        return;
+    }
+
+    let hooks_dir = std::env::var("SKILLET_HOOKS_DIR").unwrap_or_else(|_| "hooks".to_string());
+
+    // Check if file exists
+    let file_path = std::path::Path::new(&hooks_dir).join(&update_request.filename);
+    if !file_path.exists() {
+        let response = UpdateJSResponse {
+            success: false,
+            message: format!("File '{}' does not exist", update_request.filename),
+            function_name: None,
+            validation_results: None,
+            error: Some("File not found".to_string()),
+        };
+        let json = serde_json::to_string(&response).unwrap_or_default();
+        send_http_response(stream, 404, "application/json", &json);
+        return;
+    }
+
+    // Validate and process the JS function
+    match validate_js_function(&update_request.js_code) {
+        Ok((js_func, validation_results)) => {
+            // Update file in hooks directory
+            match save_js_file(&hooks_dir, &update_request.filename, &update_request.js_code) {
+                Ok(_) => {
+                    let response = UpdateJSResponse {
+                        success: true,
+                        message: format!("JavaScript function '{}' updated successfully", js_func.name()),
+                        function_name: Some(js_func.name().to_string()),
+                        validation_results: Some(validation_results),
+                        error: None,
+                    };
+                    let json = serde_json::to_string(&response).unwrap_or_default();
+                    send_http_response(stream, 200, "application/json", &json);
+                }
+                Err(e) => {
+                    let response = UpdateJSResponse {
+                        success: false,
+                        message: "Validation passed but failed to update file".to_string(),
+                        function_name: Some(js_func.name().to_string()),
+                        validation_results: Some(validation_results),
+                        error: Some(e),
+                    };
+                    let json = serde_json::to_string(&response).unwrap_or_default();
+                    send_http_response(stream, 500, "application/json", &json);
+                }
+            }
+        }
+        Err(e) => {
+            let response = UpdateJSResponse {
+                success: false,
+                message: "JavaScript function validation failed".to_string(),
+                function_name: None,
+                validation_results: None,
+                error: Some(e),
+            };
+            let json = serde_json::to_string(&response).unwrap_or_default();
+            send_http_response(stream, 400, "application/json", &json);
+        }
+    }
+}
+
+fn handle_delete_js(
+    stream: &mut TcpStream,
+    request: &str,
+    server_admin_token: Arc<Option<String>>,
+) {
+    // Check admin authentication first
+    if let Some(error_response) = check_admin_authentication(request, &server_admin_token) {
+        send_http_response(stream, 401, "application/json", &error_response);
+        return;
+    }
+
+    // Parse JSON body
+    let body_start = match request.find("\r\n\r\n") {
+        Some(pos) => pos + 4,
+        None => {
+            send_http_error(stream, 400, "Invalid HTTP request");
+            return;
+        }
+    };
+
+    let body = &request[body_start..];
+    let delete_request: DeleteJSRequest = match serde_json::from_str(body) {
+        Ok(req) => req,
+        Err(e) => {
+            send_http_error(stream, 400, &format!("Invalid JSON: {}", e));
+            return;
+        }
+    };
+
+    // Validate filename ends with .js
+    if !delete_request.filename.ends_with(".js") {
+        let response = DeleteJSResponse {
+            success: false,
+            message: "Filename must end with .js extension".to_string(),
+            error: Some("Invalid file extension".to_string()),
+        };
+        let json = serde_json::to_string(&response).unwrap_or_default();
+        send_http_response(stream, 400, "application/json", &json);
+        return;
+    }
+
+    let hooks_dir = std::env::var("SKILLET_HOOKS_DIR").unwrap_or_else(|_| "hooks".to_string());
+
+    match delete_js_file(&hooks_dir, &delete_request.filename) {
+        Ok(_) => {
+            let response = DeleteJSResponse {
+                success: true,
+                message: format!("JavaScript function file '{}' deleted successfully", delete_request.filename),
+                error: None,
+            };
+            let json = serde_json::to_string(&response).unwrap_or_default();
+            send_http_response(stream, 200, "application/json", &json);
+        }
+        Err(e) => {
+            let response = DeleteJSResponse {
+                success: false,
+                message: format!("Failed to delete file '{}'", delete_request.filename),
+                error: Some(e),
+            };
+            let json = serde_json::to_string(&response).unwrap_or_default();
+            send_http_response(stream, 500, "application/json", &json);
+        }
+    }
+}
+
+fn handle_upload_js(
+    stream: &mut TcpStream,
+    request: &str,
+    server_admin_token: Arc<Option<String>>,
+) {
+    // Check admin authentication first
+    if let Some(error_response) = check_admin_authentication(request, &server_admin_token) {
+        send_http_response(stream, 401, "application/json", &error_response);
+        return;
+    }
+
+    // Parse JSON body
+    let body_start = match request.find("\r\n\r\n") {
+        Some(pos) => pos + 4,
+        None => {
+            send_http_error(stream, 400, "Invalid HTTP request");
+            return;
+        }
+    };
+
+    let body = &request[body_start..];
+    let upload_request: UploadJSRequest = match serde_json::from_str(body) {
+        Ok(req) => req,
+        Err(e) => {
+            send_http_error(stream, 400, &format!("Invalid JSON: {}", e));
+            return;
+        }
+    };
+
+    // Validate filename ends with .js
+    if !upload_request.filename.ends_with(".js") {
+        let response = UploadJSResponse {
+            success: false,
+            message: "Filename must end with .js extension".to_string(),
+            function_name: None,
+            validation_results: None,
+            error: Some("Invalid file extension".to_string()),
+        };
+        let json = serde_json::to_string(&response).unwrap_or_default();
+        send_http_response(stream, 400, "application/json", &json);
+        return;
+    }
+
+    // Validate and process the JS function
+    match validate_js_function(&upload_request.js_code) {
+        Ok((js_func, validation_results)) => {
+            // Save file to hooks directory
+            let hooks_dir = std::env::var("SKILLET_HOOKS_DIR").unwrap_or_else(|_| "hooks".to_string());
+            match save_js_file(&hooks_dir, &upload_request.filename, &upload_request.js_code) {
+                Ok(_) => {
+                    let response = UploadJSResponse {
+                        success: true,
+                        message: format!("JavaScript function '{}' uploaded and validated successfully", js_func.name()),
+                        function_name: Some(js_func.name().to_string()),
+                        validation_results: Some(validation_results),
+                        error: None,
+                    };
+                    let json = serde_json::to_string(&response).unwrap_or_default();
+                    send_http_response(stream, 200, "application/json", &json);
+                }
+                Err(e) => {
+                    let response = UploadJSResponse {
+                        success: false,
+                        message: "Validation passed but failed to save file".to_string(),
+                        function_name: Some(js_func.name().to_string()),
+                        validation_results: Some(validation_results),
+                        error: Some(e),
+                    };
+                    let json = serde_json::to_string(&response).unwrap_or_default();
+                    send_http_response(stream, 500, "application/json", &json);
+                }
+            }
+        }
+        Err(e) => {
+            let response = UploadJSResponse {
+                success: false,
+                message: "JavaScript function validation failed".to_string(),
+                function_name: None,
+                validation_results: None,
+                error: Some(e),
+            };
+            let json = serde_json::to_string(&response).unwrap_or_default();
+            send_http_response(stream, 400, "application/json", &json);
+        }
+    }
+}
+
+fn handle_reload_hooks(
+    stream: &mut TcpStream,
+    request: &str,
+    server_admin_token: Arc<Option<String>>,
+) {
+    // Check admin authentication first
+    if let Some(error_response) = check_admin_authentication(request, &server_admin_token) {
+        send_http_response(stream, 401, "application/json", &error_response);
+        return;
+    }
+
+    let hooks_dir = std::env::var("SKILLET_HOOKS_DIR").unwrap_or_else(|_| "hooks".to_string());
+    let js_loader = JSPluginLoader::new(hooks_dir);
+
+    match js_loader.auto_register() {
+        Ok(count) => {
+            let response = ReloadHooksResponse {
+                success: true,
+                message: format!("Successfully reloaded {} JavaScript function(s)", count),
+                functions_loaded: count,
+                error: None,
+            };
+            let json = serde_json::to_string(&response).unwrap_or_default();
+            send_http_response(stream, 200, "application/json", &json);
+        }
+        Err(e) => {
+            let response = ReloadHooksResponse {
+                success: false,
+                message: "Failed to reload JavaScript functions".to_string(),
+                functions_loaded: 0,
+                error: Some(e.to_string()),
+            };
+            let json = serde_json::to_string(&response).unwrap_or_default();
+            send_http_response(stream, 500, "application/json", &json);
+        }
+    }
+}
+
+fn validate_js_function(js_code: &str) -> Result<(JavaScriptFunction, ValidationResults), String> {
+    let mut validation_results = ValidationResults {
+        syntax_valid: false,
+        structure_valid: false,
+        example_test_passed: false,
+        example_result: None,
+        example_error: None,
+    };
+
+    // Step 1: Parse the JS function (validates syntax and structure)
+    let js_func = match JavaScriptFunction::parse_js_function(js_code) {
+        Ok(func) => {
+            validation_results.syntax_valid = true;
+            validation_results.structure_valid = true;
+            func
+        }
+        Err(e) => {
+            return Err(format!("Syntax/structure validation failed: {}", e));
+        }
+    };
+
+    // Step 2: Test the example if provided
+    if let Some(example) = js_func.example() {
+        match test_js_function_example(&js_func, example) {
+            Ok(result) => {
+                validation_results.example_test_passed = true;
+                validation_results.example_result = Some(result);
+            }
+            Err(e) => {
+                validation_results.example_test_passed = false;
+                validation_results.example_error = Some(e);
+            }
+        }
+    } else {
+        // No example provided, consider it passed
+        validation_results.example_test_passed = true;
+        validation_results.example_result = Some("No example provided to test".to_string());
+    }
+
+    Ok((js_func, validation_results))
+}
+
+fn test_js_function_example(js_func: &JavaScriptFunction, example: &str) -> Result<String, String> {
+    // Parse the example to extract function call and expected result
+    // Example format: "MYFUNCTION(5) returns 10"
+    // or "MYFUNCTION(\"hello\") returns \"HELLO\""
+
+    if let Some((call_part, expected_part)) = example.split_once(" returns ") {
+        let function_call = call_part.trim();
+        let expected_result = expected_part.trim();
+
+        // Parse the function call to get arguments
+        if let Some(args_str) = function_call.strip_prefix(&format!("{}(", js_func.name())).and_then(|s| s.strip_suffix(')')) {
+            // Simple argument parsing - this could be enhanced
+            let args = parse_function_arguments(args_str)?;
+
+            // Execute the function
+            match js_func.execute(args) {
+                Ok(result) => {
+                    let result_str = format_value_for_comparison(&result);
+                    if result_str == expected_result || format!("\"{}\"", result_str) == expected_result {
+                        Ok(format!("Expected: {}, Got: {} ✓", expected_result, result_str))
+                    } else {
+                        Err(format!("Expected: {}, Got: {}", expected_result, result_str))
+                    }
+                }
+                Err(e) => {
+                    Err(format!("Function execution failed: {}", e))
+                }
+            }
+        } else {
+            Err("Invalid example format: cannot parse function call".to_string())
+        }
+    } else {
+        Err("Invalid example format: expected 'FUNCTION(args) returns result'".to_string())
+    }
+}
+
+fn parse_function_arguments(args_str: &str) -> Result<Vec<Value>, String> {
+    if args_str.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut args = Vec::new();
+
+    // Simple argument parsing - handles basic cases
+    for arg in args_str.split(',') {
+        let arg = arg.trim();
+
+        if arg.starts_with('"') && arg.ends_with('"') {
+            // String argument
+            let string_val = &arg[1..arg.len()-1]; // Remove quotes
+            args.push(Value::String(string_val.to_string()));
+        } else if arg == "true" {
+            args.push(Value::Boolean(true));
+        } else if arg == "false" {
+            args.push(Value::Boolean(false));
+        } else if let Ok(num) = arg.parse::<f64>() {
+            // Number argument
+            args.push(Value::Number(num));
+        } else {
+            return Err(format!("Cannot parse argument: {}", arg));
+        }
+    }
+
+    Ok(args)
+}
+
+fn format_value_for_comparison(value: &Value) -> String {
+    match value {
+        Value::Number(n) => {
+            if n.fract() == 0.0 {
+                format!("{}", *n as i64)
+            } else {
+                format!("{}", n)
+            }
+        }
+        Value::String(s) => s.clone(),
+        Value::Boolean(b) => b.to_string(),
+        Value::Null => "null".to_string(),
+        Value::Array(arr) => {
+            let items: Vec<String> = arr.iter().map(format_value_for_comparison).collect();
+            format!("[{}]", items.join(", "))
+        }
+        Value::Currency(c) => format!("{}", c),
+        Value::DateTime(dt) => dt.to_string(),
+        Value::Json(json) => json.clone(),
+    }
+}
+
+fn save_js_file(hooks_dir: &str, filename: &str, js_code: &str) -> Result<(), String> {
+    use std::fs;
+    use std::path::Path;
+
+    // Ensure hooks directory exists
+    let hooks_path = Path::new(hooks_dir);
+    if !hooks_path.exists() {
+        fs::create_dir_all(hooks_path)
+            .map_err(|e| format!("Failed to create hooks directory: {}", e))?;
+    }
+
+    // Save the file
+    let file_path = hooks_path.join(filename);
+    fs::write(&file_path, js_code)
+        .map_err(|e| format!("Failed to write JS file: {}", e))?;
+
+    Ok(())
+}
+
+fn delete_js_file(hooks_dir: &str, filename: &str) -> Result<(), String> {
+    use std::fs;
+    use std::path::Path;
+
+    let hooks_path = Path::new(hooks_dir);
+    let file_path = hooks_path.join(filename);
+
+    // Check if file exists
+    if !file_path.exists() {
+        return Err(format!("File '{}' does not exist", filename));
+    }
+
+    // Delete the file
+    fs::remove_file(&file_path)
+        .map_err(|e| format!("Failed to delete JS file: {}", e))?;
+
+    Ok(())
+}
+
+fn list_js_functions(hooks_dir: &str) -> Result<Vec<JSFunctionInfo>, String> {
+    use std::fs;
+    use std::path::Path;
+
+    let hooks_path = Path::new(hooks_dir);
+
+    if !hooks_path.exists() {
+        // Return empty list if hooks directory doesn't exist
+        return Ok(Vec::new());
+    }
+
+    let mut functions = Vec::new();
+
+    // Recursively scan directory for JS files
+    scan_directory_for_js(hooks_path, hooks_path, &mut functions)?;
+
+    // Sort by filename for consistent ordering
+    functions.sort_by(|a, b| a.filename.cmp(&b.filename));
+
+    Ok(functions)
+}
+
+fn scan_directory_for_js(
+    current_dir: &std::path::Path,
+    hooks_root: &std::path::Path,
+    functions: &mut Vec<JSFunctionInfo>
+) -> Result<(), String> {
+    use std::fs;
+
+    let entries = fs::read_dir(current_dir)
+        .map_err(|e| format!("Failed to read directory: {}", e))?;
+
+    for entry in entries {
+        let entry = entry
+            .map_err(|e| format!("Failed to read directory entry: {}", e))?;
+
+        let path = entry.path();
+
+        if path.is_dir() {
+            // Recursively scan subdirectories
+            scan_directory_for_js(&path, hooks_root, functions)?;
+        } else if path.extension().and_then(|s| s.to_str()) == Some("js") {
+            // Get relative path from hooks root
+            let relative_path = path.strip_prefix(hooks_root)
+                .map_err(|_| "Failed to get relative path".to_string())?;
+
+            let filename = relative_path.to_string_lossy().to_string();
+
+            // Get file metadata
+            let metadata = entry.metadata()
+                .map_err(|e| format!("Failed to get file metadata: {}", e))?;
+
+            let file_size = metadata.len();
+            let last_modified = metadata.modified()
+                .map(|time| {
+                    use std::time::UNIX_EPOCH;
+                    let duration = time.duration_since(UNIX_EPOCH).unwrap_or_default();
+                    chrono::DateTime::from_timestamp(duration.as_secs() as i64, 0)
+                        .map(|dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+                        .unwrap_or_else(|| "Unknown".to_string())
+                })
+                .unwrap_or_else(|_| "Unknown".to_string());
+
+            // Try to parse the JS function to get metadata
+            let (function_name, description, example, min_args, max_args, is_valid, validation_error) =
+                match fs::read_to_string(&path) {
+                    Ok(content) => {
+                        match JavaScriptFunction::parse_js_function(&content) {
+                            Ok(js_func) => (
+                                Some(js_func.name().to_string()),
+                                js_func.description().map(|s| s.to_string()),
+                                js_func.example().map(|s| s.to_string()),
+                                Some(js_func.min_args()),
+                                js_func.max_args(),
+                                true,
+                                None,
+                            ),
+                            Err(e) => (None, None, None, None, None, false, Some(e.to_string())),
+                        }
+                    }
+                    Err(e) => (None, None, None, None, None, false, Some(format!("Failed to read file: {}", e))),
+                };
+
+            functions.push(JSFunctionInfo {
+                filename,
+                function_name,
+                description,
+                example,
+                min_args,
+                max_args,
+                file_size,
+                last_modified,
+                is_valid,
+                validation_error,
+            });
+        }
+    }
+
+    Ok(())
+}
+
 fn daemonize() -> Result<(), Box<dyn std::error::Error>> {
     use std::fs::OpenOptions;
     use std::os::unix::io::AsRawFd;
-    
+
     // Fork the process
     match unsafe { libc::fork() } {
         -1 => return Err("Failed to fork process".into()),
@@ -642,12 +1415,12 @@ fn daemonize() -> Result<(), Box<dyn std::error::Error>> {
             std::process::exit(0);
         }
     }
-    
+
     // Create a new session
     if unsafe { libc::setsid() } == -1 {
         return Err("Failed to create new session".into());
     }
-    
+
     // Fork again to ensure we're not a session leader
     match unsafe { libc::fork() } {
         -1 => return Err("Failed to fork second time".into()),
@@ -659,37 +1432,37 @@ fn daemonize() -> Result<(), Box<dyn std::error::Error>> {
             std::process::exit(0);
         }
     }
-    
+
     // DON'T change working directory to root - stay in current directory
     // This allows relative paths to work (like hooks directory)
-    
+
     // Close standard file descriptors
     unsafe {
         libc::close(libc::STDIN_FILENO);
         libc::close(libc::STDOUT_FILENO);
         libc::close(libc::STDERR_FILENO);
     }
-    
+
     // Redirect stdin, stdout, stderr to /dev/null
     let dev_null = OpenOptions::new()
         .read(true)
         .write(true)
         .open("/dev/null")?;
-    
+
     let null_fd = dev_null.as_raw_fd();
     unsafe {
         libc::dup2(null_fd, libc::STDIN_FILENO);
         libc::dup2(null_fd, libc::STDOUT_FILENO);
         libc::dup2(null_fd, libc::STDERR_FILENO);
     }
-    
+
     Ok(())
 }
 
 fn write_pid_file(pid_file: &str) -> Result<(), Box<dyn std::error::Error>> {
     use std::fs::File;
     use std::io::Write;
-    
+
     let pid = std::process::id();
     let mut file = File::create(pid_file)?;
     writeln!(file, "{}", pid)?;
@@ -717,14 +1490,17 @@ fn main() {
         eprintln!("  -H, --host <addr>    Bind host/interface (default: 127.0.0.1)");
         eprintln!("  --pid-file <file>    Write PID to file (default: skillet-http-server.pid)");
         eprintln!("  --log-file <file>    Write logs to file (daemon mode only)");
-        eprintln!("  --token <value>      Require token for requests");
+        eprintln!("  --token <value>      Require token for eval requests");
+        eprintln!("  --admin-token <val>  Require admin token for JS function management");
         eprintln!("");
         eprintln!("Examples:");
         eprintln!("  sk_http_server 5074");
         eprintln!("  sk_http_server 5074 --host 0.0.0.0");
         eprintln!("  sk_http_server 5074 --host 0.0.0.0 --token secret123");
+        eprintln!("  sk_http_server 5074 --admin-token admin456");
+        eprintln!("  sk_http_server 5074 --token secret123 --admin-token admin456");
         eprintln!("  sk_http_server 5074 -d --pid-file /var/run/skillet-http.pid");
-        eprintln!("  sk_http_server 5074 -d --host 0.0.0.0 --token secret123");
+        eprintln!("  sk_http_server 5074 -d --host 0.0.0.0 --token secret123 --admin-token admin456");
         eprintln!("");
         eprintln!("Endpoints:");
         eprintln!("  GET  /health          - Health check");
@@ -741,6 +1517,7 @@ fn main() {
 
     let mut bind_host = "127.0.0.1".to_string();
     let mut auth_token: Option<String> = None;
+    let mut admin_token: Option<String> = None;
     let mut daemon_mode = false;
     let mut pid_file = "skillet-http-server.pid".to_string();
     let mut _log_file: Option<String> = None;
@@ -787,12 +1564,50 @@ fn main() {
                     std::process::exit(1);
                 }
             }
+            "--admin-token" => {
+                if i + 1 < args.len() {
+                    admin_token = Some(args[i + 1].clone());
+                    i += 1;
+                } else {
+                    eprintln!("Error: --admin-token requires a value");
+                    std::process::exit(1);
+                }
+            }
             _ => {
                 eprintln!("Error: Unknown argument: {}", args[i]);
                 std::process::exit(1);
             }
         }
         i += 1;
+    }
+
+    // Implement intelligent token defaults and warnings
+    let mut dev_mode_warning = false;
+    let mut same_token_warning = false;
+    let mut admin_inherited_warning = false;
+    let mut eval_inherited_warning = false;
+
+    match (&auth_token, &admin_token) {
+        // No tokens provided - development mode
+        (None, None) => {
+            dev_mode_warning = true;
+        }
+        // Only eval token provided - admin inherits eval token
+        (Some(eval_tok), None) => {
+            admin_token = Some(eval_tok.clone());
+            admin_inherited_warning = true;
+        }
+        // Only admin token provided - eval inherits admin token
+        (None, Some(admin_tok)) => {
+            auth_token = Some(admin_tok.clone());
+            eval_inherited_warning = true;
+        }
+        // Both tokens provided - check if they're the same
+        (Some(eval_tok), Some(admin_tok)) => {
+            if eval_tok == admin_tok {
+                same_token_warning = true;
+            }
+        }
     }
 
     // Handle daemon mode before any output
@@ -802,13 +1617,32 @@ fn main() {
             // Print startup message before daemonizing
             eprintln!("Starting Skillet HTTP server as daemon...");
             eprintln!("Port: {}, Host: {}, PID file: {}", port, bind_host, pid_file);
-            if auth_token.is_some() { eprintln!("Token auth: enabled"); }
-            
+            if auth_token.is_some() { eprintln!("Eval token auth: enabled"); }
+            if admin_token.is_some() { eprintln!("Admin token auth: enabled"); }
+
+            // Print warnings before daemonizing
+            if dev_mode_warning {
+                eprintln!("⚠️  WARNING: Running in DEVELOPMENT MODE - no authentication required!");
+                eprintln!("⚠️  This server is UNPROTECTED and should not be exposed to networks.");
+            }
+            if same_token_warning {
+                eprintln!("⚠️  WARNING: Admin token and eval token are the same!");
+                eprintln!("⚠️  Consider using different tokens for better security separation.");
+            }
+            if admin_inherited_warning {
+                eprintln!("⚠️  WARNING: Admin token inherited from eval token!");
+                eprintln!("⚠️  Admin operations use the same token as eval operations.");
+            }
+            if eval_inherited_warning {
+                eprintln!("⚠️  WARNING: Eval token inherited from admin token!");
+                eprintln!("⚠️  The same token has all privileges (eval and admin).");
+            }
+
             if let Err(e) = daemonize() {
                 eprintln!("Failed to daemonize: {}", e);
                 std::process::exit(1);
             }
-            
+
             // Write PID file after successful daemonization
             if let Err(_e) = write_pid_file(&pid_file) {
                 // Log to syslog or a file since we can't use stderr
@@ -857,11 +1691,32 @@ fn main() {
     let stats = Arc::new(ServerStats::new());
     let request_counter = Arc::new(AtomicU64::new(0));
     let server_token = Arc::new(auth_token.clone());
+    let server_admin_token = Arc::new(admin_token.clone());
 
     if !daemon_mode {
         eprintln!("🚀 Skillet HTTP Server started on http://{}:{}", bind_host, port);
-        if auth_token.is_some() { eprintln!("🔒 Token auth: enabled"); }
-        eprintln!("🌐 Ready for HTTP requests and Cloudflare tunneling");
+        if auth_token.is_some() { eprintln!("🔒 Eval token auth: enabled"); }
+        if admin_token.is_some() { eprintln!("🔐 Admin token auth: enabled"); }
+
+        // Print security warnings
+        if dev_mode_warning {
+            eprintln!("⚠️  WARNING: Running in DEVELOPMENT MODE - no authentication required!");
+            eprintln!("⚠️  This server is UNPROTECTED and should not be exposed to networks.");
+        }
+        if same_token_warning {
+            eprintln!("⚠️  WARNING: Admin token and eval token are the same!");
+            eprintln!("⚠️  Consider using different tokens for better security separation.");
+        }
+        if admin_inherited_warning {
+            eprintln!("⚠️  WARNING: Admin token inherited from eval token!");
+            eprintln!("⚠️  Admin operations use the same token as eval operations.");
+        }
+        if eval_inherited_warning {
+            eprintln!("⚠️  WARNING: Eval token inherited from admin token!");
+            eprintln!("⚠️  The same token has all privileges (eval and admin).");
+        }
+
+        eprintln!("🌐 Ready for HTTP requests");
         eprintln!("📖 Visit http://{}:{} for API documentation", bind_host, port);
         eprintln!("");
     }
@@ -873,9 +1728,10 @@ fn main() {
                 let stats = Arc::clone(&stats);
                 let request_counter = Arc::clone(&request_counter);
                 let server_token = Arc::clone(&server_token);
+                let server_admin_token = Arc::clone(&server_admin_token);
 
                 std::thread::spawn(move || {
-                    handle_http_request(stream, stats, request_counter, server_token);
+                    handle_http_request(stream, stats, request_counter, server_token, server_admin_token);
                 });
             }
             Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
