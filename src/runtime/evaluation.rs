@@ -8,6 +8,30 @@ use crate::runtime::{
     type_casting::cast_value,
     utils::{index_array, slice_array}
 };
+
+/// Convert a Skillet Value to a serde_json::Value
+fn value_to_json(value: &Value) -> Result<serde_json::Value, Error> {
+    match value {
+        Value::Number(n) => Ok(serde_json::json!(n)),
+        Value::String(s) => Ok(serde_json::json!(s)),
+        Value::Boolean(b) => Ok(serde_json::json!(b)),
+        Value::Currency(c) => Ok(serde_json::json!(c)),
+        Value::DateTime(dt) => Ok(serde_json::json!(dt)),
+        Value::Null => Ok(serde_json::json!(null)),
+        Value::Array(arr) => {
+            let mut json_arr = Vec::new();
+            for item in arr {
+                json_arr.push(value_to_json(item)?);
+            }
+            Ok(serde_json::Value::Array(json_arr))
+        }
+        Value::Json(s) => {
+            // Already JSON, parse and re-serialize to validate
+            serde_json::from_str(s)
+                .map_err(|e| Error::new(format!("Invalid JSON: {}", e), None))
+        }
+    }
+}
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
@@ -65,6 +89,18 @@ pub fn eval(expr: &Expr) -> Result<Value, Error> {
             let mut out = Vec::with_capacity(items.len());
             for e in items { out.push(eval(e)?); }
             Ok(Value::Array(out))
+        }
+        Expr::ObjectLiteral(pairs) => {
+            let mut json_map = serde_json::Map::new();
+            for (key, value_expr) in pairs {
+                let value = eval(value_expr)?;
+                let json_value = value_to_json(&value)?;
+                json_map.insert(key.clone(), json_value);
+            }
+            let json_obj = serde_json::Value::Object(json_map);
+            let json_str = serde_json::to_string(&json_obj)
+                .map_err(|e| Error::new(format!("Failed to serialize object: {}", e), None))?;
+            Ok(Value::Json(json_str))
         }
         Expr::TypeCast { expr, ty } => {
             let v = eval(expr)?;
@@ -312,6 +348,18 @@ pub fn eval_with_vars(expr: &Expr, vars: &HashMap<String, Value>) -> Result<Valu
             for e in items { out.push(eval_with_vars(e, vars)?); }
             Ok(Value::Array(out))
         }
+        Expr::ObjectLiteral(pairs) => {
+            let mut json_map = serde_json::Map::new();
+            for (key, value_expr) in pairs {
+                let value = eval_with_vars(value_expr, vars)?;
+                let json_value = value_to_json(&value)?;
+                json_map.insert(key.clone(), json_value);
+            }
+            let json_obj = serde_json::Value::Object(json_map);
+            let json_str = serde_json::to_string(&json_obj)
+                .map_err(|e| Error::new(format!("Failed to serialize object: {}", e), None))?;
+            Ok(Value::Json(json_str))
+        }
         Expr::TypeCast { expr, ty } => {
             let v = eval_with_vars(expr, vars)?;
             cast_value(v, ty)
@@ -468,6 +516,18 @@ pub fn eval_with_vars_and_custom(expr: &Expr, vars: &HashMap<String, Value>, cus
                 items.push(eval_with_vars_and_custom(e, vars, custom_registry)?);
             }
             Ok(Value::Array(items))
+        }
+        Expr::ObjectLiteral(pairs) => {
+            let mut json_map = serde_json::Map::new();
+            for (key, value_expr) in pairs {
+                let value = eval_with_vars_and_custom(value_expr, vars, custom_registry)?;
+                let json_value = value_to_json(&value)?;
+                json_map.insert(key.clone(), json_value);
+            }
+            let json_obj = serde_json::Value::Object(json_map);
+            let json_str = serde_json::to_string(&json_obj)
+                .map_err(|e| Error::new(format!("Failed to serialize object: {}", e), None))?;
+            Ok(Value::Json(json_str))
         }
         Expr::Index { target, index } => {
             let arr = eval_with_vars_and_custom(target, vars, custom_registry)?;

@@ -322,6 +322,54 @@ impl<'a> Parser<'a> {
                 self.bump()?; // consume ']'
                 Ok(Expr::Array(items))
             }
+            Token::LBrace => {
+                // Object literal: { key: value, ... }
+                self.bump()?; // consume '{'
+                let mut pairs = Vec::new();
+                if let Token::RBrace = self.lookahead {
+                    // empty object
+                } else {
+                    loop {
+                        // Parse key (can be identifier or string)
+                        let key = match self.lookahead.clone() {
+                            Token::Identifier(s) => {
+                                self.bump()?;
+                                s
+                            }
+                            Token::String(s) => {
+                                self.bump()?;
+                                s
+                            }
+                            _ => return self.err_here("Expected identifier or string key in object literal"),
+                        };
+                        
+                        // Expect colon
+                        if matches!(self.lookahead, Token::Colon) {
+                            self.bump()?; // consume ':'
+                        } else {
+                            return self.err_here("Expected ':' after object key");
+                        }
+                        
+                        // Parse value
+                        let value = self.parse_expr()?;
+                        pairs.push((key, value));
+                        
+                        match self.lookahead {
+                            Token::Comma => { 
+                                self.bump()?; 
+                                // Allow trailing comma
+                                if matches!(self.lookahead, Token::RBrace) {
+                                    break;
+                                }
+                            }
+                            Token::RBrace => break,
+                            _ => return self.err_here("Expected ',' or '}' in object literal"),
+                        }
+                    }
+                }
+                self.bump()?; // consume '}'
+                Ok(Expr::ObjectLiteral(pairs))
+            }
             other => Err(Error::new(format!("Unexpected token: {:?}", other), Some(self.look_pos))),
         }
     }

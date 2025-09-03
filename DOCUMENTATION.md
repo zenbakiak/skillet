@@ -1091,6 +1091,8 @@ sk "=IF(:employee.type = \"full-time\",
 
 ## Advanced Features
 
+> **Note**: This section covers advanced Skillet features including the new Object Literal syntax and updated HTTP Server API with variable tracking support.
+
 ### Method Chaining
 
 ```bash
@@ -1140,6 +1142,167 @@ sk "=MAX(...:scores)" scores=[85,92,78,90]  # 92
 
 # Array construction with spread
 sk "=[0, ...[1, 2, 3], 4]"                 # [0, 1, 2, 3, 4]
+```
+
+### Object Literals
+
+Skillet supports JSON-style object literal syntax for creating structured data:
+
+```bash
+# Simple object literals
+sk ":obj := {name: 'John', age: 30, active: true}; :obj"
+# Output: Json("{\"name\":\"John\",\"age\":30.0,\"active\":true}")
+
+# Objects with quoted keys
+sk ":obj := {\"first-name\": \"Jane\", \"last-name\": \"Doe\"}; :obj"
+
+# Nested objects
+sk ":config := {database: {host: 'localhost', port: 5432}, debug: true}; :config"
+
+# Objects with expressions as values
+sk ":data := {sum: 10 + 20, product: 5 * 6, timestamp: NOW()}; :data"
+
+# Arrays of objects (table-like structures)
+sk ":table := [{id: 1, name: 'Alice', score: 95}, {id: 2, name: 'Bob', score: 87}]; :table"
+
+# Complex nested structures
+sk ":app := {users: [{name: 'Admin', perms: ['read', 'write']}, {name: 'Guest', perms: ['read']}], settings: {theme: 'dark', lang: 'en'}}; :app"
+```
+
+#### Object Property Access
+
+Once created, you can access object properties using dot notation:
+
+```bash
+# Simple property access
+sk ":person := {name: 'Alice', age: 25}; :person.name"
+# Output: String("Alice")
+
+# Nested property access
+sk ":config := {db: {host: 'localhost', port: 3306}}; :config.db.port"
+# Output: Number(3306.0)
+
+# Accessing properties with variables
+sk ":user := {profile: {settings: {theme: 'dark'}}}; :user.profile.settings.theme"
+# Output: String("dark")
+```
+
+#### Working with Objects in Variables
+
+Objects integrate seamlessly with Skillet's variable assignment and expression system:
+
+```bash
+# Creating objects with variable expressions
+sk ":price := 19.99; :qty := 3; :order := {item: 'Widget', price: :price, quantity: :qty, total: :price * :qty}; :order.total"
+# Output: Number(59.97)
+
+# Objects in complex expressions
+sk ":data := {values: [10, 20, 30]}; SUM(:data.values)"
+# Output: Number(60.0)
+
+# Multiple objects
+sk ":user := {name: 'John', id: 123}; :prefs := {theme: 'light', lang: 'en'}; :combined := {user: :user, preferences: :prefs}; :combined"
+```
+
+#### HTTP Server Integration
+
+Object literals work perfectly with the HTTP server's new variable tracking feature:
+
+```json
+// POST /eval
+{
+    "expression": ":config := {api: {endpoint: 'https://api.example.com', timeout: 5000}, features: {caching: true, retries: 3}}; :config.api.timeout",
+    "arguments": {},
+    "include_variables": true
+}
+
+// Response
+{
+    "success": true,
+    "result": 5000,
+    "variables": {
+        "config": "{\"api\":{\"endpoint\":\"https://api.example.com\",\"timeout\":5000.0},\"features\":{\"caching\":true,\"retries\":3.0}}"
+    },
+    "execution_time_ms": 1.2,
+    "request_id": 456
+}
+```
+
+#### Object Syntax Rules
+
+- **Keys**: Can be unquoted identifiers (`name: value`) or quoted strings (`"key-name": value`)
+- **Values**: Any valid Skillet expression (numbers, strings, variables, function calls, arrays, nested objects)
+- **Trailing Commas**: Supported (`{a: 1, b: 2,}`)
+- **Empty Objects**: Supported (`{}`)
+- **Storage**: Objects are internally stored as JSON strings (`Value::Json`)
+- **Access**: Use dot notation for property access (`obj.key.subkey`)
+
+### HTTP Server API Updates
+
+The Skillet HTTP server has been enhanced with two major updates:
+
+#### 1. Parameter Rename: `variables` → `arguments`
+
+The HTTP API now uses `arguments` instead of `variables` for input parameters:
+
+```json
+// NEW API (preferred)
+{
+    "expression": ":total := :price * :quantity",
+    "arguments": {
+        "price": 19.99,
+        "quantity": 3
+    }
+}
+
+// OLD API (deprecated)
+{
+    "expression": ":total := :price * :quantity", 
+    "variables": {
+        "price": 19.99,
+        "quantity": 3
+    }
+}
+```
+
+#### 2. Variable Tracking with `include_variables`
+
+Set `include_variables: true` to receive all assigned variables in the response:
+
+```bash
+# Example request
+curl -X POST http://localhost:5074/eval \
+  -H "Content-Type: application/json" \
+  -d '{
+    "expression": ":taxes := 1.16; :subtotal := :unit_price * :quantity; :total := :subtotal * :taxes;",
+    "arguments": {
+      "quantity": 2,
+      "unit_price": 200
+    },
+    "include_variables": true
+  }'
+
+# Response with variables
+{
+  "success": true,
+  "result": 464,
+  "variables": {
+    "taxes": 1.16,
+    "subtotal": 400,
+    "total": 464
+  },
+  "execution_time_ms": 2.5,
+  "request_id": 123
+}
+```
+
+#### GET Request Support
+
+Both features work with GET requests too:
+
+```bash
+# With variable tracking
+curl "http://localhost:5074/eval?expr=:sum%20:=%20:a%20+%20:b&a=10&b=20&include_variables=true"
 ```
 
 ### Error Handling Best Practices
