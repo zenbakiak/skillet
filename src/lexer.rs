@@ -24,6 +24,8 @@ pub enum Token {
     DoubleColon,
     LBracket,
     RBracket,
+    LBrace,
+    RBrace,
     Greater,
     Less,
     Ge,
@@ -228,6 +230,8 @@ impl<'a> Lexer<'a> {
             b')' => Token::RParen,
             b'[' => Token::LBracket,
             b']' => Token::RBracket,
+            b'{' => Token::LBrace,
+            b'}' => Token::RBrace,
             b',' => Token::Comma,
             b':' => {
                 if matches!(self.peek(), Some(b':')) {
@@ -299,6 +303,8 @@ impl<'a> Lexer<'a> {
                 | Token::RParen
                 | Token::LBracket
                 | Token::RBracket
+                | Token::LBrace
+                | Token::RBrace
                 | Token::Comma
                 | Token::Colon
                 | Token::Greater

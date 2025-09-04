@@ -38,6 +38,8 @@ num_cpus = "1.16"
 # Daemon support
 libc = "0.2"
 ctrlc = "3.4"
+# HTTP server support
+urlencoding = "2.1"
 
 [dev-dependencies]
 tempfile = "3.0"
@@ -59,3 +61,7 @@ path = "src/bin/sk_server.rs"
 [[bin]]
 name = "sk_client"
 path = "src/bin/sk_client.rs"
+
+[[bin]]
+name = "sk_http_server"
+path = "src/bin/sk_http_server.rs"

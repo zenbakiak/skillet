@@ -105,6 +105,19 @@ pub fn exec_method(
                 .ok_or_else(|| Error::new("ceil expects number receiver", None))?
                 .ceil(),
         )),
+        "between" => {
+            let value = recv.as_number()
+                .ok_or_else(|| Error::new("between expects number receiver", None))?;
+            let a = eval_args(args_expr)?;
+            if a.len() != 2 {
+                return Err(Error::new("between expects 2 arguments: min, max", None));
+            }
+            let min = a[0].as_number()
+                .ok_or_else(|| Error::new("between min must be a number", None))?;
+            let max = a[1].as_number()
+                .ok_or_else(|| Error::new("between max must be a number", None))?;
+            Ok(Value::Boolean(value >= min && value <= max))
+        }
 
         // String transforms
         "upper" => match recv {
@@ -277,6 +290,38 @@ pub fn exec_method(
             }
             _ => Err(Error::new("filter expects array receiver", None)),
         },
+        "find" => match recv {
+            Value::Array(items) => {
+                let expr = args_expr
+                    .get(0)
+                    .cloned()
+                    .ok_or_else(|| Error::new("find expects an expression", None))?;
+                // Optional param name as second arg
+                let param_vals = eval_args(&args_expr[1..])?;
+                let param_name = match param_vals.get(0) {
+                    Some(Value::String(s)) => s.clone(),
+                    _ => "x".to_string(),
+                };
+                for it in items {
+                    let mut env = HashMap::new();
+                    env.insert(param_name.clone(), it.clone());
+                    if let Some(base) = base_vars {
+                        for (k, v) in base.iter() {
+                            env.insert(k.clone(), v.clone());
+                        }
+                    }
+                    let matches = match eval_with_vars(&expr, &env)? {
+                        Value::Boolean(b) => b,
+                        _ => false,
+                    };
+                    if matches {
+                        return Ok(it.clone());
+                    }
+                }
+                Ok(Value::Null)
+            }
+            _ => Err(Error::new("find expects array receiver", None)),
+        },
         "map" => match recv {
             Value::Array(items) => {
                 let expr = args_expr
@@ -367,6 +412,78 @@ pub fn exec_method(
                     .collect(),
             )),
             _ => Err(Error::new("compact expects array receiver", None)),
+        },
+        
+        // Type casting methods
+        "to_s" => match recv {
+            Value::String(s) => Ok(Value::String(s.clone())),
+            Value::Number(n) => Ok(Value::String(n.to_string())),
+            Value::Boolean(b) => Ok(Value::String(if *b { "TRUE".into() } else { "FALSE".into() })),
+            Value::Null => Ok(Value::String(String::new())),
+            Value::Array(items) => Ok(Value::String(format!("{:?}", items))),
+            Value::Currency(n) => Ok(Value::String(format!("{:.4}", n))),
+            Value::DateTime(ts) => Ok(Value::String(ts.to_string())),
+            Value::Json(s) => Ok(Value::String(s.clone())),
+        },
+        "to_i" => match recv {
+            Value::Number(n) => Ok(Value::Number((*n as i64) as f64)),
+            Value::Currency(n) => Ok(Value::Number((*n as i64) as f64)),
+            Value::String(s) => {
+                let mut clean_s = String::new();
+                let mut has_dot = false;
+                for (i, c) in s.chars().enumerate() {
+                    if i == 0 && (c == '-' || c == '+') {
+                        clean_s.push(c);
+                    } else if c.is_ascii_digit() {
+                        clean_s.push(c);
+                    } else if c == '.' && !has_dot {
+                        clean_s.push(c);
+                        has_dot = true;
+                    } else {
+                        break;
+                    }
+                }
+                Ok(Value::Number(
+                    clean_s.parse::<f64>()
+                        .unwrap_or(0.0)
+                        .trunc(),
+                ))
+            },
+            Value::Boolean(b) => Ok(Value::Number(if *b { 1.0 } else { 0.0 })),
+            Value::Null => Ok(Value::Number(0.0)),
+            _ => Err(Error::new("Cannot cast to Integer", None)),
+        },
+        "to_number" => match recv {
+            Value::Number(n) => Ok(Value::Number(*n)),
+            Value::Currency(n) => Ok(Value::Number(*n)),
+            Value::String(s) => Ok(Value::Number(
+                s.parse::<f64>()
+                    .map_err(|_| Error::new("Cannot cast String to Number", None))?,
+            )),
+            Value::Boolean(b) => Ok(Value::Number(if *b { 1.0 } else { 0.0 })),
+            Value::Null => Ok(Value::Number(0.0)),
+            _ => Err(Error::new("Cannot cast to Number", None)),
+        },
+        "to_currency" => match recv {
+            Value::Currency(n) => Ok(Value::Currency(*n)),
+            Value::Number(n) => Ok(Value::Currency(*n)),
+            Value::String(s) => Ok(Value::Currency(
+                s.parse::<f64>()
+                    .map_err(|_| Error::new("Cannot cast String to Currency", None))?,
+            )),
+            Value::Boolean(b) => Ok(Value::Currency(if *b { 1.0 } else { 0.0 })),
+            Value::Null => Ok(Value::Currency(0.0)),
+            _ => Err(Error::new("Cannot cast to Currency", None)),
+        },
+        "to_boolean" => match recv {
+            Value::Boolean(b) => Ok(Value::Boolean(*b)),
+            Value::Number(n) => Ok(Value::Boolean(*n != 0.0)),
+            Value::Currency(n) => Ok(Value::Boolean(*n != 0.0)),
+            Value::String(s) => Ok(Value::Boolean(!s.trim().is_empty())),
+            Value::Array(items) => Ok(Value::Boolean(!items.is_empty())),
+            Value::Null => Ok(Value::Boolean(false)),
+            Value::DateTime(ts) => Ok(Value::Boolean(*ts != 0)),
+            Value::Json(s) => Ok(Value::Boolean(!s.trim().is_empty())),
         },
 
         _ => Err(Error::new(format!("Unknown method: .{}()", name), None)),
@@ -472,6 +589,19 @@ pub fn exec_method_with_custom(
                 .ok_or_else(|| Error::new("ceil expects number receiver", None))?
                 .ceil(),
         )),
+        "between" => {
+            let value = recv.as_number()
+                .ok_or_else(|| Error::new("between expects number receiver", None))?;
+            let a = eval_args(args_expr)?;
+            if a.len() != 2 {
+                return Err(Error::new("between expects 2 arguments: min, max", None));
+            }
+            let min = a[0].as_number()
+                .ok_or_else(|| Error::new("between min must be a number", None))?;
+            let max = a[1].as_number()
+                .ok_or_else(|| Error::new("between max must be a number", None))?;
+            Ok(Value::Boolean(value >= min && value <= max))
+        }
 
         // String transforms
         "upper" => match recv {
@@ -644,6 +774,38 @@ pub fn exec_method_with_custom(
             }
             _ => Err(Error::new("filter expects array receiver", None)),
         },
+        "find" => match recv {
+            Value::Array(items) => {
+                let expr = args_expr
+                    .get(0)
+                    .cloned()
+                    .ok_or_else(|| Error::new("find expects an expression", None))?;
+                // Optional param name as second arg
+                let param_vals = eval_args(&args_expr[1..])?;
+                let param_name = match param_vals.get(0) {
+                    Some(Value::String(s)) => s.clone(),
+                    _ => "x".to_string(),
+                };
+                for it in items {
+                    let mut env = HashMap::new();
+                    env.insert(param_name.clone(), it.clone());
+                    if let Some(base) = base_vars {
+                        for (k, v) in base.iter() {
+                            env.insert(k.clone(), v.clone());
+                        }
+                    }
+                    let matches = match eval_with_vars_and_custom(&expr, &env, custom_registry)? {
+                        Value::Boolean(b) => b,
+                        _ => false,
+                    };
+                    if matches {
+                        return Ok(it.clone());
+                    }
+                }
+                Ok(Value::Null)
+            }
+            _ => Err(Error::new("find expects array receiver", None)),
+        },
         "map" => match recv {
             Value::Array(items) => {
                 let expr = args_expr
@@ -734,6 +896,78 @@ pub fn exec_method_with_custom(
                     .collect(),
             )),
             _ => Err(Error::new("compact expects array receiver", None)),
+        },
+        
+        // Type casting methods
+        "to_s" => match recv {
+            Value::String(s) => Ok(Value::String(s.clone())),
+            Value::Number(n) => Ok(Value::String(n.to_string())),
+            Value::Boolean(b) => Ok(Value::String(if *b { "TRUE".into() } else { "FALSE".into() })),
+            Value::Null => Ok(Value::String(String::new())),
+            Value::Array(items) => Ok(Value::String(format!("{:?}", items))),
+            Value::Currency(n) => Ok(Value::String(format!("{:.4}", n))),
+            Value::DateTime(ts) => Ok(Value::String(ts.to_string())),
+            Value::Json(s) => Ok(Value::String(s.clone())),
+        },
+        "to_i" => match recv {
+            Value::Number(n) => Ok(Value::Number((*n as i64) as f64)),
+            Value::Currency(n) => Ok(Value::Number((*n as i64) as f64)),
+            Value::String(s) => {
+                let mut clean_s = String::new();
+                let mut has_dot = false;
+                for (i, c) in s.chars().enumerate() {
+                    if i == 0 && (c == '-' || c == '+') {
+                        clean_s.push(c);
+                    } else if c.is_ascii_digit() {
+                        clean_s.push(c);
+                    } else if c == '.' && !has_dot {
+                        clean_s.push(c);
+                        has_dot = true;
+                    } else {
+                        break;
+                    }
+                }
+                Ok(Value::Number(
+                    clean_s.parse::<f64>()
+                        .unwrap_or(0.0)
+                        .trunc(),
+                ))
+            },
+            Value::Boolean(b) => Ok(Value::Number(if *b { 1.0 } else { 0.0 })),
+            Value::Null => Ok(Value::Number(0.0)),
+            _ => Err(Error::new("Cannot cast to Integer", None)),
+        },
+        "to_number" => match recv {
+            Value::Number(n) => Ok(Value::Number(*n)),
+            Value::Currency(n) => Ok(Value::Number(*n)),
+            Value::String(s) => Ok(Value::Number(
+                s.parse::<f64>()
+                    .map_err(|_| Error::new("Cannot cast String to Number", None))?,
+            )),
+            Value::Boolean(b) => Ok(Value::Number(if *b { 1.0 } else { 0.0 })),
+            Value::Null => Ok(Value::Number(0.0)),
+            _ => Err(Error::new("Cannot cast to Number", None)),
+        },
+        "to_currency" => match recv {
+            Value::Currency(n) => Ok(Value::Currency(*n)),
+            Value::Number(n) => Ok(Value::Currency(*n)),
+            Value::String(s) => Ok(Value::Currency(
+                s.parse::<f64>()
+                    .map_err(|_| Error::new("Cannot cast String to Currency", None))?,
+            )),
+            Value::Boolean(b) => Ok(Value::Currency(if *b { 1.0 } else { 0.0 })),
+            Value::Null => Ok(Value::Currency(0.0)),
+            _ => Err(Error::new("Cannot cast to Currency", None)),
+        },
+        "to_boolean" => match recv {
+            Value::Boolean(b) => Ok(Value::Boolean(*b)),
+            Value::Number(n) => Ok(Value::Boolean(*n != 0.0)),
+            Value::Currency(n) => Ok(Value::Boolean(*n != 0.0)),
+            Value::String(s) => Ok(Value::Boolean(!s.trim().is_empty())),
+            Value::Array(items) => Ok(Value::Boolean(!items.is_empty())),
+            Value::Null => Ok(Value::Boolean(false)),
+            Value::DateTime(ts) => Ok(Value::Boolean(*ts != 0)),
+            Value::Json(s) => Ok(Value::Boolean(!s.trim().is_empty())),
         },
 
         _ => Err(Error::new(format!("Unknown method: .{}()", name), None)),

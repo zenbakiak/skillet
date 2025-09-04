@@ -148,11 +148,11 @@ fn main() -> Result<(), Error> {
     // Simple arithmetic
     let result = evaluate("2 + 3 * 4")?;
     println!("{:?}", result); // Number(14.0)
-    
+
     // With functions
     let result = evaluate("SUM(1, 2, 3, 4, 5)")?;
     println!("{:?}", result); // Number(15.0)
-    
+
     Ok(())
 }
 ```
@@ -168,10 +168,10 @@ fn main() -> Result<(), Error> {
     vars.insert("price".to_string(), Value::Number(19.99));
     vars.insert("quantity".to_string(), Value::Number(3.0));
     vars.insert("tax_rate".to_string(), Value::Number(0.08));
-    
+
     let result = evaluate_with("(:price * :quantity) * (1 + :tax_rate)", &vars)?;
     println!("{:?}", result); // Number(64.77...)
-    
+
     Ok(())
 }
 ```
@@ -190,13 +190,13 @@ fn main() -> Result<(), Error> {
         ],
         "discount": 0.1
     }"#;
-    
+
     let result = evaluate_with_json(
-        "=:user.name.upper()", 
+        "=:user.name.upper()",
         json_vars
     )?;
     println!("{:?}", result); // String("JOHN")
-    
+
     Ok(())
 }
 ```
@@ -209,29 +209,29 @@ use std::collections::HashMap;
 
 fn example_values() {
     let mut vars = HashMap::new();
-    
+
     // Numbers
     vars.insert("pi".to_string(), Value::Number(3.14159));
-    
+
     // Strings
     vars.insert("name".to_string(), Value::String("Alice".to_string()));
-    
+
     // Booleans
     vars.insert("active".to_string(), Value::Boolean(true));
-    
+
     // Arrays
     vars.insert("scores".to_string(), Value::Array(vec![
         Value::Number(85.0),
         Value::Number(92.0),
         Value::Number(78.0),
     ]));
-    
+
     // Null
     vars.insert("optional".to_string(), Value::Null);
-    
+
     // Currency (treated as Number with special formatting)
     vars.insert("salary".to_string(), Value::Currency(75000.0));
-    
+
     // DateTime (Unix timestamp)
     vars.insert("created_at".to_string(), Value::DateTime(1640995200)); // 2022-01-01
 }
@@ -308,7 +308,7 @@ function execute(args) {
 function execute(args) {
     const n = args[0];
     if (n <= 1) return n;
-    
+
     let a = 0, b = 1;
     for (let i = 2; i <= n; i++) {
         let temp = a + b;
@@ -348,7 +348,7 @@ function execute(args) {
     if (!Array.isArray(array)) {
         throw new Error("ARRAYSUM expects an array as argument");
     }
-    
+
     return array.reduce((sum, item) => {
         if (typeof item === 'number') {
             return sum + item;
@@ -406,17 +406,17 @@ function execute(args) {
 
 function execute(args) {
     const obj = args[0];
-    
+
     // Handle different input types
     if (obj === null || obj === undefined) {
         return [];
     }
-    
+
     // If it's already an object, get its keys
     if (typeof obj === 'object' && !Array.isArray(obj)) {
         return Object.keys(obj);
     }
-    
+
     // If it's a string that looks like JSON, try to parse it
     if (typeof obj === 'string') {
         try {
@@ -429,7 +429,7 @@ function execute(args) {
             return [];
         }
     }
-    
+
     // For other types, return empty array
     return [];
 }
@@ -447,18 +447,18 @@ function execute(args) {
 function execute(args) {
     const array = args[0];
     const sortMode = args.length > 1 ? args[1] : "asc";
-    
+
     if (!Array.isArray(array)) {
         throw new Error("ARRAY_SORT expects an array as first argument");
     }
-    
+
     // Create a copy to avoid modifying the original
     const sortedArray = [...array];
-    
+
     switch (sortMode.toLowerCase()) {
         case "desc":
             return sortedArray.sort().reverse();
-            
+
         case "numeric":
             return sortedArray.sort((a, b) => {
                 const numA = Number(a);
@@ -469,7 +469,7 @@ function execute(args) {
                 }
                 return numA - numB;
             });
-            
+
         case "numeric_desc":
             return sortedArray.sort((a, b) => {
                 const numA = Number(a);
@@ -479,7 +479,7 @@ function execute(args) {
                 }
                 return numB - numA;
             });
-            
+
         case "asc":
         default:
             return sortedArray.sort();
@@ -571,30 +571,30 @@ impl CustomFunction for DoubleFunction {
     fn name(&self) -> &str { "DOUBLE" }
     fn min_args(&self) -> usize { 1 }
     fn max_args(&self) -> Option<usize> { Some(1) }
-    
+
     fn execute(&self, args: Vec<Value>) -> Result<Value, Error> {
         let num = args[0].as_number()
             .ok_or_else(|| Error::new("DOUBLE expects a number", None))?;
         Ok(Value::Number(num * 2.0))
     }
-    
-    fn description(&self) -> Option<&str> { 
-        Some("Doubles a number") 
+
+    fn description(&self) -> Option<&str> {
+        Some("Doubles a number")
     }
-    
-    fn example(&self) -> Option<&str> { 
-        Some("DOUBLE(5) returns 10") 
+
+    fn example(&self) -> Option<&str> {
+        Some("DOUBLE(5) returns 10")
     }
 }
 
 // Register the function
 fn main() -> Result<(), Error> {
     register_function(Box::new(DoubleFunction))?;
-    
+
     // Now you can use it
     let result = skillet::evaluate_with_custom("DOUBLE(21)", &std::collections::HashMap::new())?;
     println!("{:?}", result); // Number(42.0)
-    
+
     Ok(())
 }
 ```
@@ -611,13 +611,13 @@ impl CustomFunction for FormatFunction {
     fn name(&self) -> &str { "FORMAT" }
     fn min_args(&self) -> usize { 1 }
     fn max_args(&self) -> Option<usize> { None } // Unlimited
-    
+
     fn execute(&self, args: Vec<Value>) -> Result<Value, Error> {
         let template = match &args[0] {
             Value::String(s) => s,
             _ => return Err(Error::new("FORMAT expects string template as first argument", None)),
         };
-        
+
         let mut result = template.clone();
         for (i, arg) in args.iter().skip(1).enumerate() {
             let placeholder = format!("{{{}}}", i);
@@ -629,16 +629,16 @@ impl CustomFunction for FormatFunction {
             };
             result = result.replace(&placeholder, &value_str);
         }
-        
+
         Ok(Value::String(result))
     }
-    
-    fn description(&self) -> Option<&str> { 
-        Some("Formats a string template with arguments") 
+
+    fn description(&self) -> Option<&str> {
+        Some("Formats a string template with arguments")
     }
-    
-    fn example(&self) -> Option<&str> { 
-        Some("FORMAT(\"Hello {0}, you have {1} messages\", \"Alice\", 5)") 
+
+    fn example(&self) -> Option<&str> {
+        Some("FORMAT(\"Hello {0}, you have {1} messages\", \"Alice\", 5)")
     }
 }
 
@@ -649,13 +649,13 @@ impl CustomFunction for FilterEvenFunction {
     fn name(&self) -> &str { "FILTEREVEN" }
     fn min_args(&self) -> usize { 1 }
     fn max_args(&self) -> Option<usize> { Some(1) }
-    
+
     fn execute(&self, args: Vec<Value>) -> Result<Value, Error> {
         let array = match &args[0] {
             Value::Array(arr) => arr,
             _ => return Err(Error::new("FILTEREVEN expects an array", None)),
         };
-        
+
         let filtered: Vec<Value> = array
             .iter()
             .filter(|v| {
@@ -667,7 +667,7 @@ impl CustomFunction for FilterEvenFunction {
             })
             .cloned()
             .collect();
-            
+
         Ok(Value::Array(filtered))
     }
 }
@@ -679,18 +679,18 @@ impl CustomFunction for FactorialFunction {
     fn name(&self) -> &str { "FACTORIAL" }
     fn min_args(&self) -> usize { 1 }
     fn max_args(&self) -> Option<usize> { Some(1) }
-    
+
     fn execute(&self, args: Vec<Value>) -> Result<Value, Error> {
         let num = args[0].as_number()
             .ok_or_else(|| Error::new("FACTORIAL expects a number", None))?;
-            
+
         if num < 0.0 {
             return Err(Error::new("FACTORIAL expects non-negative number", None));
         }
-        
+
         let n = num as u64;
         let result = (1..=n).fold(1u64, |acc, x| acc * x);
-        
+
         Ok(Value::Number(result as f64))
     }
 }
@@ -706,23 +706,23 @@ fn manage_functions() -> Result<(), Error> {
     register_function(Box::new(DoubleFunction))?;
     register_function(Box::new(FormatFunction))?;
     register_function(Box::new(FilterEvenFunction))?;
-    
+
     // List all custom functions
     let functions = list_custom_functions();
     println!("Custom functions: {:?}", functions);
-    
+
     // Check if function exists
     if has_custom_function("DOUBLE") {
         println!("DOUBLE function is available");
     }
-    
+
     // Override built-in functions (custom functions take priority)
     struct CustomSum;
     impl CustomFunction for CustomSum {
         fn name(&self) -> &str { "SUM" }
         fn min_args(&self) -> usize { 2 }
         fn max_args(&self) -> Option<usize> { Some(2) }
-        
+
         fn execute(&self, args: Vec<Value>) -> Result<Value, Error> {
             // Custom SUM that multiplies instead of adds
             let a = args[0].as_number().ok_or_else(|| Error::new("Expected number", None))?;
@@ -730,19 +730,19 @@ fn manage_functions() -> Result<(), Error> {
             Ok(Value::Number(a * b))
         }
     }
-    
+
     register_function(Box::new(CustomSum))?;
-    
+
     // Now SUM(3, 4) returns 12 instead of 7
     let result = skillet::evaluate_with_custom("SUM(3, 4)", &std::collections::HashMap::new())?;
     println!("{:?}", result); // Number(12.0)
-    
+
     // Clean up
     unregister_function("SUM");
     unregister_function("DOUBLE");
     unregister_function("FORMAT");
     unregister_function("FILTEREVEN");
-    
+
     Ok(())
 }
 ```
@@ -775,12 +775,12 @@ sk "=MIN(15, 8, 23, 4, 16)"                    # 4
 sk "=COUNT(1, 2, 3, \"text\", 4)"              # 4 (counts numbers only)
 
 # Advanced statistics
-sk "=STDEV.P(2, 4, 4, 4, 5, 5, 7, 9)"         # Population standard deviation
-sk "=VAR.P(2, 4, 4, 4, 5, 5, 7, 9)"           # Population variance
+sk "=STDEV_P(2, 4, 4, 4, 5, 5, 7, 9)"         # Population standard deviation
+sk "=VAR_P(2, 4, 4, 4, 5, 5, 7, 9)"           # Population variance
 sk "=MEDIAN(1, 2, 3, 4, 5)"                   # 3
-sk "=MODE.SNGL(1, 2, 2, 3, 4, 4, 4)"          # 4 (most frequent)
-sk "=PERCENTILE.INC([1,2,3,4,5], 0.5)"        # 3 (50th percentile)
-sk "=QUARTILE.INC([1,2,3,4,5,6,7,8], 1)"      # 2.75 (Q1)
+sk "=MODE_SNGL(1, 2, 2, 3, 4, 4, 4)"          # 4 (most frequent)
+sk "=PERCENTILE_INC([1,2,3,4,5], 0.5)"        # 3 (50th percentile)
+sk "=QUARTILE_INC([1,2,3,4,5,6,7,8], 1)"      # 2.75 (Q1)
 ```
 
 ### Logical Functions
@@ -809,11 +809,14 @@ sk "=\"hello\".reverse()"                      # "olleh"
 
 # String functions
 sk "=SUBSTRING(\"Hello World\", 6, 5)"         # "World"
-sk "=LEN(\"Hello\")"                           # 5
+sk "=LENGTH(\"Hello\")"                           # 5
 sk "=CONCAT(\"Hello\", \" \", \"World\")"      # "Hello World"
+sk "=LEFT(\"Hello\", 2)"                       # "He"
+sk "=RIGHT(\"Hello\", 3)"                      # "llo"
+sk "=MID(\"Hello\", 2, 3)"                     # "ell" (1-based start)
 
 # With variables
-sk "=:name.upper() + \" (\" + :age + \")\"" name="alice" age=25  # "ALICE (25)"
+sk "=CONCAT(:name.upper(), ' ', :age)" name="alice" age=25  # "ALICE (25)"
 ```
 
 ### Date/Time Functions
@@ -830,12 +833,15 @@ sk "=MONTH(NOW())"                             # Current month (1-12)
 sk "=DAY(NOW())"                               # Current day of month
 
 # Date arithmetic
-sk "=DATEADD(NOW(), 30)"                      # 30 days from now
-sk "=DATEDIFF(DATE(2024, 1, 1), NOW())"       # Days between dates
+sk "=DATEADD(NOW(), 30, 'days')"                      # 30 days from now
+sk "=DATEADD(NOW(), 2, 'months')"                     # 2 month from now
+sk "=DATEADD(NOW(), 2, 'weeks')"                     # 2 weeks from now
+sk "=DATEADD(NOW(), 2, 'minutes')"                     # 2 minutes from now
+sk "=DATEDIFF(NOW(), DATEADD(NOW(), 7, \"days\"), \"days\")"       # Days between dates
 
 # Practical examples
 sk "=YEAR(DATE(2023, 6, 15))"                 # 2023
-sk "=DATEADD(DATE(2023, 1, 1), 365)"          # One year later
+sk "=DATEADD( DATE(2023, 1, 1), 365, 'days')"          # One year later
 ```
 
 ### Array Operations
@@ -855,10 +861,16 @@ sk "=[10, 5, 8, 3, 7].max()"                  # 10
 sk "=[10, 5, 8, 3, 7].min()"                  # 3
 
 # Advanced array operations
-sk "=[1, 2, 3, 4, 5].filter(x > 3)"           # [4, 5]
-sk "=[1, 2, 3].map(x * 2)"                    # [2, 4, 6]
-sk "=[1, 2, 3, 4].reduce(acc + x, 0)"         # 10
+sk "=[1, 2, 3, 4, 5].filter(:x > 3)"           # [4, 5]
+sk "=[1, 2, 3].map(:x * 2)"                    # [2, 4, 6]
+sk "=[1, 2, 3, 4].reduce(:acc + :x, 0)"         # 10
 sk "=[[1, 2], [3, 4], [5]].flatten()"         # [1, 2, 3, 4, 5]
+
+# Find and range functions
+sk "=FIND([1, 2, 3, 4, 5], :x > 3)"            # 4 (first match)
+sk "=[1, 2, 3, 4, 5].find(:x > 3)"             # 4 (method form)
+sk "=BETWEEN(10, 20, 15)"                      # true
+sk "=(17).between(10, 20)"                     # true (method form)
 ```
 
 ### Mathematical Functions
@@ -892,16 +904,16 @@ sk "=ISTEXT(\"hello\")"                       # true
 sk "=ISNUMBER(\"hello\")"                     # false
 
 # Predicates
-sk "=(5).positive()"                          # true
-sk "=(-3).negative()"                         # true
-sk "=(4).even()"                              # true
-sk "=(5).odd()"                               # true
-sk "=(\"\").blank()"                          # true
-sk "=(\"hello\").present()"                   # true
+sk "=(5).positive?"                          # true
+sk "=(-3).negative?"                         # true
+sk "=(4).even?"                              # true
+sk "=(5).odd?"                               # true
+sk "=(\"\").blank?"                          # true
+sk "=(\"hello\").present?"                   # true
 
 # Complex conditions
-sk "=IF(ISNUMBER(:value) AND :value > 0, :value, 0)" value=42
-sk "=IF(:data.blank(), \"No data\", :data.upper())" data=""
+sk "=IF(ISNUMBER(:value) && :value > 0, :value, 0)" value=42
+sk "=IF(:data.blank?, \"No data\", :data.upper())" data=""
 ```
 
 ### Financial Calculations
@@ -991,6 +1003,9 @@ sk "=:sales * IF(:sales > 100000, 0.08, IF(:sales > 50000, 0.06, 0.04))" sales=7
 - `LEN(text)` - Length of string
 - `CONCAT(...)` - Concatenate strings
 - `SUBSTRING(text, start, length)` - Extract substring
+- `LEFT(text, [num_chars])` - Leftmost characters (default 1)
+- `RIGHT(text, [num_chars])` - Rightmost characters (default 1)
+- `MID(text, start, [num_chars])` - Substring from 1-based start
 - `ISNUMBER(value)` - Check if numeric
 - `ISTEXT(value)` - Check if text
 
@@ -1006,11 +1021,13 @@ sk "=:sales * IF(:sales > 100000, 0.08, IF(:sales > 50000, 0.06, 0.04))" sales=7
 
 ### Array Functions
 - `FILTER(array, expression)` - Filter array elements
+- `FIND(array, expression)` - Find first element matching expression (returns element or Null)
 - `MAP(array, expression)` - Transform array elements
 - `REDUCE(array, expression, initial)` - Reduce array to single value
 - `SUMIF(array, condition)` - Conditional sum
 - `AVGIF(array, condition)` - Conditional average
 - `COUNTIF(array, condition)` - Conditional count
+- `BETWEEN(min, max, value)` - Check if value is within range (inclusive)
 
 ### Financial Functions
 - `PMT(rate, nper, pv, [fv], [type])` - Calculate loan payment
@@ -1071,8 +1088,8 @@ sk "=SUM(:items.map(:price * :quantity)) * (1 + :tax_rate)" --json '{
 }'
 
 # Employee payroll
-sk "=IF(:employee.type = \"full-time\", 
-         :employee.salary / 12, 
+sk "=IF(:employee.type = \"full-time\",
+         :employee.salary / 12,
          :employee.hourly_rate * :hours_worked)" --json '{
   "employee": {
     "name": "Alice Johnson",
@@ -1088,6 +1105,8 @@ sk "=IF(:employee.type = \"full-time\",
 
 ## Advanced Features
 
+> **Note**: This section covers advanced Skillet features including the new Object Literal syntax and updated HTTP Server API with variable tracking support.
+
 ### Method Chaining
 
 ```bash
@@ -1099,6 +1118,9 @@ sk "=[5, 2, 8, 2, 1, 9, 2].unique().sort().reverse()"  # [9, 8, 5, 2, 1]
 
 # Complex chaining
 sk "=:data.filter(x > 0).map(x * 2).sum()" data=[1,-2,3,-4,5]  # 18
+
+# Range checking method
+sk "=(75).between(60, 100)"                    # true
 ```
 
 ### Predicate Methods
@@ -1137,6 +1159,167 @@ sk "=MAX(...:scores)" scores=[85,92,78,90]  # 92
 
 # Array construction with spread
 sk "=[0, ...[1, 2, 3], 4]"                 # [0, 1, 2, 3, 4]
+```
+
+### Object Literals
+
+Skillet supports JSON-style object literal syntax for creating structured data:
+
+```bash
+# Simple object literals
+sk ":obj := {name: 'John', age: 30, active: true}; :obj"
+# Output: Json("{\"name\":\"John\",\"age\":30.0,\"active\":true}")
+
+# Objects with quoted keys
+sk ":obj := {\"first-name\": \"Jane\", \"last-name\": \"Doe\"}; :obj"
+
+# Nested objects
+sk ":config := {database: {host: 'localhost', port: 5432}, debug: true}; :config"
+
+# Objects with expressions as values
+sk ":data := {sum: 10 + 20, product: 5 * 6, timestamp: NOW()}; :data"
+
+# Arrays of objects (table-like structures)
+sk ":table := [{id: 1, name: 'Alice', score: 95}, {id: 2, name: 'Bob', score: 87}]; :table"
+
+# Complex nested structures
+sk ":app := {users: [{name: 'Admin', perms: ['read', 'write']}, {name: 'Guest', perms: ['read']}], settings: {theme: 'dark', lang: 'en'}}; :app"
+```
+
+#### Object Property Access
+
+Once created, you can access object properties using dot notation:
+
+```bash
+# Simple property access
+sk ":person := {name: 'Alice', age: 25}; :person.name"
+# Output: String("Alice")
+
+# Nested property access
+sk ":config := {db: {host: 'localhost', port: 3306}}; :config.db.port"
+# Output: Number(3306.0)
+
+# Accessing properties with variables
+sk ":user := {profile: {settings: {theme: 'dark'}}}; :user.profile.settings.theme"
+# Output: String("dark")
+```
+
+#### Working with Objects in Variables
+
+Objects integrate seamlessly with Skillet's variable assignment and expression system:
+
+```bash
+# Creating objects with variable expressions
+sk ":price := 19.99; :qty := 3; :order := {item: 'Widget', price: :price, quantity: :qty, total: :price * :qty}; :order.total"
+# Output: Number(59.97)
+
+# Objects in complex expressions
+sk ":data := {values: [10, 20, 30]}; SUM(:data.values)"
+# Output: Number(60.0)
+
+# Multiple objects
+sk ":user := {name: 'John', id: 123}; :prefs := {theme: 'light', lang: 'en'}; :combined := {user: :user, preferences: :prefs}; :combined"
+```
+
+#### HTTP Server Integration
+
+Object literals work perfectly with the HTTP server's new variable tracking feature:
+
+```json
+// POST /eval
+{
+    "expression": ":config := {api: {endpoint: 'https://api.example.com', timeout: 5000}, features: {caching: true, retries: 3}}; :config.api.timeout",
+    "arguments": {},
+    "include_variables": true
+}
+
+// Response
+{
+    "success": true,
+    "result": 5000,
+    "variables": {
+        "config": "{\"api\":{\"endpoint\":\"https://api.example.com\",\"timeout\":5000.0},\"features\":{\"caching\":true,\"retries\":3.0}}"
+    },
+    "execution_time_ms": 1.2,
+    "request_id": 456
+}
+```
+
+#### Object Syntax Rules
+
+- **Keys**: Can be unquoted identifiers (`name: value`) or quoted strings (`"key-name": value`)
+- **Values**: Any valid Skillet expression (numbers, strings, variables, function calls, arrays, nested objects)
+- **Trailing Commas**: Supported (`{a: 1, b: 2,}`)
+- **Empty Objects**: Supported (`{}`)
+- **Storage**: Objects are internally stored as JSON strings (`Value::Json`)
+- **Access**: Use dot notation for property access (`obj.key.subkey`)
+
+### HTTP Server API Updates
+
+The Skillet HTTP server has been enhanced with two major updates:
+
+#### 1. Parameter Rename: `variables` → `arguments`
+
+The HTTP API now uses `arguments` instead of `variables` for input parameters:
+
+```json
+// NEW API (preferred)
+{
+    "expression": ":total := :price * :quantity",
+    "arguments": {
+        "price": 19.99,
+        "quantity": 3
+    }
+}
+
+// OLD API (deprecated)
+{
+    "expression": ":total := :price * :quantity", 
+    "variables": {
+        "price": 19.99,
+        "quantity": 3
+    }
+}
+```
+
+#### 2. Variable Tracking with `include_variables`
+
+Set `include_variables: true` to receive all assigned variables in the response:
+
+```bash
+# Example request
+curl -X POST http://localhost:5074/eval \
+  -H "Content-Type: application/json" \
+  -d '{
+    "expression": ":taxes := 1.16; :subtotal := :unit_price * :quantity; :total := :subtotal * :taxes;",
+    "arguments": {
+      "quantity": 2,
+      "unit_price": 200
+    },
+    "include_variables": true
+  }'
+
+# Response with variables
+{
+  "success": true,
+  "result": 464,
+  "variables": {
+    "taxes": 1.16,
+    "subtotal": 400,
+    "total": 464
+  },
+  "execution_time_ms": 2.5,
+  "request_id": 123
+}
+```
+
+#### GET Request Support
+
+Both features work with GET requests too:
+
+```bash
+# With variable tracking
+curl "http://localhost:5074/eval?expr=:sum%20:=%20:a%20+%20:b&a=10&b=20&include_variables=true"
 ```
 
 ### Error Handling Best Practices

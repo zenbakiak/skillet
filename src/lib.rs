@@ -19,6 +19,19 @@ pub use types::Value;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
+/// Sanitize JSON keys by replacing special characters with underscores
+fn sanitize_json_key(key: &str) -> String {
+    key.chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
 // Global function registry
 lazy_static::lazy_static! {
     static ref GLOBAL_REGISTRY: Arc<RwLock<FunctionRegistry>> = Arc::new(RwLock::new(FunctionRegistry::new()));
@@ -48,6 +61,7 @@ pub fn evaluate_with(input: &str, vars: &HashMap<String, Value>) -> Result<Value
 /// Evaluate with variables provided as JSON string.
 /// JSON format: {"var1": "value1", "var2": 42, "var3": true}
 /// Supports flat JSON structure with automatic type conversion.
+/// JSON keys with special characters are sanitized to valid variable names.
 pub fn evaluate_with_json(input: &str, json_vars: &str) -> Result<Value, Error> {
     let json_value: serde_json::Value = serde_json::from_str(json_vars)
         .map_err(|e| Error::new(format!("Invalid JSON: {}", e), None))?;
@@ -57,7 +71,8 @@ pub fn evaluate_with_json(input: &str, json_vars: &str) -> Result<Value, Error> 
             let mut result = HashMap::new();
             for (key, value) in map {
                 let skillet_value = json_to_value(value)?;
-                result.insert(key, skillet_value);
+                let sanitized_key = sanitize_json_key(&key);
+                result.insert(sanitized_key, skillet_value);
             }
             result
         }
@@ -139,6 +154,7 @@ pub fn evaluate_with_custom(input: &str, vars: &HashMap<String, Value>) -> Resul
 }
 
 /// Evaluate with JSON and custom functions support
+/// JSON keys with special characters are sanitized to valid variable names.
 pub fn evaluate_with_json_custom(input: &str, json_vars: &str) -> Result<Value, Error> {
     let json_value: serde_json::Value = serde_json::from_str(json_vars)
         .map_err(|e| Error::new(format!("Invalid JSON: {}", e), None))?;
@@ -148,7 +164,8 @@ pub fn evaluate_with_json_custom(input: &str, json_vars: &str) -> Result<Value, 
             let mut result = HashMap::new();
             for (key, value) in map {
                 let skillet_value = json_to_value(value)?;
-                result.insert(key, skillet_value);
+                let sanitized_key = sanitize_json_key(&key);
+                result.insert(sanitized_key, skillet_value);
             }
             result
         }
@@ -162,6 +179,12 @@ pub fn evaluate_with_json_custom(input: &str, json_vars: &str) -> Result<Value, 
 pub fn evaluate_with_assignments(input: &str, vars: &HashMap<String, Value>) -> Result<Value, Error> {
     let expr = parse(input)?;
     runtime::eval_with_assignments(&expr, vars)
+}
+
+/// Evaluate with assignments and sequences, returning both result and variable context
+pub fn evaluate_with_assignments_and_context(input: &str, vars: &HashMap<String, Value>) -> Result<(Value, HashMap<String, Value>), Error> {
+    let expr = parse(input)?;
+    runtime::eval_with_assignments_and_context(&expr, vars)
 }
 
 #[cfg(test)]

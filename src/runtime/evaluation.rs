@@ -8,6 +8,30 @@ use crate::runtime::{
     type_casting::cast_value,
     utils::{index_array, slice_array}
 };
+
+/// Convert a Skillet Value to a serde_json::Value
+fn value_to_json(value: &Value) -> Result<serde_json::Value, Error> {
+    match value {
+        Value::Number(n) => Ok(serde_json::json!(n)),
+        Value::String(s) => Ok(serde_json::json!(s)),
+        Value::Boolean(b) => Ok(serde_json::json!(b)),
+        Value::Currency(c) => Ok(serde_json::json!(c)),
+        Value::DateTime(dt) => Ok(serde_json::json!(dt)),
+        Value::Null => Ok(serde_json::json!(null)),
+        Value::Array(arr) => {
+            let mut json_arr = Vec::new();
+            for item in arr {
+                json_arr.push(value_to_json(item)?);
+            }
+            Ok(serde_json::Value::Array(json_arr))
+        }
+        Value::Json(s) => {
+            // Already JSON, parse and re-serialize to validate
+            serde_json::from_str(s)
+                .map_err(|e| Error::new(format!("Invalid JSON: {}", e), None))
+        }
+    }
+}
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
@@ -66,6 +90,18 @@ pub fn eval(expr: &Expr) -> Result<Value, Error> {
             for e in items { out.push(eval(e)?); }
             Ok(Value::Array(out))
         }
+        Expr::ObjectLiteral(pairs) => {
+            let mut json_map = serde_json::Map::new();
+            for (key, value_expr) in pairs {
+                let value = eval(value_expr)?;
+                let json_value = value_to_json(&value)?;
+                json_map.insert(key.clone(), json_value);
+            }
+            let json_obj = serde_json::Value::Object(json_map);
+            let json_str = serde_json::to_string(&json_obj)
+                .map_err(|e| Error::new(format!("Failed to serialize object: {}", e), None))?;
+            Ok(Value::Json(json_str))
+        }
         Expr::TypeCast { expr, ty } => {
             let v = eval(expr)?;
             cast_value(v, ty)
@@ -107,6 +143,24 @@ pub fn eval(expr: &Expr) -> Result<Value, Error> {
                         Ok(Value::Array(out))
                     }
                     _ => Err(Error::new("FILTER first arg must be array", None)),
+                }
+            } else if name == "FIND" {
+                if args.len() < 2 { return Err(Error::new("FIND expects (array, expr, [param])", None)); }
+                let arr_v = eval(&args[0])?;
+                let lambda = &args[1];
+                let param_name = if args.len() > 2 { if let Value::String(s) = eval(&args[2])? { s } else { "x".into() } } else { "x".into() };
+                match arr_v {
+                    Value::Array(items) => {
+                        for it in items {
+                            let mut env = HashMap::new(); env.insert(param_name.clone(), it.clone());
+                            if let Expr::Spread(_) = lambda { return Err(Error::new("Invalid lambda", None)); }
+                            if let Value::Boolean(b) = eval_with_vars(lambda, &env)? { 
+                                if b { return Ok(it); } 
+                            }
+                        }
+                        Ok(Value::Null)
+                    }
+                    _ => Err(Error::new("FIND first arg must be array", None)),
                 }
             } else if name == "MAP" {
                 if args.len() < 2 { return Err(Error::new("MAP expects (array, expr, [param])", None)); }
@@ -312,6 +366,18 @@ pub fn eval_with_vars(expr: &Expr, vars: &HashMap<String, Value>) -> Result<Valu
             for e in items { out.push(eval_with_vars(e, vars)?); }
             Ok(Value::Array(out))
         }
+        Expr::ObjectLiteral(pairs) => {
+            let mut json_map = serde_json::Map::new();
+            for (key, value_expr) in pairs {
+                let value = eval_with_vars(value_expr, vars)?;
+                let json_value = value_to_json(&value)?;
+                json_map.insert(key.clone(), json_value);
+            }
+            let json_obj = serde_json::Value::Object(json_map);
+            let json_str = serde_json::to_string(&json_obj)
+                .map_err(|e| Error::new(format!("Failed to serialize object: {}", e), None))?;
+            Ok(Value::Json(json_str))
+        }
         Expr::TypeCast { expr, ty } => {
             let v = eval_with_vars(expr, vars)?;
             cast_value(v, ty)
@@ -469,6 +535,18 @@ pub fn eval_with_vars_and_custom(expr: &Expr, vars: &HashMap<String, Value>, cus
             }
             Ok(Value::Array(items))
         }
+        Expr::ObjectLiteral(pairs) => {
+            let mut json_map = serde_json::Map::new();
+            for (key, value_expr) in pairs {
+                let value = eval_with_vars_and_custom(value_expr, vars, custom_registry)?;
+                let json_value = value_to_json(&value)?;
+                json_map.insert(key.clone(), json_value);
+            }
+            let json_obj = serde_json::Value::Object(json_map);
+            let json_str = serde_json::to_string(&json_obj)
+                .map_err(|e| Error::new(format!("Failed to serialize object: {}", e), None))?;
+            Ok(Value::Json(json_str))
+        }
         Expr::Index { target, index } => {
             let arr = eval_with_vars_and_custom(target, vars, custom_registry)?;
             let idx = eval_with_vars_and_custom(index, vars, custom_registry)?;
@@ -553,6 +631,22 @@ pub fn eval_with_vars_and_custom(expr: &Expr, vars: &HashMap<String, Value>, cus
                         Ok(Value::Array(out))
                     }
                     _ => Err(Error::new("FILTER first arg must be array", None)),
+                }
+            } else if name == "FIND" {
+                if args.len() < 2 { return Err(Error::new("FIND expects (array, expr)", None)); }
+                let arr_v = eval_with_vars_and_custom(&args[0], vars, custom_registry)?;
+                let lambda = &args[1];
+                match arr_v {
+                    Value::Array(items) => {
+                        for it in items {
+                            let mut env = vars.clone(); env.insert("x".into(), it.clone());
+                            if let Value::Boolean(true) = eval_with_vars_and_custom(lambda, &env, custom_registry)? {
+                                return Ok(it);
+                            }
+                        }
+                        Ok(Value::Null)
+                    }
+                    _ => Err(Error::new("FIND first arg must be array", None)),
                 }
             } else if name == "MAP" {
                 if args.len() < 2 { return Err(Error::new("MAP expects (array, expr)", None)); }
@@ -692,6 +786,14 @@ pub fn eval_with_vars_and_custom(expr: &Expr, vars: &HashMap<String, Value>, cus
 pub fn eval_with_assignments(expr: &Expr, vars: &HashMap<String, Value>) -> Result<Value, Error> {
     let mut context = vars.clone();
     eval_with_assignments_context(expr, &mut context)
+}
+
+/// Evaluate with support for assignments and sequences, returning both result and variable context
+/// This function returns both the evaluation result and the final variable assignments
+pub fn eval_with_assignments_and_context(expr: &Expr, vars: &HashMap<String, Value>) -> Result<(Value, HashMap<String, Value>), Error> {
+    let mut context = vars.clone();
+    let result = eval_with_assignments_context(expr, &mut context)?;
+    Ok((result, context))
 }
 
 fn eval_with_assignments_context(expr: &Expr, context: &mut HashMap<String, Value>) -> Result<Value, Error> {

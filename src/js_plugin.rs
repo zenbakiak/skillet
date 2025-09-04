@@ -180,10 +180,29 @@ impl JavaScriptFunction {
             }
             
             Ok(Value::Array(result))
+        } else if js_val.is_object() {
+            // For objects, use JSON.stringify to convert to proper JSON
+            let json_stringify: rquickjs::Function = ctx
+                .globals()
+                .get("JSON")
+                .and_then(|json: rquickjs::Object| json.get("stringify"))
+                .map_err(|e| Error::new(format!("Failed to get JSON.stringify: {}", e), None))?;
+                
+            let json_result: rquickjs::Value = json_stringify.call((js_val,))
+                .map_err(|e| Error::new(format!("JSON.stringify failed: {}", e), None))?;
+                
+            if json_result.is_string() {
+                let json_string: String = FromJs::from_js(ctx, json_result)
+                    .map_err(|e| Error::new(format!("Failed to convert JSON string: {}", e), None))?;
+                Ok(Value::Json(json_string))
+            } else {
+                // Fallback for non-serializable objects
+                Ok(Value::String("[object Object]".to_string()))
+            }
         } else {
-            // For objects, convert to string representation
+            // For other types, convert to string representation
             let s: String = FromJs::from_js(ctx, js_val)
-                .unwrap_or_else(|_| "[object Object]".to_string());
+                .unwrap_or_else(|_| "[unknown type]".to_string());
             Ok(Value::String(s))
         }
     }

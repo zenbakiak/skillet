@@ -2,6 +2,10 @@ use crate::types::Value;
 use crate::error::Error;
 use chrono::{DateTime, Local, NaiveDate, Utc, Datelike, Timelike};
 
+pub fn is_datetime_function(name: &str) -> bool {
+    matches!(name, "NOW" | "DATE" | "TIME" | "YEAR" | "MONTH" | "DAY" | "DATEADD" | "DATEDIFF")
+}
+
 pub fn exec_datetime(name: &str, args: &[Value]) -> Result<Value, Error> {
     match name {
         "NOW" => {
@@ -9,9 +13,34 @@ pub fn exec_datetime(name: &str, args: &[Value]) -> Result<Value, Error> {
             Ok(Value::DateTime(now.timestamp()))
         }
         "DATE" => {
-            let today = Local::now().date_naive();
-            let timestamp = today.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
-            Ok(Value::DateTime(timestamp))
+            if args.is_empty() {
+                // No arguments - return today's date
+                let today = Local::now().date_naive();
+                let timestamp = today.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
+                Ok(Value::DateTime(timestamp))
+            } else if args.len() == 3 {
+                // Three arguments - year, month, day
+                let year = match args.get(0) {
+                    Some(Value::Number(n)) => *n as i32,
+                    _ => return Err(Error::new("DATE expects year as number", None)),
+                };
+                let month = match args.get(1) {
+                    Some(Value::Number(n)) => *n as u32,
+                    _ => return Err(Error::new("DATE expects month as number", None)),
+                };
+                let day = match args.get(2) {
+                    Some(Value::Number(n)) => *n as u32,
+                    _ => return Err(Error::new("DATE expects day as number", None)),
+                };
+                
+                // Validate and create the date
+                let date = NaiveDate::from_ymd_opt(year, month, day)
+                    .ok_or_else(|| Error::new("Invalid date", None))?;
+                let timestamp = date.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
+                Ok(Value::DateTime(timestamp))
+            } else {
+                Err(Error::new("DATE expects either no arguments or three arguments (year, month, day)", None))
+            }
         }
         "TIME" => {
             let now = Local::now().time();

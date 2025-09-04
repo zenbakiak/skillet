@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>🥘 Skillet Expression Server</title>
+    <meta charset="UTF-8">
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        max-width: 800px;
+        margin: 0 auto;
+        padding: 20px;
+      }
+      .endpoint {
+        background: #f5f5f5;
+        padding: 10px;
+        margin: 10px 0;
+        border-radius: 5px;
+      }
+      code {
+        background: #e8e8e8;
+        padding: 2px 4px;
+        border-radius: 3px;
+      }
+      pre {
+        background: #f0f0f0;
+        padding: 10px;
+        border-radius: 5px;
+        overflow-x: auto;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>🥘 Skillet Expression Server</h1>
+    <p>
+      A high-performance mathematical and logical expression evaluation server.
+    </p>
+
+    <h2>API Endpoints</h2>
+
+    <div class="endpoint">
+      <h3>GET /health</h3>
+      <p>Server health check and statistics</p>
+    </div>
+
+    <div class="endpoint">
+      <h3>POST /eval</h3>
+      <p>Evaluate expressions via JSON POST request</p>
+      <pre>
+      {
+        "expression": "=2 + 3 * 4",
+        "arguments": {"x": 10, "y": 20},
+        "output_json": true
+      }
+      </pre>
+    </div>
+
+    <div class="endpoint">
+      <h3>POST /upload-js</h3>
+      <p>Upload and validate JavaScript functions</p>
+      <p><strong>⚠️ Requires admin token authentication</strong></p>
+      <pre>
+      {
+        "filename": "myfunction.js",
+        "js_code": "// @name: MYFUNCTION\n// @min_args: 1\n// @max_args: 1\n// @example: MYFUNCTION(5) returns 10\nfunction execute(args) { return args[0] * 2; }"
+      }
+    </pre>
+    </div>
+
+    <div class="endpoint">
+      <h3>GET /list-js</h3>
+      <p>List all JavaScript functions in hooks directory</p>
+      <p>
+        Returns detailed information about each function including validation
+        status
+      </p>
+      <p><strong>⚠️ Requires admin token authentication</strong></p>
+    </div>
+
+    <div class="endpoint">
+      <h3>PUT /update-js</h3>
+      <p>Update an existing JavaScript function</p>
+      <p><strong>⚠️ Requires admin token authentication</strong></p>
+      <pre>
+      {
+        "filename": "myfunction.js",
+        "js_code": "// @name: MYFUNCTION\n// @min_args: 1\n// @max_args: 1\n// @example: MYFUNCTION(10) returns 20\nfunction execute(args) { return args[0] * 2; }"
+      }
+      </pre>
+    </div>
+
+    <div class="endpoint">
+      <h3>DELETE /delete-js</h3>
+      <p>Delete a JavaScript function file</p>
+      <p><strong>⚠️ Requires admin token authentication</strong></p>
+      <pre>
+      {
+        "filename": "myfunction.js"
+      }
+      </pre>
+    </div>
+
+    <div class="endpoint">
+      <h3>POST /reload-hooks</h3>
+      <p>Reload all JavaScript functions from hooks directory</p>
+      <p><strong>⚠️ Requires admin token authentication</strong></p>
+      <pre>{}</pre>
+    </div>
+
+    <h2>Examples</h2>
+    <pre>
+      # Health check
+      curl http://localhost:5074/health
+
+      # Simple evaluation
+      curl -X POST http://localhost:5074/eval \
+        -H "Content-Type: application/json" \
+        -d '{"expression": "=2 + 3 * 4"}'
+
+      # With variables
+      curl -X POST http://localhost:5074/eval \
+        -H "Content-Type: application/json" \
+        -d '{"expression": "=:x + :y", "arguments": {"x": 10, "y": 20}}'
+
+      # JavaScript function management (requires admin token)
+      # List all JS functions
+      curl -H "Authorization: admin456" http://localhost:5074/list-js
+
+      # Upload a JS function
+      curl -X POST http://localhost:5074/upload-js \
+        -H "Content-Type: application/json" \
+        -H "Authorization: admin456" \
+        -d '{"filename": "double.js", "js_code": "// @name: DOUBLE\n// @example: DOUBLE(5) returns 10\nfunction execute(args) { return args[0] * 2; }"}'
+
+      # Update a JS function
+      curl -X PUT http://localhost:5074/update-js \
+        -H "Content-Type: application/json" \
+        -H "Authorization: admin456" \
+        -d '{"filename": "double.js", "js_code": "// @name: DOUBLE\n// @example: DOUBLE(5) returns 20\nfunction execute(args) { return args[0] * 4; }"}'
+
+      # Delete a JS function
+      curl -X DELETE http://localhost:5074/delete-js \
+        -H "Content-Type: application/json" \
+        -H "Authorization: admin456" \
+        -d '{"filename": "double.js"}'
+
+      # Reload hooks
+      curl -X POST http://localhost:5074/reload-hooks \
+        -H "Content-Type: application/json" \
+        -H "Authorization: admin456" \
+        -d '{}'
+    </pre>
+  </body>
+</html>

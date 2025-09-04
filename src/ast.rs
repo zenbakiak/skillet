@@ -10,6 +10,7 @@ pub enum Expr {
     FunctionCall { name: String, args: Vec<Expr> },
     Spread(Box<Expr>),
     Array(Vec<Expr>),
+    ObjectLiteral(Vec<(String, Expr)>),
     MethodCall { target: Box<Expr>, name: String, args: Vec<Expr>, predicate: bool },
     Index { target: Box<Expr>, index: Box<Expr> },
     Slice { target: Box<Expr>, start: Option<Box<Expr>>, end: Option<Box<Expr>> },
