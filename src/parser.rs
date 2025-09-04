@@ -443,6 +443,15 @@ impl<'a> Parser<'a> {
                         }
                     }
                 }
+                Token::SafeNavigation => {
+                    self.bump()?; // '&.'
+                    let name = match self.lookahead.clone() {
+                        Token::Identifier(s) => { self.bump()?; s }
+                        _ => return self.err_here("Expected property name after '&.'"),
+                    };
+                    // Safe navigation only supports property access, not method calls
+                    node = Expr::SafePropertyAccess { target: Box::new(node), property: name };
+                }
             Token::LBracket => {
                 // Indexing or slicing
                 self.bump()?; // '['

@@ -223,6 +223,24 @@ pub fn exec_string(name: &str, args: &[Value]) -> Result<Value, Error> {
             let v = args.get(0).cloned().unwrap_or(Value::Null);
             Ok(Value::Boolean(matches!(v, Value::String(_))))
         }
+        "INCLUDES" => {
+            // INCLUDES(string, substring) -> boolean
+            if args.len() != 2 {
+                return Err(Error::new("INCLUDES expects string, substring", None));
+            }
+            match (args.get(0), args.get(1)) {
+                (Some(Value::String(s)), Some(Value::String(substring))) => {
+                    Ok(Value::Boolean(s.contains(substring)))
+                }
+                (Some(Value::String(_)), Some(_)) => {
+                    Err(Error::new("INCLUDES expects string as second argument", None))
+                }
+                (Some(_), Some(_)) => {
+                    Err(Error::new("INCLUDES expects string as first argument", None))
+                }
+                _ => Err(Error::new("INCLUDES expects string, substring", None)),
+            }
+        }
         _ => Err(Error::new(
             format!("Unknown string function: {}", name),
             None,

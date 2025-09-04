@@ -1,0 +1,37 @@
+# Build artifacts
+target/
+Cargo.lock
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Documentation
+*.md
+docs/
+
+# CI/CD
+.github/
+
+# Docker
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Logs and runtime
+logs/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test files
+tests/
+benches/

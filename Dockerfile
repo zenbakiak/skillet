@@ -1,7 +1,7 @@
-# Multi-stage build for Skillet Server
+# Multi-stage build for Skillet HTTP Server
 FROM rust:1.81-slim as builder
 
-# Install system dependencies
+# Install system dependencies for building
 RUN apt-get update && apt-get install -y \
     pkg-config \
     libssl-dev \
@@ -10,8 +10,8 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 COPY . .
 
-# Build the server binary
-RUN cargo build --release --bin sk_server
+# Build the HTTP server binary
+RUN cargo build --release --bin sk_http_server
 
 # Runtime image
 FROM debian:bookworm-slim
@@ -19,44 +19,41 @@ FROM debian:bookworm-slim
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y \
     ca-certificates \
-    netcat-openbsd \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user
 RUN groupadd -r skillet && useradd -r -g skillet -d /app -s /bin/false skillet
 
 # Create directories
-RUN mkdir -p /app/{logs,hooks,config} && \
+RUN mkdir -p /app/hooks && \
     chown -R skillet:skillet /app
 
 WORKDIR /app
 USER skillet
 
 # Copy binary from builder
-COPY --from=builder --chown=skillet:skillet /app/target/release/sk_server ./
+COPY --from=builder --chown=skillet:skillet /app/target/release/sk_http_server ./
 
-# Create default config
-COPY --chown=skillet:skillet <<EOF /app/config/server.conf
-PORT=8080
-THREADS=4
-LOG_LEVEL=info
-BIND_ADDRESS=0.0.0.0
-EOF
+# Create health check script
+RUN echo '#!/bin/bash\ncurl -f http://localhost:${PORT:-8080}/health > /dev/null 2>&1' > health-check.sh && \
+    chmod +x health-check.sh
 
-# Health check script
-COPY --chown=skillet:skillet <<'EOF' /app/health-check.sh
-#!/bin/bash
-echo '{"expression": "=1+1", "variables": null}' | nc localhost 8080 > /dev/null 2>&1
-EOF
-
-RUN chmod +x ./health-check.sh
+# Environment variables with defaults
+ENV PORT=8080
+ENV HOST=0.0.0.0
+ENV AUTH_TOKEN="sk-gGAZdgwJrMf7x1qB08yVi3bKVBHjSGyZ"
+ENV ADMIN_TOKEN="sk-Drf85SWctwFh45Vc6buxQOU2k6jiEwTr"
+ENV SKILLET_HOOKS_DIR=/app/hooks
 
 # Expose port
-EXPOSE 8080
+EXPOSE $PORT
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD ./health-check.sh || exit 1
 
-# Default command
-CMD ["./sk_server", "8080", "4"]
+# Default command with environment variable support
+CMD sh -c './sk_http_server $PORT --host $HOST \
+    ${AUTH_TOKEN:+--token "$AUTH_TOKEN"} \
+    ${ADMIN_TOKEN:+--admin-token "$ADMIN_TOKEN"}'

@@ -1,0 +1,55 @@
+version: '3.8'
+
+services:
+  skillet-http:
+    build: .
+    container_name: skillet-http-server
+    ports:
+      - "${DOCKER_PORT:-8080}:8080"
+    environment:
+      - PORT=8080
+      - HOST=0.0.0.0
+      - AUTH_TOKEN=${AUTH_TOKEN:-}
+      - ADMIN_TOKEN=${ADMIN_TOKEN:-}
+      - SKILLET_HOOKS_DIR=/app/hooks
+    volumes:
+      # Mount hooks directory for persistent JS functions
+      - ./hooks:/app/hooks:rw
+      # Optional: mount custom hooks from a different location
+      # - /path/to/your/hooks:/app/hooks:rw
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "./health-check.sh"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.skillet.rule=Host(`skillet.localhost`)"
+      - "traefik.http.services.skillet.loadbalancer.server.port=8080"
+
+  # Optional: Add a reverse proxy for production
+  traefik:
+    image: traefik:v3.0
+    container_name: skillet-traefik
+    profiles:
+      - "proxy"
+    command:
+      - "--api.dashboard=true"
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8090:8080"  # Traefik dashboard
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: unless-stopped
+
+networks:
+  default:
+    name: skillet-network
