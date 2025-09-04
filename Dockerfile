@@ -42,8 +42,8 @@ RUN echo '#!/bin/bash\ncurl -f http://localhost:${PORT:-8080}/health > /dev/null
 # Environment variables with defaults
 ENV PORT=8080
 ENV HOST=0.0.0.0
-ENV AUTH_TOKEN="sk-gGAZdgwJrMf7x1qB08yVi3bKVBHjSGyZ"
-ENV ADMIN_TOKEN="sk-Drf85SWctwFh45Vc6buxQOU2k6jiEwTr"
+ENV AUTH_TOKEN=""
+ENV ADMIN_TOKEN=""
 ENV SKILLET_HOOKS_DIR=/app/hooks
 
 # Expose port
