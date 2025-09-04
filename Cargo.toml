@@ -40,6 +40,12 @@ libc = "0.2"
 ctrlc = "3.4"
 # HTTP server support
 urlencoding = "2.1"
+# Shuttle.dev dependencies
+shuttle-runtime = "0.56.0"
+shuttle-axum = "0.56.0"
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors"] }
+tokio = { version = "1.0", features = ["full"] }
 
 [dev-dependencies]
 tempfile = "3.21"
@@ -65,4 +71,3 @@ path = "src/bin/sk_client.rs"
 [[bin]]
 name = "sk_http_server"
 path = "src/bin/sk_http_server.rs"
-
