@@ -2,6 +2,7 @@
 <html>
   <head>
     <title>🥘 Skillet Expression Server</title>
+    <meta charset="UTF-8">
     <style>
       body {
         font-family: Arial, sans-serif;
@@ -119,9 +120,6 @@
       curl -X POST http://localhost:5074/eval \
         -H "Content-Type: application/json" \
         -d '{"expression": "=:x + :y", "arguments": {"x": 10, "y": 20}}'
-
-      # GET request
-      curl "http://localhost:5074/eval?expr=2%2B3*4"
 
       # JavaScript function management (requires admin token)
       # List all JS functions
