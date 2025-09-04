@@ -7,3 +7,7 @@ skillet-micro-lang-**
 skillet-node
 skillet-wasm
 .tool-versions
+/target
+.shuttle*
+Secrets*.toml
+.env

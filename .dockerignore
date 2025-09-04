@@ -1,0 +1,41 @@
+# Build artifacts
+target/
+Cargo.lock
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Documentation
+*.md
+docs/
+
+# CI/CD
+.github/
+
+# Shuttle specific
+Shuttle.toml
+src/bin/sk_shuttle_server.rs
+
+# Docker
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Logs and runtime
+logs/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test files
+tests/
+benches/
