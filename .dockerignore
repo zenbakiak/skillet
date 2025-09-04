@@ -19,10 +19,6 @@ docs/
 # CI/CD
 .github/
 
-# Shuttle specific
-Shuttle.toml
-src/bin/sk_shuttle_server.rs
-
 # Docker
 Dockerfile*
 docker-compose*.yml
