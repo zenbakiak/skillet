@@ -266,6 +266,7 @@ pub fn eval(expr: &Expr) -> Result<Value, Error> {
         }
         Expr::Variable(_) => Err(Error::new("Use eval_with_vars for variables", None)),
         Expr::PropertyAccess { .. } => Err(Error::new("Use eval_with_vars for property access", None)),
+        Expr::SafePropertyAccess { .. } => Err(Error::new("Use eval_with_vars for safe property access", None)),
         Expr::Spread(_) => Err(Error::new("Spread not allowed here", None)),
         Expr::Assignment { .. } => Err(Error::new("Use eval_with_vars for assignments", None)),
         Expr::Sequence(_) => Err(Error::new("Use eval_with_vars for sequences", None)),
@@ -358,7 +359,23 @@ pub fn eval_with_vars(expr: &Expr, vars: &HashMap<String, Value>) -> Result<Valu
                         Err(Error::new(format!("Property '{}' not found in JSON object", property), None))
                     }
                 }
-                _ => Err(Error::new(format!("Property access only supported on JSON objects, got {:?}", target_value), None)),
+                _ => Err(Error::new("Property access requires JSON object", None))
+            }
+        }
+        Expr::SafePropertyAccess { target, property } => {
+            let target_value = eval_with_vars(target, vars)?;
+            match target_value {
+                Value::Json(json_str) => {
+                    let parsed: serde_json::Value = serde_json::from_str(&json_str)
+                        .map_err(|e| Error::new(format!("Invalid JSON: {}", e), None))?;
+                    if let Some(prop_value) = parsed.get(property) {
+                        crate::json_to_value(prop_value.clone())
+                    } else {
+                        Ok(Value::Null) // Safe navigation returns null instead of error
+                    }
+                }
+                Value::Null => Ok(Value::Null), // Safe navigation on null returns null
+                _ => Err(Error::new("Property access requires JSON object", None))
             }
         }
         Expr::Array(items) => {
@@ -525,6 +542,22 @@ pub fn eval_with_vars_and_custom(expr: &Expr, vars: &HashMap<String, Value>, cus
                         Err(Error::new(format!("Property '{}' not found in JSON object", property), None))
                     }
                 }
+                _ => Err(Error::new(format!("Property access only supported on JSON objects, got {:?}", target_value), None)),
+            }
+        }
+        Expr::SafePropertyAccess { target, property } => {
+            let target_value = eval_with_vars_and_custom(target, vars, custom_registry)?;
+            match target_value {
+                Value::Json(json_str) => {
+                    let parsed: serde_json::Value = serde_json::from_str(&json_str)
+                        .map_err(|e| Error::new(format!("Invalid JSON: {}", e), None))?;
+                    if let Some(prop_value) = parsed.get(property) {
+                        crate::json_to_value(prop_value.clone())
+                    } else {
+                        Ok(Value::Null) // Safe navigation returns null instead of error
+                    }
+                }
+                Value::Null => Ok(Value::Null), // Safe navigation on null returns null
                 _ => Err(Error::new(format!("Property access only supported on JSON objects, got {:?}", target_value), None)),
             }
         }

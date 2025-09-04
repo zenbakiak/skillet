@@ -141,6 +141,19 @@ pub fn exec_method(
             }
             _ => Err(Error::new("reverse expects string or array receiver", None)),
         },
+        "includes" => {
+            // String includes method: "hello world".includes("world") -> true
+            if let Value::String(s) = recv {
+                let a = eval_args(args_expr)?;
+                if let Some(Value::String(substring)) = a.get(0) {
+                    Ok(Value::Boolean(s.contains(substring)))
+                } else {
+                    Err(Error::new("includes expects string argument", None))
+                }
+            } else {
+                Err(Error::new("includes expects string receiver", None))
+            }
+        },
 
         // Array accessors / transforms
         "length" | "size" => match recv {
@@ -624,6 +637,19 @@ pub fn exec_method_with_custom(
                 Ok(Value::Array(v))
             }
             _ => Err(Error::new("reverse expects string or array receiver", None)),
+        },
+        "includes" => {
+            // String includes method: "hello world".includes("world") -> true
+            if let Value::String(s) = recv {
+                let a = eval_args(args_expr)?;
+                if let Some(Value::String(substring)) = a.get(0) {
+                    Ok(Value::Boolean(s.contains(substring)))
+                } else {
+                    Err(Error::new("includes expects string argument", None))
+                }
+            } else {
+                Err(Error::new("includes expects string receiver", None))
+            }
         },
 
         // Array accessors / transforms
