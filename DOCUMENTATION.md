@@ -811,6 +811,9 @@ sk "=\"hello\".reverse()"                      # "olleh"
 sk "=SUBSTRING(\"Hello World\", 6, 5)"         # "World"
 sk "=LENGTH(\"Hello\")"                           # 5
 sk "=CONCAT(\"Hello\", \" \", \"World\")"      # "Hello World"
+sk "=LEFT(\"Hello\", 2)"                       # "He"
+sk "=RIGHT(\"Hello\", 3)"                      # "llo"
+sk "=MID(\"Hello\", 2, 3)"                     # "ell" (1-based start)
 
 # With variables
 sk "=CONCAT(:name.upper(), ' ', :age)" name="alice" age=25  # "ALICE (25)"
@@ -1000,6 +1003,9 @@ sk "=:sales * IF(:sales > 100000, 0.08, IF(:sales > 50000, 0.06, 0.04))" sales=7
 - `LEN(text)` - Length of string
 - `CONCAT(...)` - Concatenate strings
 - `SUBSTRING(text, start, length)` - Extract substring
+- `LEFT(text, [num_chars])` - Leftmost characters (default 1)
+- `RIGHT(text, [num_chars])` - Rightmost characters (default 1)
+- `MID(text, start, [num_chars])` - Substring from 1-based start
 - `ISNUMBER(value)` - Check if numeric
 - `ISTEXT(value)` - Check if text
 

@@ -4,6 +4,89 @@ use crate::types::Value;
 
 pub fn exec_string(name: &str, args: &[Value]) -> Result<Value, Error> {
     match name {
+        "LEFT" => {
+            // LEFT(String, [NumberOfCharacters]) -> default 1 character if omitted
+            if args.is_empty() {
+                return Err(Error::new("LEFT expects string, [num_chars]", None));
+            }
+            let s = match args.get(0) {
+                Some(Value::String(st)) => st,
+                _ => return Err(Error::new("LEFT expects string as first argument", None)),
+            };
+            let n = match args.get(1) {
+                Some(Value::Number(n)) => *n,
+                Some(_) => return Err(Error::new("LEFT expects number as second argument", None)),
+                None => 1.0,
+            };
+            let take = if n.is_finite() && n > 0.0 { n as usize } else { 0usize };
+            let chars: Vec<char> = s.chars().collect();
+            let end = take.min(chars.len());
+            Ok(Value::String(chars[0..end].iter().collect()))
+        }
+        "RIGHT" => {
+            // RIGHT(String, [NumberOfCharacters]) -> default 1 character if omitted
+            if args.is_empty() {
+                return Err(Error::new("RIGHT expects string, [num_chars]", None));
+            }
+            let s = match args.get(0) {
+                Some(Value::String(st)) => st,
+                _ => return Err(Error::new("RIGHT expects string as first argument", None)),
+            };
+            let n = match args.get(1) {
+                Some(Value::Number(n)) => *n,
+                Some(_) => return Err(Error::new("RIGHT expects number as second argument", None)),
+                None => 1.0,
+            };
+            let take = if n.is_finite() && n > 0.0 { n as usize } else { 0usize };
+            let chars: Vec<char> = s.chars().collect();
+            let len = chars.len();
+            let start = len.saturating_sub(take).min(len);
+            Ok(Value::String(chars[start..len].iter().collect()))
+        }
+        "MID" => {
+            // MID(String, StartingPosition [, NumberOfCharacters])
+            // StartingPosition is 1-based (Excel-like). If NumberOfCharacters omitted, go to end.
+            if args.len() < 2 {
+                return Err(Error::new(
+                    "MID expects string, start, [num_chars]",
+                    None,
+                ));
+            }
+            let s = match args.get(0) {
+                Some(Value::String(st)) => st,
+                _ => return Err(Error::new("MID expects string as first argument", None)),
+            };
+            let start_num = match args.get(1) {
+                Some(Value::Number(n)) => *n,
+                _ => return Err(Error::new("MID expects number as second argument", None)),
+            };
+            let len_opt = match args.get(2) {
+                Some(Value::Number(n)) => Some(*n),
+                Some(_) => return Err(Error::new("MID expects number as third argument", None)),
+                None => None,
+            };
+
+            let chars: Vec<char> = s.chars().collect();
+            let total = chars.len();
+            // Excel-like: 1-based start; clamp below 1 to 1
+            let start_index = if start_num.is_finite() {
+                let s1 = if start_num < 1.0 { 1.0 } else { start_num.floor() } as usize;
+                s1.saturating_sub(1).min(total)
+            } else {
+                0usize
+            };
+            let end_index = if let Some(n) = len_opt {
+                let take = if n.is_finite() && n > 0.0 { n as usize } else { 0usize };
+                start_index.saturating_add(take).min(total)
+            } else {
+                total
+            };
+            if start_index >= total || start_index >= end_index {
+                Ok(Value::String(String::new()))
+            } else {
+                Ok(Value::String(chars[start_index..end_index].iter().collect()))
+            }
+        }
         "LENGTH" => match args.get(0) {
             Some(Value::Array(items)) => Ok(Value::Number(items.len() as f64)),
             Some(Value::String(s)) => Ok(Value::Number(s.chars().count() as f64)),
