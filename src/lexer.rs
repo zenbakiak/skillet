@@ -16,6 +16,7 @@ pub enum Token {
     Caret,
     Bang,
     Dot,
+    SafeNavigation, // &.
     Ellipsis,
     LParen,
     RParen,
@@ -273,6 +274,9 @@ impl<'a> Lexer<'a> {
                 if matches!(self.peek(), Some(b'&')) {
                     self.bump();
                     Token::AndAnd
+                } else if matches!(self.peek(), Some(b'.')) {
+                    self.bump();
+                    Token::SafeNavigation
                 } else {
                     return Err(Error::new("Unexpected '&'", Some(self.pos - 1)));
                 }
@@ -323,6 +327,7 @@ impl<'a> Lexer<'a> {
                 | Token::NotEq
                 | Token::AndAnd
                 | Token::OrOr
+                | Token::SafeNavigation
         ) {
             self.last_start = self.pos - 2;
             self.last_end = self.pos;

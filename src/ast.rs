@@ -7,6 +7,7 @@ pub enum Expr {
     Binary(Box<Expr>, BinaryOp, Box<Expr>),
     Variable(String),
     PropertyAccess { target: Box<Expr>, property: String },
+    SafePropertyAccess { target: Box<Expr>, property: String },
     FunctionCall { name: String, args: Vec<Expr> },
     Spread(Box<Expr>),
     Array(Vec<Expr>),
