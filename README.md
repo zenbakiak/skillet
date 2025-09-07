@@ -22,8 +22,8 @@ Skillet is a high-performance, embeddable expression engine written in Rust, ins
 - 🦀 **Rust-powered**: Memory safe with zero-cost abstractions
 - 🎯 **Type Smart**: Ruby-style conversions with automatic type coercion
 
-**Supported Types**: Numbers, strings, booleans, nulls, arrays, JSON objects, dates, currency  
-**Operations**: Arithmetic, logical, comparisons, method chaining, array operations, lambdas  
+**Supported Types**: Numbers, strings, booleans, nulls, arrays, JSON objects, dates, currency
+**Operations**: Arithmetic, logical, comparisons, method chaining, array operations, lambdas
 **Extensions**: JavaScript plugins, Rust custom functions, HTTP/TCP server modes
 
 📚 **[Full Documentation](DOCUMENTATION.md)** | 📖 **[API Reference](API_REFERENCE.md)**
@@ -43,7 +43,7 @@ cargo test
 **Traditional Excel-style formulas:**
 ```bash
 cargo run --bin sk -- "SUM(1, 2, 3, 4, 5)"                    # 15
-cargo run --bin sk -- "IF(10 > 5, \"Yes\", \"No\")"           # "Yes"  
+cargo run --bin sk -- "IF(10 > 5, \"Yes\", \"No\")"           # "Yes"
 cargo run --bin sk -- "AVERAGE([85, 92, 78, 90])"             # 86.25
 ```
 
@@ -74,13 +74,13 @@ Add to your Cargo project (from crates.io):
 
 ```toml
 [dependencies]
-skillet = "0.2.0"
+skillet = "0.4.1"
 ```
 
 Or with cargo-edit:
 
 ```
-cargo add skillet@0.2.0
+cargo add skillet@0.4.1
 ```
 
 ## Server Modes
