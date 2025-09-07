@@ -122,6 +122,18 @@ impl Evaluator {
                 Self::eval_property_access(target_value, property, true)
             }
             
+            Expr::SafeMethodCall { target, name, args } => {
+                let target_value = Self::eval(target, context)?;
+                if matches!(target_value, Value::Null) {
+                    return Ok(Value::Null);
+                }
+                if let Some(registry) = context.get_custom_registry() {
+                    exec_method_with_custom(name, false, &target_value, args, Some(&context.clone_variables()), registry)
+                } else {
+                    exec_method(name, false, &target_value, args, Some(&context.clone_variables()))
+                }
+            }
+            
             Expr::Array(items) => {
                 let mut out = Vec::with_capacity(items.len());
                 for e in items { 

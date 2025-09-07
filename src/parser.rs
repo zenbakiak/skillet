@@ -28,13 +28,6 @@ impl<'a> Parser<'a> {
         Ok(())
     }
     
-    fn peek_ahead(&mut self) -> Result<&Token, Error> {
-        if self.lookahead2.is_none() {
-            self.lookahead2 = Some(self.lexer.next_token()?);
-        }
-        Ok(self.lookahead2.as_ref().unwrap())
-    }
-    
     fn peek_ahead2(&mut self) -> Result<(Token, Token), Error> {
         // Use a temporary lexer clone for deeper lookahead since we need 3 tokens
         let mut temp_lexer = self.lexer.clone();
@@ -71,7 +64,8 @@ impl<'a> Parser<'a> {
         
         // If only one expression, return it directly; otherwise wrap in sequence
         if exprs.len() == 1 {
-            Ok(exprs.into_iter().next().unwrap())
+            exprs.into_iter().next()
+                .ok_or_else(|| Error::new("Expected expression but none found", None))
         } else {
             Ok(Expr::Sequence(exprs))
         }
@@ -468,8 +462,38 @@ impl<'a> Parser<'a> {
                         Token::Identifier(s) => { self.bump()?; s }
                         _ => return self.err_here("Expected property name after '&.'"),
                     };
-                    // Safe navigation only supports property access, not method calls
-                    node = Expr::SafePropertyAccess { target: Rc::new(node), property: name };
+                    // Check for method call after safe navigation
+                    match self.lookahead {
+                        Token::LParen => {
+                            // Safe method call
+                            self.bump()?; // '('
+                            let mut args = Vec::new();
+                            if let Token::RParen = self.lookahead {
+                                // empty args
+                            } else {
+                                loop {
+                                    let arg = if let Token::Ellipsis = self.lookahead { 
+                                        self.bump()?; 
+                                        Expr::Spread(Rc::new(self.parse_expr()?))}
+                                    else { 
+                                        self.parse_expr()? 
+                                    };
+                                    args.push(arg);
+                                    match self.lookahead {
+                                        Token::Comma => { self.bump()?; }
+                                        Token::RParen => break,
+                                        _ => return self.err_here("Expected ',' or ')' in safe method args"),
+                                    }
+                                }
+                            }
+                            self.bump()?; // ')'
+                            node = Expr::SafeMethodCall { target: Rc::new(node), name: name.to_lowercase(), args };
+                        }
+                        _ => {
+                            // Safe property access
+                            node = Expr::SafePropertyAccess { target: Rc::new(node), property: name };
+                        }
+                    }
                 }
             Token::LBracket => {
                 // Indexing or slicing

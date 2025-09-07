@@ -10,6 +10,7 @@ pub enum Expr {
     Variable(String),
     PropertyAccess { target: Rc<Expr>, property: String },
     SafePropertyAccess { target: Rc<Expr>, property: String },
+    SafeMethodCall { target: Rc<Expr>, name: String, args: Vec<Expr> },
     FunctionCall { name: String, args: Vec<Expr> },
     Spread(Rc<Expr>),
     Array(Vec<Expr>),

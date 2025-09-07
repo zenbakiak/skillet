@@ -8,6 +8,7 @@ pub mod lexer;
 pub mod memory_pool;
 pub mod parser;
 pub mod runtime;
+pub mod traits;
 pub mod types;
 
 pub use ast::Expr;

@@ -94,3 +94,21 @@ fn test_safe_navigation_mixed_with_regular() {
     let result = evaluate_with_assignments(expression, &vars).unwrap();
     assert_eq!(result, Value::String("Alice".to_string()));
 }
+
+#[test]
+fn test_safe_navigation_method_calls() {
+    // Test safe navigation with method calls
+    let expression = r#":cuentas := [{"FechaCierreCuenta": null}, {"FechaCierreCuenta": ""}]; :cuentas.filter(:x&.FechaCierreCuenta&.length() == 0)"#;
+    let vars = HashMap::new();
+    
+    let result = evaluate_with_assignments(expression, &vars).unwrap();
+    if let Value::Array(arr) = result {
+        assert_eq!(arr.len(), 1);
+        // Should contain the object with empty string
+        if let Value::Json(json_str) = &arr[0] {
+            assert!(json_str.contains("\"FechaCierreCuenta\":\"\""));
+        }
+    } else {
+        panic!("Expected array result");
+    }
+}

@@ -119,7 +119,8 @@ impl<'a> Lexer<'a> {
             result
         } else {
             // Fallback to string parsing for complex numbers
-            let s = std::str::from_utf8(&self.input[start..end]).unwrap();
+            let s = std::str::from_utf8(&self.input[start..end])
+                .map_err(|_| Error::new("Invalid UTF-8 in number", Some(start)))?;
             s.parse()
                 .map_err(|_| Error::new("Invalid number", Some(start)))?
         };
@@ -156,7 +157,9 @@ impl<'a> Lexer<'a> {
                     Token::Null
                 } else {
                     // Convert to string only if not a keyword
-                    let s = std::str::from_utf8(bytes).unwrap().to_string();
+                    let s = std::str::from_utf8(bytes)
+                        .map_err(|_| Error::new("Invalid UTF-8 in identifier", Some(start)))?
+                        .to_string();
                     Token::Identifier(s)
                 }
             }
@@ -164,13 +167,17 @@ impl<'a> Lexer<'a> {
                 if bytes.eq_ignore_ascii_case(b"FALSE") {
                     Token::False
                 } else {
-                    let s = std::str::from_utf8(bytes).unwrap().to_string();
+                    let s = std::str::from_utf8(bytes)
+                        .map_err(|_| Error::new("Invalid UTF-8 in identifier", Some(start)))?
+                        .to_string();
                     Token::Identifier(s)
                 }
             }
             _ => {
                 // For other identifiers, convert to string
-                let s = std::str::from_utf8(bytes).unwrap().to_string();
+                let s = std::str::from_utf8(bytes)
+                    .map_err(|_| Error::new("Invalid UTF-8 in identifier", Some(start)))?
+                    .to_string();
                 Token::Identifier(s)
             }
         };

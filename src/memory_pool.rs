@@ -225,7 +225,7 @@ mod tests {
         drop(ctx2);
         
         // Acquire again (should reuse from pool)
-        let mut ctx3 = pool.acquire();
+        let ctx3 = pool.acquire();
         assert!(ctx3.get("x").is_none()); // Should be cleared
         
         let stats = pool.stats();
