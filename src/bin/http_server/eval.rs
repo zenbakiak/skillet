@@ -5,7 +5,8 @@ use std::time::Instant;
 use skillet::{evaluate_with_custom, evaluate_with_assignments, evaluate_with_assignments_and_context, Value};
 
 use super::auth::check_authentication;
-use super::types::{EvalRequest, EvalResponse, HealthResponse, IncludeVariables};
+use super::cache::{evaluate_cached, get_cache_stats, clear_cache};
+use super::types::{EvalRequest, EvalResponse, HealthResponse, IncludeVariables, CacheStatsResponse};
 use super::utils::{send_http_response, send_http_error, parse_json_body, sanitize_json_key};
 use super::stats::ServerStats;
 
@@ -139,15 +140,46 @@ pub fn handle_health(
     let _ = (request, server_token); // Suppress unused warnings
 
     let (requests, avg_time) = stats.get_stats();
+    let cache_stats = get_cache_stats();
     let response = HealthResponse {
         status: "healthy".to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
         requests_processed: requests,
         avg_execution_time_ms: avg_time,
+        cache_stats: Some(CacheStatsResponse {
+            hits: cache_stats.hits,
+            misses: cache_stats.misses,
+            hit_rate: cache_stats.hit_rate(),
+            entries: cache_stats.entries,
+            evictions: cache_stats.evictions,
+            total_saved_time_ms: cache_stats.total_saved_time_ms,
+        }),
     };
 
     let json = serde_json::to_string(&response).unwrap_or_default();
     send_http_response(stream, 200, "application/json", &json);
+}
+
+pub fn handle_cache_clear(
+    stream: &mut TcpStream,
+    _request: &str,
+    server_admin_token: Arc<Option<String>>,
+) {
+    // Check admin authentication
+    if let Some(error_response) = check_authentication(_request, &server_admin_token) {
+        send_http_response(stream, 401, "application/json", &error_response);
+        return;
+    }
+
+    // Clear the expression cache
+    clear_cache();
+    
+    let response = serde_json::json!({
+        "success": true,
+        "message": "Expression cache cleared successfully"
+    });
+    
+    send_http_response(stream, 200, "application/json", &response.to_string());
 }
 
 fn process_eval_request(
@@ -185,19 +217,13 @@ fn process_eval_request(
         None => HashMap::new(),
     };
 
-    // Evaluate expression
-    let (result, variable_context) = if req.expression.contains(";") || req.expression.contains(":=") {
-        // Use the new function that returns both result and variable context
-        if matches!(req.include_variables, Some(IncludeVariables::All) | Some(IncludeVariables::Selected(_))) {
-            match evaluate_with_assignments_and_context(&req.expression, &vars) {
-                Ok((val, ctx)) => (Ok(val), Some(ctx)),
-                Err(e) => (Err(e), None),
-            }
-        } else {
-            (evaluate_with_assignments(&req.expression, &vars), None)
-        }
-    } else {
-        (evaluate_with_custom(&req.expression, &vars), None)
+    // Evaluate expression with caching
+    let include_variables = matches!(req.include_variables, Some(IncludeVariables::All) | Some(IncludeVariables::Selected(_)));
+    let cached_result = evaluate_cached(&req.expression, &vars, include_variables);
+    
+    let (result, variable_context) = match cached_result.result {
+        Ok(value) => (Ok(value), cached_result.variable_context),
+        Err(error_msg) => (Err(skillet::Error::new(error_msg, None)), None),
     };
 
     let execution_time = start_time.elapsed();

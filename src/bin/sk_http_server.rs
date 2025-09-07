@@ -7,7 +7,7 @@ use threadpool::ThreadPool;
 
 use http_server::auth::TokenConfig;
 use http_server::daemon::{setup_signal_handlers, write_pid_file};
-use http_server::eval::{handle_eval_post, handle_eval_get, handle_health};
+use http_server::eval::{handle_eval_post, handle_eval_get, handle_health, handle_cache_clear};
 use http_server::js_management::{handle_list_js, handle_update_js, handle_delete_js, handle_upload_js, handle_reload_hooks};
 use http_server::stats::ServerStats;
 use http_server::utils::{read_complete_http_request, send_http_response, send_http_error, handle_cors_preflight, load_html_file};
@@ -28,7 +28,24 @@ fn handle_http_request(
     // Read the complete HTTP request properly
     let request = match read_complete_http_request(&mut stream) {
         Ok(req) => req,
-        Err(_) => return,
+        Err(e) => {
+            // Log error for debugging but don't panic
+            eprintln!("HTTP request read error: {}", e);
+            // Send proper HTTP error response
+            let error_msg = match e.kind() {
+                std::io::ErrorKind::InvalidData => {
+                    if e.to_string().contains("too large") {
+                        "413 Payload Too Large"
+                    } else {
+                        "400 Bad Request"
+                    }
+                }
+                std::io::ErrorKind::TimedOut => "408 Request Timeout",
+                _ => "500 Internal Server Error",
+            };
+            send_http_error(&mut stream, 400, error_msg);
+            return;
+        }
     };
 
     // Parse HTTP request
@@ -60,6 +77,7 @@ fn handle_http_request(
         ("DELETE", "/delete-js") => handle_delete_js(&mut stream, &request, server_admin_token),
         ("GET", "/list-js") => handle_list_js(&mut stream, &request, server_admin_token),
         ("POST", "/reload-hooks") => handle_reload_hooks(&mut stream, &request, server_admin_token),
+        ("DELETE", "/cache") => handle_cache_clear(&mut stream, &request, server_admin_token),
         ("OPTIONS", _) => handle_cors_preflight(&mut stream),
         _ => send_http_error(&mut stream, 404, "Not Found"),
     }
@@ -167,10 +185,11 @@ fn print_usage() {
     eprintln!("  sk_http_server 5074 -d --host 0.0.0.0 --token secret123 --admin-token admin456");
     eprintln!("");
     eprintln!("Endpoints:");
-    eprintln!("  GET  /health          - Health check");
+    eprintln!("  GET  /health          - Health check with cache stats");
     eprintln!("  GET  /                - API documentation");
     eprintln!("  POST /eval            - Evaluate expressions (JSON)");
     eprintln!("  GET  /eval?expr=...   - Evaluate expressions (query params)");
+    eprintln!("  DELETE /cache         - Clear expression cache (admin token required)");
 }
 
 fn parse_args(args: &[String]) -> (Option<String>, Option<String>, bool, String, String, usize) {

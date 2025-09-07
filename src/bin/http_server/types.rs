@@ -131,6 +131,17 @@ pub struct HealthResponse {
     pub version: String,
     pub requests_processed: u64,
     pub avg_execution_time_ms: f64,
+    pub cache_stats: Option<CacheStatsResponse>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CacheStatsResponse {
+    pub hits: u64,
+    pub misses: u64,
+    pub hit_rate: f64,
+    pub entries: usize,
+    pub evictions: u64,
+    pub total_saved_time_ms: f64,
 }
 
 #[derive(Debug, Deserialize)]

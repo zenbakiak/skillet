@@ -3,6 +3,8 @@ use std::io::{Read, Write};
 use serde::de::DeserializeOwned;
 use serde_json;
 
+use super::cache::{get_pooled_buffer, return_pooled_buffer};
+
 pub fn sanitize_json_key(key: &str) -> String {
     key.chars()
         .map(|c| {
@@ -16,11 +18,18 @@ pub fn sanitize_json_key(key: &str) -> String {
 }
 
 pub fn read_complete_http_request(stream: &mut TcpStream) -> Result<String, std::io::Error> {
-    let mut buffer = Vec::new();
-    let mut temp_buffer = [0; 1024];
+    // Set socket timeouts to prevent hanging connections
+    stream.set_read_timeout(Some(std::time::Duration::from_secs(30)))?;
+    stream.set_write_timeout(Some(std::time::Duration::from_secs(10)))?;
+    
+    let mut buffer = get_pooled_buffer();
+    let mut temp_buffer = [0; 4096]; // Increased buffer size for better performance
     let mut headers_complete = false;
     let mut content_length: usize = 0;
     let mut headers_end_pos = 0;
+    
+    // Maximum request size limit (1MB)
+    const MAX_REQUEST_SIZE: usize = 1024 * 1024;
 
     // First, read until we have complete headers
     while !headers_complete {
@@ -30,6 +39,14 @@ pub fn read_complete_http_request(stream: &mut TcpStream) -> Result<String, std:
         }
 
         buffer.extend_from_slice(&temp_buffer[..bytes_read]);
+        
+        // Check request size limit
+        if buffer.len() > MAX_REQUEST_SIZE {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Request too large (max 1MB)"
+            ));
+        }
 
         // Check if we have complete headers (ending with \r\n\r\n)
         if let Some(pos) = find_headers_end(&buffer) {
@@ -39,6 +56,14 @@ pub fn read_complete_http_request(stream: &mut TcpStream) -> Result<String, std:
             // Parse the headers to get Content-Length
             let headers_str = String::from_utf8_lossy(&buffer[..pos]);
             content_length = parse_content_length(&headers_str);
+            
+            // Validate content length
+            if content_length > MAX_REQUEST_SIZE {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "Request body too large (max 1MB)"
+                ));
+            }
         }
     }
 
@@ -47,21 +72,35 @@ pub fn read_complete_http_request(stream: &mut TcpStream) -> Result<String, std:
     let remaining_bytes = content_length.saturating_sub(body_bytes_read);
 
     if remaining_bytes > 0 {
-        let mut body_buffer = vec![0; remaining_bytes];
+        // Reserve space in buffer to avoid multiple reallocations
+        buffer.reserve(remaining_bytes);
+        
+        let mut temp_body_buffer = [0; 8192]; // Larger read buffer
         let mut total_read = 0;
 
         while total_read < remaining_bytes {
-            let bytes_read = stream.read(&mut body_buffer[total_read..])?;
+            let to_read = std::cmp::min(temp_body_buffer.len(), remaining_bytes - total_read);
+            let bytes_read = stream.read(&mut temp_body_buffer[..to_read])?;
             if bytes_read == 0 {
-                break;
+                break; // Connection closed by client
             }
+            
+            buffer.extend_from_slice(&temp_body_buffer[..bytes_read]);
             total_read += bytes_read;
+            
+            // Additional safety check
+            if buffer.len() > MAX_REQUEST_SIZE {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "Request exceeded size limit during body read"
+                ));
+            }
         }
-
-        buffer.extend_from_slice(&body_buffer[..total_read]);
     }
 
-    String::from_utf8(buffer).map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid UTF-8"))
+    let result = String::from_utf8(buffer.clone()).map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid UTF-8"));
+    return_pooled_buffer(buffer);
+    result
 }
 
 fn find_headers_end(buffer: &[u8]) -> Option<usize> {
@@ -84,7 +123,9 @@ pub fn send_http_response(stream: &mut TcpStream, status: u16, content_type: &st
     let status_text = match status {
         200 => "OK",
         400 => "Bad Request",
-        401 => "Unauthorized", 
+        401 => "Unauthorized",
+        408 => "Request Timeout", 
+        413 => "Payload Too Large",
         404 => "Not Found",
         500 => "Internal Server Error",
         _ => "Unknown",
