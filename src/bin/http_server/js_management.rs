@@ -7,6 +7,7 @@ use skillet::js_plugin::JavaScriptFunction;
 use super::auth::check_admin_authentication;
 use super::types::*;
 use super::utils::{send_http_response, send_http_error, parse_json_body};
+use super::multipart::{is_multipart_request, extract_boundary_from_content_type, parse_multipart_data};
 
 pub fn handle_list_js(
     stream: &mut TcpStream,
@@ -56,7 +57,7 @@ pub fn handle_update_js(
         return;
     }
 
-    let update_request: UpdateJSRequest = match parse_json_body(request) {
+    let update_request: UpdateJSRequest = match parse_update_request(request) {
         Ok(req) => req,
         Err(e) => {
             send_http_error(stream, 400, &e);
@@ -95,11 +96,29 @@ pub fn handle_update_js(
         return;
     }
 
+    // Extract JS code from either js_code field or file_content field
+    let js_code = match (update_request.js_code.as_ref(), update_request.file_content.as_ref()) {
+        (Some(code), _) => code.clone(),
+        (None, Some(content)) => content.clone(),
+        (None, None) => {
+            let response = UpdateJSResponse {
+                success: false,
+                message: "Either js_code or file_content must be provided".to_string(),
+                function_name: None,
+                validation_results: None,
+                error: Some("Missing JS content".to_string()),
+            };
+            let json = serde_json::to_string(&response).unwrap_or_default();
+            send_http_response(stream, 400, "application/json", &json);
+            return;
+        }
+    };
+
     // Validate and process the JS function
-    match validate_js_function(&update_request.js_code) {
+    match validate_js_function(&js_code) {
         Ok((js_func, validation_results)) => {
             // Update file in hooks directory
-            match save_js_file(&hooks_dir, &update_request.filename, &update_request.js_code) {
+            match save_js_file(&hooks_dir, &update_request.filename, &js_code) {
                 Ok(_) => {
                     let response = UpdateJSResponse {
                         success: true,
@@ -204,7 +223,7 @@ pub fn handle_upload_js(
         return;
     }
 
-    let upload_request: UploadJSRequest = match parse_json_body(request) {
+    let upload_request: UploadJSRequest = match parse_upload_request(request) {
         Ok(req) => req,
         Err(e) => {
             send_http_error(stream, 400, &e);
@@ -226,12 +245,30 @@ pub fn handle_upload_js(
         return;
     }
 
+    // Extract JS code from either js_code field or file_content field
+    let js_code = match (upload_request.js_code.as_ref(), upload_request.file_content.as_ref()) {
+        (Some(code), _) => code.clone(),
+        (None, Some(content)) => content.clone(),
+        (None, None) => {
+            let response = UploadJSResponse {
+                success: false,
+                message: "Either js_code or file_content must be provided".to_string(),
+                function_name: None,
+                validation_results: None,
+                error: Some("Missing JS content".to_string()),
+            };
+            let json = serde_json::to_string(&response).unwrap_or_default();
+            send_http_response(stream, 400, "application/json", &json);
+            return;
+        }
+    };
+
     // Validate and process the JS function
-    match validate_js_function(&upload_request.js_code) {
+    match validate_js_function(&js_code) {
         Ok((js_func, validation_results)) => {
             // Save file to hooks directory
             let hooks_dir = std::env::var("SKILLET_HOOKS_DIR").unwrap_or_else(|_| "hooks".to_string());
-            match save_js_file(&hooks_dir, &upload_request.filename, &upload_request.js_code) {
+            match save_js_file(&hooks_dir, &upload_request.filename, &js_code) {
                 Ok(_) => {
                     let response = UploadJSResponse {
                         success: true,
@@ -571,4 +608,103 @@ fn scan_directory_for_js(
     }
 
     Ok(())
+}
+
+fn parse_upload_request(request: &str) -> Result<UploadJSRequest, String> {
+    // Extract Content-Type header
+    let content_type = extract_content_type(request).unwrap_or_default();
+    
+    if is_multipart_request(&content_type) {
+        // Parse multipart form data
+        let boundary = extract_boundary_from_content_type(&content_type)
+            .ok_or("Missing boundary in multipart Content-Type")?;
+        
+        let body = extract_request_body(request)?;
+        let multipart_data = parse_multipart_data(&body, &boundary)?;
+        
+        // Extract filename from form field
+        let filename = multipart_data.get_text_field("filename")
+            .ok_or("Missing 'filename' field in multipart data")?;
+        
+        // Check for JS code in text field or file field
+        let (js_code, file_content) = if let Some(js_text) = multipart_data.get_text_field("js_code") {
+            // JS code provided as text field
+            (Some(js_text), None)
+        } else if let Some(file_field) = multipart_data.get_file_field("file") {
+            // JS code provided as file upload
+            let file_content = String::from_utf8(file_field.content.clone())
+                .map_err(|_| "Uploaded file contains invalid UTF-8")?;
+            (None, Some(file_content))
+        } else {
+            return Err("Either 'js_code' text field or 'file' upload field must be provided".to_string());
+        };
+        
+        Ok(UploadJSRequest {
+            filename,
+            js_code,
+            file_content,
+        })
+    } else {
+        // Parse as JSON
+        parse_json_body(request)
+    }
+}
+
+fn parse_update_request(request: &str) -> Result<UpdateJSRequest, String> {
+    // Extract Content-Type header
+    let content_type = extract_content_type(request).unwrap_or_default();
+    
+    if is_multipart_request(&content_type) {
+        // Parse multipart form data
+        let boundary = extract_boundary_from_content_type(&content_type)
+            .ok_or("Missing boundary in multipart Content-Type")?;
+        
+        let body = extract_request_body(request)?;
+        let multipart_data = parse_multipart_data(&body, &boundary)?;
+        
+        // Extract filename from form field
+        let filename = multipart_data.get_text_field("filename")
+            .ok_or("Missing 'filename' field in multipart data")?;
+        
+        // Check for JS code in text field or file field
+        let (js_code, file_content) = if let Some(js_text) = multipart_data.get_text_field("js_code") {
+            // JS code provided as text field
+            (Some(js_text), None)
+        } else if let Some(file_field) = multipart_data.get_file_field("file") {
+            // JS code provided as file upload
+            let file_content = String::from_utf8(file_field.content.clone())
+                .map_err(|_| "Uploaded file contains invalid UTF-8")?;
+            (None, Some(file_content))
+        } else {
+            return Err("Either 'js_code' text field or 'file' upload field must be provided".to_string());
+        };
+        
+        Ok(UpdateJSRequest {
+            filename,
+            js_code,
+            file_content,
+        })
+    } else {
+        // Parse as JSON
+        parse_json_body(request)
+    }
+}
+
+fn extract_content_type(request: &str) -> Option<String> {
+    for line in request.lines() {
+        if line.to_lowercase().starts_with("content-type:") {
+            return Some(line.split(':').nth(1)?.trim().to_string());
+        }
+    }
+    None
+}
+
+fn extract_request_body(request: &str) -> Result<String, String> {
+    if let Some(body_start) = request.find("\r\n\r\n") {
+        Ok(request[body_start + 4..].to_string())
+    } else if let Some(body_start) = request.find("\n\n") {
+        Ok(request[body_start + 2..].to_string())
+    } else {
+        Err("Could not find request body separator".to_string())
+    }
 }

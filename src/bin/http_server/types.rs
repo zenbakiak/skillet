@@ -1,13 +1,77 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+#[derive(Debug, Clone)]
+pub enum IncludeVariables {
+    All,
+    None,
+    Selected(Vec<String>),
+}
+
+impl<'de> Deserialize<'de> for IncludeVariables {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::{self, Visitor};
+        use std::fmt;
+
+        struct IncludeVariablesVisitor;
+
+        impl<'de> Visitor<'de> for IncludeVariablesVisitor {
+            type Value = IncludeVariables;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a boolean or a string with comma-separated variable names")
+            }
+
+            fn visit_bool<E>(self, value: bool) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                if value {
+                    Ok(IncludeVariables::All)
+                } else {
+                    Ok(IncludeVariables::None)
+                }
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                let vars: Vec<String> = value
+                    .split(',')
+                    .map(|s| s.trim())
+                    .filter(|s| !s.is_empty())
+                    .map(|s| {
+                        if s.starts_with(':') {
+                            s[1..].to_string()
+                        } else {
+                            s.to_string()
+                        }
+                    })
+                    .collect();
+                
+                if vars.is_empty() {
+                    Ok(IncludeVariables::None)
+                } else {
+                    Ok(IncludeVariables::Selected(vars))
+                }
+            }
+        }
+
+        deserializer.deserialize_any(IncludeVariablesVisitor)
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct EvalRequest {
     #[serde(deserialize_with = "deserialize_expression")]
     pub expression: String,
     pub arguments: Option<HashMap<String, serde_json::Value>>,
     pub output_json: Option<bool>,
-    pub include_variables: Option<bool>,
+    pub include_variables: Option<IncludeVariables>,
 }
 
 fn deserialize_expression<'de, D>(deserializer: D) -> Result<String, D::Error>
@@ -67,12 +131,26 @@ pub struct HealthResponse {
     pub version: String,
     pub requests_processed: u64,
     pub avg_execution_time_ms: f64,
+    pub cache_stats: Option<CacheStatsResponse>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CacheStatsResponse {
+    pub hits: u64,
+    pub misses: u64,
+    pub hit_rate: f64,
+    pub entries: usize,
+    pub evictions: u64,
+    pub total_saved_time_ms: f64,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct UploadJSRequest {
     pub filename: String,
-    pub js_code: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub js_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_content: Option<String>, // For file uploads as base64 or direct content
 }
 
 #[derive(Debug, Serialize)]
@@ -87,7 +165,10 @@ pub struct UploadJSResponse {
 #[derive(Debug, Deserialize)]
 pub struct UpdateJSRequest {
     pub filename: String,
-    pub js_code: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub js_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_content: Option<String>, // For file uploads as base64 or direct content
 }
 
 #[derive(Debug, Serialize)]

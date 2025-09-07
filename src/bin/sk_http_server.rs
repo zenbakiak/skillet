@@ -1,12 +1,14 @@
 mod http_server;
 
 use skillet::JSPluginLoader;
+use scalar_doc::Documentation;
 use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, atomic::{AtomicU64, Ordering}};
+use threadpool::ThreadPool;
 
 use http_server::auth::TokenConfig;
 use http_server::daemon::{setup_signal_handlers, write_pid_file};
-use http_server::eval::{handle_eval_post, handle_eval_get, handle_health};
+use http_server::eval::{handle_eval_post, handle_eval_get, handle_health, handle_cache_clear};
 use http_server::js_management::{handle_list_js, handle_update_js, handle_delete_js, handle_upload_js, handle_reload_hooks};
 use http_server::stats::ServerStats;
 use http_server::utils::{read_complete_http_request, send_http_response, send_http_error, handle_cors_preflight, load_html_file};
@@ -27,7 +29,24 @@ fn handle_http_request(
     // Read the complete HTTP request properly
     let request = match read_complete_http_request(&mut stream) {
         Ok(req) => req,
-        Err(_) => return,
+        Err(e) => {
+            // Log error for debugging but don't panic
+            eprintln!("HTTP request read error: {}", e);
+            // Send proper HTTP error response
+            let error_msg = match e.kind() {
+                std::io::ErrorKind::InvalidData => {
+                    if e.to_string().contains("too large") {
+                        "413 Payload Too Large"
+                    } else {
+                        "400 Bad Request"
+                    }
+                }
+                std::io::ErrorKind::TimedOut => "408 Request Timeout",
+                _ => "500 Internal Server Error",
+            };
+            send_http_error(&mut stream, 400, error_msg);
+            return;
+        }
     };
 
     // Parse HTTP request
@@ -52,6 +71,8 @@ fn handle_http_request(
     match (method, path_only) {
         ("GET", "/health") => handle_health(&mut stream, &stats, &request, server_token),
         ("GET", "/") => handle_root(&mut stream),
+        ("GET", "/docs") => handle_api_docs(&mut stream),
+        ("GET", "/openapi.yml") => handle_openapi_spec(&mut stream),
         ("POST", "/eval") => handle_eval_post(&mut stream, &request, stats, request_counter, server_token),
         ("GET", "/eval") => handle_eval_get(&mut stream, &request, stats, request_counter, server_token),
         ("POST", "/upload-js") => handle_upload_js(&mut stream, &request, server_admin_token),
@@ -59,6 +80,7 @@ fn handle_http_request(
         ("DELETE", "/delete-js") => handle_delete_js(&mut stream, &request, server_admin_token),
         ("GET", "/list-js") => handle_list_js(&mut stream, &request, server_admin_token),
         ("POST", "/reload-hooks") => handle_reload_hooks(&mut stream, &request, server_admin_token),
+        ("DELETE", "/cache") => handle_cache_clear(&mut stream, &request, server_admin_token),
         ("OPTIONS", _) => handle_cors_preflight(&mut stream),
         _ => send_http_error(&mut stream, 404, "Not Found"),
     }
@@ -67,6 +89,25 @@ fn handle_http_request(
 fn handle_root(stream: &mut TcpStream) {
     let html = load_html_file();
     send_http_response(stream, 200, "text/html", &html);
+}
+
+fn handle_api_docs(stream: &mut TcpStream) {
+    // Generate Scalar documentation HTML that points to our OpenAPI spec endpoint
+    let docs_html = match Documentation::new("Skillet HTTP Server API", "/openapi.yml").build() {
+        Ok(html) => html,
+        Err(e) => {
+            eprintln!("Error generating documentation: {}", e);
+            format!("<!DOCTYPE html><html><head><title>Documentation Error</title></head><body><h1>Error</h1><p>Failed to generate documentation: {}</p></body></html>", e)
+        }
+    };
+    
+    send_http_response(stream, 200, "text/html", &docs_html);
+}
+
+fn handle_openapi_spec(stream: &mut TcpStream) {
+    // Serve the OpenAPI specification YAML file
+    let openapi_spec = include_str!("../../openapi.yml");
+    send_http_response(stream, 200, "application/x-yaml", openapi_spec);
 }
 
 fn main() {
@@ -83,7 +124,7 @@ fn main() {
     });
 
     // Parse command line arguments
-    let (mut auth_token, mut admin_token, daemon_mode, pid_file, bind_host) = parse_args(&args[2..]);
+    let (mut auth_token, mut admin_token, daemon_mode, pid_file, bind_host, thread_count) = parse_args(&args[2..]);
 
     // Apply intelligent token logic
     let token_config = TokenConfig::new(auth_token, admin_token);
@@ -92,7 +133,7 @@ fn main() {
 
     // Handle daemon mode before any output
     if daemon_mode {
-        handle_daemon_mode(port, &bind_host, &pid_file, &token_config);
+        handle_daemon_mode(port, &bind_host, &pid_file, &token_config, thread_count);
     }
 
     // Setup signal handlers
@@ -108,8 +149,11 @@ fn main() {
     let server_token = Arc::new(auth_token.clone());
     let server_admin_token = Arc::new(admin_token.clone());
 
+    // Create thread pool
+    let pool = ThreadPool::new(thread_count);
+
     // Print startup messages
-    print_startup_messages(daemon_mode, port, &bind_host, &auth_token, &admin_token, &token_config);
+    print_startup_messages(daemon_mode, port, &bind_host, &auth_token, &admin_token, &token_config, thread_count);
 
     // Accept loop
     while running.load(Ordering::Relaxed) {
@@ -120,7 +164,7 @@ fn main() {
                 let server_token = Arc::clone(&server_token);
                 let server_admin_token = Arc::clone(&server_admin_token);
 
-                std::thread::spawn(move || {
+                pool.execute(move || {
                     handle_http_request(stream, stats, request_counter, server_token, server_admin_token);
                 });
             }
@@ -147,6 +191,7 @@ fn print_usage() {
     eprintln!("Options:");
     eprintln!("  -d, --daemon         Run as daemon (background process)");
     eprintln!("  -H, --host <addr>    Bind host/interface (default: 127.0.0.1)");
+    eprintln!("  -t, --threads <num>  Number of worker threads (default: CPU count)");
     eprintln!("  --pid-file <file>    Write PID to file (default: skillet-http-server.pid)");
     eprintln!("  --log-file <file>    Write logs to file (daemon mode only)");
     eprintln!("  --token <value>      Require token for eval requests");
@@ -154,26 +199,28 @@ fn print_usage() {
     eprintln!("");
     eprintln!("Examples:");
     eprintln!("  sk_http_server 5074");
-    eprintln!("  sk_http_server 5074 --host 0.0.0.0");
+    eprintln!("  sk_http_server 5074 --host 0.0.0.0 --threads 8");
     eprintln!("  sk_http_server 5074 --host 0.0.0.0 --token secret123");
-    eprintln!("  sk_http_server 5074 --admin-token admin456");
+    eprintln!("  sk_http_server 5074 --admin-token admin456 --threads 16");
     eprintln!("  sk_http_server 5074 --token secret123 --admin-token admin456");
-    eprintln!("  sk_http_server 5074 -d --pid-file /var/run/skillet-http.pid");
+    eprintln!("  sk_http_server 5074 -d --pid-file /var/run/skillet-http.pid --threads 12");
     eprintln!("  sk_http_server 5074 -d --host 0.0.0.0 --token secret123 --admin-token admin456");
     eprintln!("");
     eprintln!("Endpoints:");
-    eprintln!("  GET  /health          - Health check");
+    eprintln!("  GET  /health          - Health check with cache stats");
     eprintln!("  GET  /                - API documentation");
     eprintln!("  POST /eval            - Evaluate expressions (JSON)");
     eprintln!("  GET  /eval?expr=...   - Evaluate expressions (query params)");
+    eprintln!("  DELETE /cache         - Clear expression cache (admin token required)");
 }
 
-fn parse_args(args: &[String]) -> (Option<String>, Option<String>, bool, String, String) {
+fn parse_args(args: &[String]) -> (Option<String>, Option<String>, bool, String, String, usize) {
     let mut auth_token: Option<String> = None;
     let mut admin_token: Option<String> = None;
     let mut daemon_mode = false;
     let mut pid_file = "skillet-http-server.pid".to_string();
     let mut bind_host = "127.0.0.1".to_string();
+    let mut thread_count = num_cpus::get();
     let mut _log_file: Option<String> = None;
     let mut i = 0;
 
@@ -186,6 +233,22 @@ fn parse_args(args: &[String]) -> (Option<String>, Option<String>, bool, String,
                     i += 1;
                 } else {
                     eprintln!("Error: --host requires an address");
+                    std::process::exit(1);
+                }
+            }
+            "-t" | "--threads" => {
+                if i + 1 < args.len() {
+                    thread_count = args[i + 1].parse().unwrap_or_else(|_| {
+                        eprintln!("Error: Invalid thread count");
+                        std::process::exit(1);
+                    });
+                    if thread_count == 0 {
+                        eprintln!("Error: Thread count must be greater than 0");
+                        std::process::exit(1);
+                    }
+                    i += 1;
+                } else {
+                    eprintln!("Error: --threads requires a number");
                     std::process::exit(1);
                 }
             }
@@ -233,14 +296,14 @@ fn parse_args(args: &[String]) -> (Option<String>, Option<String>, bool, String,
         i += 1;
     }
 
-    (auth_token, admin_token, daemon_mode, pid_file, bind_host)
+    (auth_token, admin_token, daemon_mode, pid_file, bind_host, thread_count)
 }
 
 #[cfg(unix)]
-fn handle_daemon_mode(port: u16, bind_host: &str, pid_file: &str, token_config: &TokenConfig) {
+fn handle_daemon_mode(port: u16, bind_host: &str, pid_file: &str, token_config: &TokenConfig, thread_count: usize) {
     // Print startup message before daemonizing
     eprintln!("Starting Skillet HTTP server as daemon...");
-    eprintln!("Port: {}, Host: {}, PID file: {}", port, bind_host, pid_file);
+    eprintln!("Port: {}, Host: {}, Threads: {}, PID file: {}", port, bind_host, thread_count, pid_file);
     if token_config.auth_token.is_some() { eprintln!("Eval token auth: enabled"); }
     if token_config.admin_token.is_some() { eprintln!("Admin token auth: enabled"); }
     
@@ -260,7 +323,7 @@ fn handle_daemon_mode(port: u16, bind_host: &str, pid_file: &str, token_config: 
 }
 
 #[cfg(not(unix))]
-fn handle_daemon_mode(_port: u16, _bind_host: &str, _pid_file: &str, _token_config: &TokenConfig) {
+fn handle_daemon_mode(_port: u16, _bind_host: &str, _pid_file: &str, _token_config: &TokenConfig, _thread_count: usize) {
     eprintln!("Error: Daemon mode not supported on this platform");
     std::process::exit(1);
 }
@@ -305,9 +368,11 @@ fn print_startup_messages(
     auth_token: &Option<String>,
     admin_token: &Option<String>,
     token_config: &TokenConfig,
+    thread_count: usize,
 ) {
     if !daemon_mode {
         eprintln!("🚀 Skillet HTTP Server started on http://{}:{}", bind_host, port);
+        eprintln!("🧵 Worker threads: {}", thread_count);
         if auth_token.is_some() { eprintln!("🔒 Eval token auth: enabled"); }
         if admin_token.is_some() { eprintln!("🔐 Admin token auth: enabled"); }
         
