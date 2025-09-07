@@ -35,6 +35,9 @@ rquickjs = { version = "0.9", optional = true }
 dashmap = "6.1"
 threadpool = "1.8"
 num_cpus = "1.17"
+string-interner = "0.17"
+typed-arena = "2.0"
+beef = "0.5"
 # Daemon support
 libc = "0.2"
 ctrlc = "3.4"

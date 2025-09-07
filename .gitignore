@@ -10,3 +10,5 @@ skillet-wasm
 /target
 Secrets*.toml
 .env
+.env.prd
+*.prd.*

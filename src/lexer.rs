@@ -109,10 +109,21 @@ impl<'a> Lexer<'a> {
                 _ => break,
             }
         }
-        let s = std::str::from_utf8(&self.input[start..end]).unwrap();
-        let n: f64 = s
-            .parse()
-            .map_err(|_| Error::new("Invalid number", Some(start)))?;
+        // Avoid UTF-8 conversion - parse directly from bytes for common numbers
+        let n = if end - start <= 10 && !has_dot {
+            // Fast path for small integers
+            let mut result = 0.0;
+            for i in start..end {
+                result = result * 10.0 + (self.input[i] - b'0') as f64;
+            }
+            result
+        } else {
+            // Fallback to string parsing for complex numbers
+            let s = std::str::from_utf8(&self.input[start..end])
+                .map_err(|_| Error::new("Invalid UTF-8 in number", Some(start)))?;
+            s.parse()
+                .map_err(|_| Error::new("Invalid number", Some(start)))?
+        };
         self.last_start = start;
         self.last_end = end;
         Ok(Token::Number(n))
@@ -130,18 +141,48 @@ impl<'a> Lexer<'a> {
                 _ => break,
             }
         }
-        let s = std::str::from_utf8(&self.input[start..end])
-            .unwrap()
-            .to_string();
-        let up = s.to_uppercase();
         self.last_start = start;
         self.last_end = end;
-        Ok(match up.as_str() {
-            "TRUE" => Token::True,
-            "FALSE" => Token::False,
-            "NULL" => Token::Null,
-            _ => Token::Identifier(s),
-        })
+        
+        // Fast path for common keywords - avoid string allocation
+        let len = end - start;
+        let bytes = &self.input[start..end];
+        
+        // Check common keywords by length first, then bytes
+        let token = match len {
+            4 => {
+                if bytes.eq_ignore_ascii_case(b"TRUE") {
+                    Token::True
+                } else if bytes.eq_ignore_ascii_case(b"NULL") {
+                    Token::Null
+                } else {
+                    // Convert to string only if not a keyword
+                    let s = std::str::from_utf8(bytes)
+                        .map_err(|_| Error::new("Invalid UTF-8 in identifier", Some(start)))?
+                        .to_string();
+                    Token::Identifier(s)
+                }
+            }
+            5 => {
+                if bytes.eq_ignore_ascii_case(b"FALSE") {
+                    Token::False
+                } else {
+                    let s = std::str::from_utf8(bytes)
+                        .map_err(|_| Error::new("Invalid UTF-8 in identifier", Some(start)))?
+                        .to_string();
+                    Token::Identifier(s)
+                }
+            }
+            _ => {
+                // For other identifiers, convert to string
+                let s = std::str::from_utf8(bytes)
+                    .map_err(|_| Error::new("Invalid UTF-8 in identifier", Some(start)))?
+                    .to_string();
+                Token::Identifier(s)
+            }
+        };
+        
+        Ok(token)
     }
 
     fn string(&mut self, quote: u8) -> Result<Token, Error> {

@@ -1,5 +1,7 @@
 pub mod evaluation;
+pub mod evaluator;
 pub mod builtin_functions;
+pub mod function_dispatch;
 pub mod method_calls;
 pub mod type_casting;
 pub mod utils;

@@ -325,16 +325,6 @@ fn run_benchmark_with_request(server_addr: &str, request: EvalRequest, iteration
     println!("Estimated max throughput: {:.0} ops/second", 1000.0 / avg_server_time);
 }
 
-// Back-compat simple benchmark without variables
-fn run_benchmark(server_addr: &str, expression: &str, iterations: usize) {
-    let req = EvalRequest {
-        expression: expression.to_string(),
-        variables: None,
-        output_json: Some(false),
-        token: std::env::var("SKILLET_SERVER_TOKEN").ok(),
-    };
-    run_benchmark_with_request(server_addr, req, iterations);
-}
 
 fn parse_value_to_json(s: &str) -> serde_json::Value {
     // Try parsing as different JSON types

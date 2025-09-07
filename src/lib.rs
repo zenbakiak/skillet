@@ -8,6 +8,7 @@ pub mod lexer;
 pub mod memory_pool;
 pub mod parser;
 pub mod runtime;
+pub mod traits;
 pub mod types;
 
 pub use ast::Expr;
@@ -49,13 +50,13 @@ pub fn parse(input: &str) -> Result<Expr, Error> {
 /// Evaluate an arithmetic expression to f64.
 pub fn evaluate(input: &str) -> Result<Value, Error> {
     let expr = parse(input)?;
-    runtime::eval(&expr)
+    runtime::evaluator::eval(&expr)
 }
 
 /// Evaluate with a map of numeric variables and built-in functions.
 pub fn evaluate_with(input: &str, vars: &HashMap<String, Value>) -> Result<Value, Error> {
     let expr = parse(input)?;
-    runtime::eval_with_vars(&expr, vars)
+    runtime::evaluator::eval_with_vars(&expr, vars)
 }
 
 /// Evaluate with variables provided as JSON string.
@@ -150,7 +151,7 @@ pub fn has_custom_function(name: &str) -> bool {
 /// Evaluate with custom functions support
 pub fn evaluate_with_custom(input: &str, vars: &HashMap<String, Value>) -> Result<Value, Error> {
     let expr = parse(input)?;
-    runtime::eval_with_vars_and_custom(&expr, vars, &GLOBAL_REGISTRY)
+    runtime::evaluator::eval_with_vars_and_custom(&expr, vars, &GLOBAL_REGISTRY)
 }
 
 /// Evaluate with JSON and custom functions support
@@ -178,13 +179,13 @@ pub fn evaluate_with_json_custom(input: &str, json_vars: &str) -> Result<Value, 
 /// Evaluate with assignments and sequences - handles complex expressions with variable assignments
 pub fn evaluate_with_assignments(input: &str, vars: &HashMap<String, Value>) -> Result<Value, Error> {
     let expr = parse(input)?;
-    runtime::eval_with_assignments(&expr, vars)
+    runtime::evaluator::eval_with_assignments(&expr, vars)
 }
 
 /// Evaluate with assignments and sequences, returning both result and variable context
 pub fn evaluate_with_assignments_and_context(input: &str, vars: &HashMap<String, Value>) -> Result<(Value, HashMap<String, Value>), Error> {
     let expr = parse(input)?;
-    runtime::eval_with_assignments_and_context(&expr, vars)
+    runtime::evaluator::eval_with_assignments_and_context(&expr, vars)
 }
 
 #[cfg(test)]
