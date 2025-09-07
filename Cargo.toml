@@ -69,3 +69,7 @@ path = "src/bin/sk_client.rs"
 name = "sk_http_server"
 path = "src/bin/sk_http_server.rs"
 
+[[bin]]
+name = "sk_http_bench"
+path = "src/bin/sk_http_bench.rs"
+

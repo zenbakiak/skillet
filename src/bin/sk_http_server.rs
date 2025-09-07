@@ -3,6 +3,7 @@ mod http_server;
 use skillet::JSPluginLoader;
 use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, atomic::{AtomicU64, Ordering}};
+use threadpool::ThreadPool;
 
 use http_server::auth::TokenConfig;
 use http_server::daemon::{setup_signal_handlers, write_pid_file};
@@ -83,7 +84,7 @@ fn main() {
     });
 
     // Parse command line arguments
-    let (mut auth_token, mut admin_token, daemon_mode, pid_file, bind_host) = parse_args(&args[2..]);
+    let (mut auth_token, mut admin_token, daemon_mode, pid_file, bind_host, thread_count) = parse_args(&args[2..]);
 
     // Apply intelligent token logic
     let token_config = TokenConfig::new(auth_token, admin_token);
@@ -92,7 +93,7 @@ fn main() {
 
     // Handle daemon mode before any output
     if daemon_mode {
-        handle_daemon_mode(port, &bind_host, &pid_file, &token_config);
+        handle_daemon_mode(port, &bind_host, &pid_file, &token_config, thread_count);
     }
 
     // Setup signal handlers
@@ -108,8 +109,11 @@ fn main() {
     let server_token = Arc::new(auth_token.clone());
     let server_admin_token = Arc::new(admin_token.clone());
 
+    // Create thread pool
+    let pool = ThreadPool::new(thread_count);
+
     // Print startup messages
-    print_startup_messages(daemon_mode, port, &bind_host, &auth_token, &admin_token, &token_config);
+    print_startup_messages(daemon_mode, port, &bind_host, &auth_token, &admin_token, &token_config, thread_count);
 
     // Accept loop
     while running.load(Ordering::Relaxed) {
@@ -120,7 +124,7 @@ fn main() {
                 let server_token = Arc::clone(&server_token);
                 let server_admin_token = Arc::clone(&server_admin_token);
 
-                std::thread::spawn(move || {
+                pool.execute(move || {
                     handle_http_request(stream, stats, request_counter, server_token, server_admin_token);
                 });
             }
@@ -147,6 +151,7 @@ fn print_usage() {
     eprintln!("Options:");
     eprintln!("  -d, --daemon         Run as daemon (background process)");
     eprintln!("  -H, --host <addr>    Bind host/interface (default: 127.0.0.1)");
+    eprintln!("  -t, --threads <num>  Number of worker threads (default: CPU count)");
     eprintln!("  --pid-file <file>    Write PID to file (default: skillet-http-server.pid)");
     eprintln!("  --log-file <file>    Write logs to file (daemon mode only)");
     eprintln!("  --token <value>      Require token for eval requests");
@@ -154,11 +159,11 @@ fn print_usage() {
     eprintln!("");
     eprintln!("Examples:");
     eprintln!("  sk_http_server 5074");
-    eprintln!("  sk_http_server 5074 --host 0.0.0.0");
+    eprintln!("  sk_http_server 5074 --host 0.0.0.0 --threads 8");
     eprintln!("  sk_http_server 5074 --host 0.0.0.0 --token secret123");
-    eprintln!("  sk_http_server 5074 --admin-token admin456");
+    eprintln!("  sk_http_server 5074 --admin-token admin456 --threads 16");
     eprintln!("  sk_http_server 5074 --token secret123 --admin-token admin456");
-    eprintln!("  sk_http_server 5074 -d --pid-file /var/run/skillet-http.pid");
+    eprintln!("  sk_http_server 5074 -d --pid-file /var/run/skillet-http.pid --threads 12");
     eprintln!("  sk_http_server 5074 -d --host 0.0.0.0 --token secret123 --admin-token admin456");
     eprintln!("");
     eprintln!("Endpoints:");
@@ -168,12 +173,13 @@ fn print_usage() {
     eprintln!("  GET  /eval?expr=...   - Evaluate expressions (query params)");
 }
 
-fn parse_args(args: &[String]) -> (Option<String>, Option<String>, bool, String, String) {
+fn parse_args(args: &[String]) -> (Option<String>, Option<String>, bool, String, String, usize) {
     let mut auth_token: Option<String> = None;
     let mut admin_token: Option<String> = None;
     let mut daemon_mode = false;
     let mut pid_file = "skillet-http-server.pid".to_string();
     let mut bind_host = "127.0.0.1".to_string();
+    let mut thread_count = num_cpus::get();
     let mut _log_file: Option<String> = None;
     let mut i = 0;
 
@@ -186,6 +192,22 @@ fn parse_args(args: &[String]) -> (Option<String>, Option<String>, bool, String,
                     i += 1;
                 } else {
                     eprintln!("Error: --host requires an address");
+                    std::process::exit(1);
+                }
+            }
+            "-t" | "--threads" => {
+                if i + 1 < args.len() {
+                    thread_count = args[i + 1].parse().unwrap_or_else(|_| {
+                        eprintln!("Error: Invalid thread count");
+                        std::process::exit(1);
+                    });
+                    if thread_count == 0 {
+                        eprintln!("Error: Thread count must be greater than 0");
+                        std::process::exit(1);
+                    }
+                    i += 1;
+                } else {
+                    eprintln!("Error: --threads requires a number");
                     std::process::exit(1);
                 }
             }
@@ -233,14 +255,14 @@ fn parse_args(args: &[String]) -> (Option<String>, Option<String>, bool, String,
         i += 1;
     }
 
-    (auth_token, admin_token, daemon_mode, pid_file, bind_host)
+    (auth_token, admin_token, daemon_mode, pid_file, bind_host, thread_count)
 }
 
 #[cfg(unix)]
-fn handle_daemon_mode(port: u16, bind_host: &str, pid_file: &str, token_config: &TokenConfig) {
+fn handle_daemon_mode(port: u16, bind_host: &str, pid_file: &str, token_config: &TokenConfig, thread_count: usize) {
     // Print startup message before daemonizing
     eprintln!("Starting Skillet HTTP server as daemon...");
-    eprintln!("Port: {}, Host: {}, PID file: {}", port, bind_host, pid_file);
+    eprintln!("Port: {}, Host: {}, Threads: {}, PID file: {}", port, bind_host, thread_count, pid_file);
     if token_config.auth_token.is_some() { eprintln!("Eval token auth: enabled"); }
     if token_config.admin_token.is_some() { eprintln!("Admin token auth: enabled"); }
     
@@ -260,7 +282,7 @@ fn handle_daemon_mode(port: u16, bind_host: &str, pid_file: &str, token_config: 
 }
 
 #[cfg(not(unix))]
-fn handle_daemon_mode(_port: u16, _bind_host: &str, _pid_file: &str, _token_config: &TokenConfig) {
+fn handle_daemon_mode(_port: u16, _bind_host: &str, _pid_file: &str, _token_config: &TokenConfig, _thread_count: usize) {
     eprintln!("Error: Daemon mode not supported on this platform");
     std::process::exit(1);
 }
@@ -305,9 +327,11 @@ fn print_startup_messages(
     auth_token: &Option<String>,
     admin_token: &Option<String>,
     token_config: &TokenConfig,
+    thread_count: usize,
 ) {
     if !daemon_mode {
         eprintln!("🚀 Skillet HTTP Server started on http://{}:{}", bind_host, port);
+        eprintln!("🧵 Worker threads: {}", thread_count);
         if auth_token.is_some() { eprintln!("🔒 Eval token auth: enabled"); }
         if admin_token.is_some() { eprintln!("🔐 Admin token auth: enabled"); }
         
