@@ -1,22 +1,24 @@
+use std::rc::Rc;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     Number(f64),
     StringLit(String),
     Null,
-    Unary(UnaryOp, Box<Expr>),
-    Binary(Box<Expr>, BinaryOp, Box<Expr>),
+    Unary(UnaryOp, Rc<Expr>),
+    Binary(Rc<Expr>, BinaryOp, Rc<Expr>),
     Variable(String),
-    PropertyAccess { target: Box<Expr>, property: String },
-    SafePropertyAccess { target: Box<Expr>, property: String },
+    PropertyAccess { target: Rc<Expr>, property: String },
+    SafePropertyAccess { target: Rc<Expr>, property: String },
     FunctionCall { name: String, args: Vec<Expr> },
-    Spread(Box<Expr>),
+    Spread(Rc<Expr>),
     Array(Vec<Expr>),
     ObjectLiteral(Vec<(String, Expr)>),
-    MethodCall { target: Box<Expr>, name: String, args: Vec<Expr>, predicate: bool },
-    Index { target: Box<Expr>, index: Box<Expr> },
-    Slice { target: Box<Expr>, start: Option<Box<Expr>>, end: Option<Box<Expr>> },
-    TypeCast { expr: Box<Expr>, ty: TypeName },
-    Assignment { variable: String, value: Box<Expr> },
+    MethodCall { target: Rc<Expr>, name: String, args: Vec<Expr>, predicate: bool },
+    Index { target: Rc<Expr>, index: Rc<Expr> },
+    Slice { target: Rc<Expr>, start: Option<Rc<Expr>>, end: Option<Rc<Expr>> },
+    TypeCast { expr: Rc<Expr>, ty: TypeName },
+    Assignment { variable: String, value: Rc<Expr> },
     Sequence(Vec<Expr>),
 }
 
