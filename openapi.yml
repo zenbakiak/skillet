@@ -1,0 +1,792 @@
+openapi: 3.0.3
+info:
+  title: Skillet HTTP Server API
+  description: |
+    A high-performance mathematical and logical expression evaluation server with JavaScript function management capabilities.
+    
+    ## Features
+    - Expression evaluation with variables and arguments
+    - Custom JavaScript function management
+    - Expression caching for performance
+    - Thread-based concurrent processing
+    - Optional token-based authentication
+    
+    ## Authentication
+    - **Eval Token**: Optional authentication for expression evaluation endpoints
+    - **Admin Token**: Required authentication for JavaScript function management endpoints
+    
+    Tokens are passed via the `Authorization` header.
+  version: 0.4.1
+  contact:
+    name: Skillet Lang
+  license:
+    name: MIT
+servers:
+  - url: http://127.0.0.1:5074
+    description: Local development server
+  - url: http://localhost:5074
+    description: Local server
+tags:
+  - name: evaluation
+    description: Expression evaluation operations
+  - name: health
+    description: Server health and monitoring
+  - name: javascript
+    description: JavaScript function management
+  - name: cache
+    description: Cache management operations
+
+paths:
+  /:
+    get:
+      tags: [health]
+      summary: Get API documentation
+      description: Returns HTML documentation page with API endpoints and examples
+      responses:
+        '200':
+          description: HTML documentation page
+          content:
+            text/html:
+              schema:
+                type: string
+                example: "<!DOCTYPE html><html>..."
+
+  /health:
+    get:
+      tags: [health]
+      summary: Health check
+      description: Get server health status, statistics, and cache performance metrics
+      security:
+        - evalToken: []
+        - {}
+      responses:
+        '200':
+          description: Server health information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+              example:
+                status: "healthy"
+                version: "0.4.1"
+                requests_processed: 1542
+                avg_execution_time_ms: 2.34
+                cache_stats:
+                  hits: 856
+                  misses: 686
+                  hit_rate: 0.555
+                  entries: 150
+                  evictions: 12
+                  total_saved_time_ms: 1248.67
+
+  /eval:
+    post:
+      tags: [evaluation]
+      summary: Evaluate expression (JSON)
+      description: |
+        Evaluate mathematical and logical expressions with optional variables and arguments.
+        
+        ## Expression Format
+        - Expressions can start with `=` (optional)
+        - Variables are prefixed with `:` (e.g., `:x`, `:total`)
+        - Supports arithmetic, logical, and comparison operations
+        - Custom JavaScript functions available
+        
+        ## Examples
+        - `=2 + 3 * 4` → 14
+        - `:x + :y` with arguments `{"x": 10, "y": 20}` → 30
+        - `MX_ISR(21000, "semanal")` → Custom JS function call
+      security:
+        - evalToken: []
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EvalRequest'
+            examples:
+              simple:
+                summary: Simple arithmetic
+                value:
+                  expression: "=2 + 3 * 4"
+              with_variables:
+                summary: Expression with variables
+                value:
+                  expression: ":x + :y * 2"
+                  arguments:
+                    x: 10
+                    y: 5
+                  output_json: true
+              selective_variables:
+                summary: Return specific variables only
+                value:
+                  expression: ":a := 10; :b := 20; :c := :a + :b"
+                  include_variables: ":a,:b"
+      responses:
+        '200':
+          description: Expression evaluation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EvalResponse'
+              examples:
+                success:
+                  summary: Successful evaluation
+                  value:
+                    success: true
+                    result: 14
+                    execution_time_ms: 1.23
+                    request_id: 42
+                with_variables:
+                  summary: Result with variables
+                  value:
+                    success: true
+                    result: 30
+                    variables:
+                      x: 10
+                      y: 20
+                    execution_time_ms: 2.15
+                    request_id: 43
+        '400':
+          description: Invalid expression or request format
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '413':
+          description: Request payload too large (>1MB)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    get:
+      tags: [evaluation]
+      summary: Evaluate expression (URL parameters)
+      description: |
+        Evaluate expressions using URL query parameters. Useful for simple expressions and browser testing.
+        
+        ## Query Parameters
+        - `expr` or `expression`: The expression to evaluate
+        - `output_json`: Set to "true" for JSON output format
+        - Variable arguments: `x=10&y=20` etc.
+      security:
+        - evalToken: []
+        - {}
+      parameters:
+        - name: expr
+          in: query
+          required: true
+          description: The expression to evaluate
+          schema:
+            type: string
+          example: "2 + 3 * 4"
+        - name: expression
+          in: query
+          required: false
+          description: Alternative parameter name for expression
+          schema:
+            type: string
+        - name: output_json
+          in: query
+          required: false
+          description: Return result in JSON format
+          schema:
+            type: string
+            enum: ["true", "false"]
+        - name: include_variables
+          in: query
+          required: false
+          description: Include variables in response (true/false or comma-separated list)
+          schema:
+            type: string
+          example: "true"
+      responses:
+        '200':
+          description: Expression evaluation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EvalResponse'
+            text/plain:
+              schema:
+                type: string
+                example: "14"
+        '400':
+          description: Missing or invalid expression
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /upload-js:
+    post:
+      tags: [javascript]
+      summary: Upload JavaScript function
+      description: |
+        Upload and validate a new JavaScript function. Supports both JSON and multipart form-data uploads.
+        
+        ## JavaScript Function Format
+        Functions must include metadata comments:
+        ```javascript
+        // @name: FUNCTION_NAME
+        // @description: Function description
+        // @example: FUNCTION_NAME(5, 10) returns 15
+        // @min_args: 2
+        // @max_args: 2
+        
+        function execute(args) {
+            return args[0] + args[1];
+        }
+        ```
+        
+        ## Upload Methods
+        1. **JSON**: Send `js_code` field with function content
+        2. **Multipart**: Upload file with `filename` and `file` fields
+      security:
+        - adminToken: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UploadJSRequest'
+            example:
+              filename: "add_numbers.js"
+              js_code: "// @name: ADD_NUMBERS\n// @description: Adds two numbers\n// @example: ADD_NUMBERS(5, 3) returns 8\n// @min_args: 2\n// @max_args: 2\n\nfunction execute(args) {\n    return args[0] + args[1];\n}"
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                filename:
+                  type: string
+                  description: Name of the JavaScript file (must end with .js)
+                  example: "add_numbers.js"
+                js_code:
+                  type: string
+                  description: JavaScript function code (alternative to file upload)
+                file:
+                  type: string
+                  format: binary
+                  description: JavaScript file upload (alternative to js_code)
+              required:
+                - filename
+      responses:
+        '200':
+          description: Function uploaded and validated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadJSResponse'
+              example:
+                success: true
+                message: "JavaScript function 'ADD_NUMBERS' uploaded and validated successfully"
+                function_name: "ADD_NUMBERS"
+                validation_results:
+                  syntax_valid: true
+                  structure_valid: true
+                  example_test_passed: true
+                  example_result: "Expected: 8, Got: 8 ✓"
+        '400':
+          description: Invalid function or validation failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadJSResponse'
+        '401':
+          description: Admin authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /update-js:
+    put:
+      tags: [javascript]
+      summary: Update existing JavaScript function
+      description: |
+        Update an existing JavaScript function. The file must already exist.
+        Supports both JSON and multipart form-data formats.
+      security:
+        - adminToken: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateJSRequest'
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                filename:
+                  type: string
+                  description: Name of the JavaScript file to update
+                js_code:
+                  type: string
+                  description: Updated JavaScript function code
+                file:
+                  type: string
+                  format: binary
+                  description: Updated JavaScript file upload
+              required:
+                - filename
+      responses:
+        '200':
+          description: Function updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdateJSResponse'
+        '400':
+          description: Invalid function or validation failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdateJSResponse'
+        '404':
+          description: Function file not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdateJSResponse'
+
+  /delete-js:
+    delete:
+      tags: [javascript]
+      summary: Delete JavaScript function
+      description: Delete an existing JavaScript function file from the hooks directory
+      security:
+        - adminToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeleteJSRequest'
+            example:
+              filename: "old_function.js"
+      responses:
+        '200':
+          description: Function deleted successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteJSResponse'
+        '400':
+          description: Invalid filename
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteJSResponse'
+        '404':
+          description: Function file not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteJSResponse'
+
+  /list-js:
+    get:
+      tags: [javascript]
+      summary: List JavaScript functions
+      description: |
+        List all JavaScript functions in the hooks directory with detailed metadata,
+        including validation status, function signatures, and file information.
+      security:
+        - adminToken: []
+      responses:
+        '200':
+          description: List of JavaScript functions
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListJSResponse'
+              example:
+                success: true
+                total_count: 2
+                functions:
+                  - filename: "mx_isr.js"
+                    function_name: "MX_ISR"
+                    description: "Calculates ISR tax in mexico based on the monto and period"
+                    example: "MX_ISR(21000, \"semanal\") returns 2817.603008"
+                    min_args: 1
+                    max_args: 2
+                    file_size: 3682
+                    last_modified: "2024-09-06 23:03:15 UTC"
+                    is_valid: true
+                  - filename: "add_numbers.js"
+                    function_name: "ADD_NUMBERS"
+                    description: "Adds two numbers together"
+                    example: "ADD_NUMBERS(5, 3) returns 8"
+                    min_args: 2
+                    max_args: 2
+                    file_size: 245
+                    last_modified: "2024-09-07 08:15:32 UTC"
+                    is_valid: true
+        '401':
+          description: Admin authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /reload-hooks:
+    post:
+      tags: [javascript]
+      summary: Reload JavaScript functions
+      description: |
+        Reload all JavaScript functions from the hooks directory.
+        This refreshes the function registry without restarting the server.
+      security:
+        - adminToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              example: {}
+      responses:
+        '200':
+          description: Functions reloaded successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReloadHooksResponse'
+              example:
+                success: true
+                message: "Successfully reloaded 3 JavaScript function(s)"
+                functions_loaded: 3
+
+  /cache:
+    delete:
+      tags: [cache]
+      summary: Clear expression cache
+      description: |
+        Clear the expression evaluation cache to force re-evaluation of all expressions.
+        Useful for development and testing scenarios.
+      security:
+        - adminToken: []
+      responses:
+        '200':
+          description: Cache cleared successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                example:
+                  success: true
+                  message: "Expression cache cleared successfully"
+
+components:
+  securitySchemes:
+    evalToken:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: Token for expression evaluation endpoints (if enabled)
+    adminToken:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: Admin token for JavaScript function management endpoints
+
+  schemas:
+    EvalRequest:
+      type: object
+      properties:
+        expression:
+          type: string
+          description: The expression to evaluate (can be string or array of strings)
+          example: ":x + :y * 2"
+        arguments:
+          type: object
+          description: Variables to use in the expression
+          additionalProperties: true
+          example:
+            x: 10
+            y: 20
+        output_json:
+          type: boolean
+          description: Whether to return result in JSON format
+          default: false
+        include_variables:
+          oneOf:
+            - type: boolean
+            - type: string
+          description: |
+            Include variables in response:
+            - `true`: Include all variables
+            - `false`: No variables
+            - `"var1,var2"`: Specific variables only
+          example: true
+      required:
+        - expression
+
+    EvalResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          description: Whether the evaluation succeeded
+        result:
+          description: The evaluation result
+          example: 42
+        variables:
+          type: object
+          description: Variables from the expression (if requested)
+          additionalProperties: true
+        error:
+          type: string
+          description: Error message if evaluation failed
+        execution_time_ms:
+          type: number
+          description: Time taken to evaluate in milliseconds
+        request_id:
+          type: integer
+          description: Unique request identifier
+      required:
+        - success
+        - execution_time_ms
+        - request_id
+
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy]
+        version:
+          type: string
+          description: Server version
+        requests_processed:
+          type: integer
+          description: Total number of requests processed
+        avg_execution_time_ms:
+          type: number
+          description: Average execution time across all requests
+        cache_stats:
+          $ref: '#/components/schemas/CacheStatsResponse'
+      required:
+        - status
+        - version
+        - requests_processed
+        - avg_execution_time_ms
+
+    CacheStatsResponse:
+      type: object
+      properties:
+        hits:
+          type: integer
+          description: Number of cache hits
+        misses:
+          type: integer
+          description: Number of cache misses
+        hit_rate:
+          type: number
+          description: Cache hit rate (0.0 to 1.0)
+        entries:
+          type: integer
+          description: Current number of cached entries
+        evictions:
+          type: integer
+          description: Number of cache evictions
+        total_saved_time_ms:
+          type: number
+          description: Total time saved by caching
+
+    UploadJSRequest:
+      type: object
+      properties:
+        filename:
+          type: string
+          description: JavaScript filename (must end with .js)
+          example: "my_function.js"
+        js_code:
+          type: string
+          description: JavaScript function code
+        file_content:
+          type: string
+          description: File content (for multipart uploads)
+      required:
+        - filename
+
+    UploadJSResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+        function_name:
+          type: string
+          description: Extracted function name
+        validation_results:
+          $ref: '#/components/schemas/ValidationResults'
+        error:
+          type: string
+      required:
+        - success
+        - message
+
+    UpdateJSRequest:
+      type: object
+      properties:
+        filename:
+          type: string
+          description: JavaScript filename to update
+        js_code:
+          type: string
+          description: Updated JavaScript function code
+        file_content:
+          type: string
+          description: Updated file content (for multipart uploads)
+      required:
+        - filename
+
+    UpdateJSResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+        function_name:
+          type: string
+        validation_results:
+          $ref: '#/components/schemas/ValidationResults'
+        error:
+          type: string
+      required:
+        - success
+        - message
+
+    DeleteJSRequest:
+      type: object
+      properties:
+        filename:
+          type: string
+          description: JavaScript filename to delete
+      required:
+        - filename
+
+    DeleteJSResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+        error:
+          type: string
+      required:
+        - success
+        - message
+
+    ListJSResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        functions:
+          type: array
+          items:
+            $ref: '#/components/schemas/JSFunctionInfo'
+        total_count:
+          type: integer
+        error:
+          type: string
+      required:
+        - success
+        - functions
+        - total_count
+
+    JSFunctionInfo:
+      type: object
+      properties:
+        filename:
+          type: string
+        function_name:
+          type: string
+        description:
+          type: string
+        example:
+          type: string
+        min_args:
+          type: integer
+        max_args:
+          type: integer
+        file_size:
+          type: integer
+        last_modified:
+          type: string
+        is_valid:
+          type: boolean
+        validation_error:
+          type: string
+      required:
+        - filename
+        - file_size
+        - last_modified
+        - is_valid
+
+    ReloadHooksResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+        functions_loaded:
+          type: integer
+        error:
+          type: string
+      required:
+        - success
+        - message
+        - functions_loaded
+
+    ValidationResults:
+      type: object
+      properties:
+        syntax_valid:
+          type: boolean
+        structure_valid:
+          type: boolean
+        example_test_passed:
+          type: boolean
+        example_result:
+          type: string
+        example_error:
+          type: string
+      required:
+        - syntax_valid
+        - structure_valid
+        - example_test_passed
+
+    ErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          enum: [false]
+        error:
+          type: string
+          description: Error message
+      required:
+        - success
+        - error
+      example:
+        success: false
+        error: "Invalid expression syntax"

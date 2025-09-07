@@ -3,6 +3,7 @@ pub mod cache;
 pub mod daemon;
 pub mod eval;
 pub mod js_management;
+pub mod multipart;
 pub mod stats;
 pub mod types;
 pub mod utils;

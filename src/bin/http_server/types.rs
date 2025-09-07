@@ -147,7 +147,10 @@ pub struct CacheStatsResponse {
 #[derive(Debug, Deserialize)]
 pub struct UploadJSRequest {
     pub filename: String,
-    pub js_code: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub js_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_content: Option<String>, // For file uploads as base64 or direct content
 }
 
 #[derive(Debug, Serialize)]
@@ -162,7 +165,10 @@ pub struct UploadJSResponse {
 #[derive(Debug, Deserialize)]
 pub struct UpdateJSRequest {
     pub filename: String,
-    pub js_code: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub js_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_content: Option<String>, // For file uploads as base64 or direct content
 }
 
 #[derive(Debug, Serialize)]
