@@ -1,10 +1,12 @@
 use crate::ast::{BinaryOp, Expr, TypeName, UnaryOp};
 use crate::error::Error;
 use crate::lexer::{Lexer, Token};
+use std::rc::Rc;
 
 pub struct Parser<'a> {
     lexer: Lexer<'a>,
     lookahead: Token,
+    lookahead2: Option<Token>,
     look_pos: usize,
 }
 
@@ -13,13 +15,25 @@ impl<'a> Parser<'a> {
         let mut lexer = Lexer::new(input);
         let lookahead = lexer.next_token().unwrap_or(Token::Eof);
         let look_pos = lexer.last_start();
-        Self { lexer, lookahead, look_pos }
+        Self { lexer, lookahead, lookahead2: None, look_pos }
     }
 
     fn bump(&mut self) -> Result<(), Error> {
-        self.lookahead = self.lexer.next_token()?;
+        if let Some(next) = self.lookahead2.take() {
+            self.lookahead = next;
+        } else {
+            self.lookahead = self.lexer.next_token()?;
+        }
         self.look_pos = self.lexer.last_start();
         Ok(())
+    }
+    
+    fn peek_ahead2(&mut self) -> Result<(Token, Token), Error> {
+        // Use a temporary lexer clone for deeper lookahead since we need 3 tokens
+        let mut temp_lexer = self.lexer.clone();
+        let next1 = temp_lexer.next_token().unwrap_or(Token::Eof);
+        let next2 = temp_lexer.next_token().unwrap_or(Token::Eof);
+        Ok((next1, next2))
     }
 
     #[allow(dead_code)]
@@ -50,7 +64,8 @@ impl<'a> Parser<'a> {
         
         // If only one expression, return it directly; otherwise wrap in sequence
         if exprs.len() == 1 {
-            Ok(exprs.into_iter().next().unwrap())
+            exprs.into_iter().next()
+                .ok_or_else(|| Error::new("Expected expression but none found", None))
         } else {
             Ok(Expr::Sequence(exprs))
         }
@@ -63,10 +78,8 @@ impl<'a> Parser<'a> {
     fn parse_assignment(&mut self) -> Result<Expr, Error> {
         // Check for assignment pattern: :variable_name := expression
         if matches!(self.lookahead, Token::Colon) {
-            // Look ahead to see if this is an assignment
-            let mut temp_lexer = self.lexer.clone();
-            let next1 = temp_lexer.next_token().unwrap_or(Token::Eof);
-            let next2 = temp_lexer.next_token().unwrap_or(Token::Eof);
+            // Look ahead to see if this is an assignment - use efficient 2-token lookahead
+            let (next1, next2) = self.peek_ahead2()?;
             
             if matches!((next1, next2), (Token::Identifier(_), Token::ColonEquals)) {
                 // This is an assignment
@@ -77,7 +90,7 @@ impl<'a> Parser<'a> {
                     if matches!(self.lookahead, Token::ColonEquals) {
                         self.bump()?; // consume ':='
                         let value = self.parse_ternary()?;
-                        return Ok(Expr::Assignment { variable: var_name, value: Box::new(value) });
+                        return Ok(Expr::Assignment { variable: var_name, value: Rc::new(value) });
                     }
                 }
                 return self.err_here("Invalid assignment syntax");
@@ -115,7 +128,7 @@ impl<'a> Parser<'a> {
                 Token::Or | Token::OrOr => {
                     self.bump()?;
                     let rhs = self.parse_and()?;
-                    node = Expr::Binary(Box::new(node), BinaryOp::Or, Box::new(rhs));
+                    node = Expr::Binary(Rc::new(node), BinaryOp::Or, Rc::new(rhs));
                 }
                 _ => break,
             }
@@ -130,7 +143,7 @@ impl<'a> Parser<'a> {
                 Token::And | Token::AndAnd => {
                     self.bump()?;
                     let rhs = self.parse_equality()?;
-                    node = Expr::Binary(Box::new(node), BinaryOp::And, Box::new(rhs));
+                    node = Expr::Binary(Rc::new(node), BinaryOp::And, Rc::new(rhs));
                 }
                 _ => break,
             }
@@ -142,8 +155,8 @@ impl<'a> Parser<'a> {
         let mut node = self.parse_relational()?;
         loop {
             match self.lookahead {
-                Token::EqEq => { self.bump()?; let rhs = self.parse_relational()?; node = Expr::Binary(Box::new(node), BinaryOp::Eq, Box::new(rhs)); }
-                Token::NotEq => { self.bump()?; let rhs = self.parse_relational()?; node = Expr::Binary(Box::new(node), BinaryOp::Ne, Box::new(rhs)); }
+                Token::EqEq => { self.bump()?; let rhs = self.parse_relational()?; node = Expr::Binary(Rc::new(node), BinaryOp::Eq, Rc::new(rhs)); }
+                Token::NotEq => { self.bump()?; let rhs = self.parse_relational()?; node = Expr::Binary(Rc::new(node), BinaryOp::Ne, Rc::new(rhs)); }
                 _ => break,
             }
         }
@@ -154,10 +167,10 @@ impl<'a> Parser<'a> {
         let mut node = self.parse_additive()?;
         loop {
             match self.lookahead {
-                Token::Greater => { self.bump()?; let rhs = self.parse_additive()?; node = Expr::Binary(Box::new(node), BinaryOp::Gt, Box::new(rhs)); }
-                Token::Less => { self.bump()?; let rhs = self.parse_additive()?; node = Expr::Binary(Box::new(node), BinaryOp::Lt, Box::new(rhs)); }
-                Token::Ge => { self.bump()?; let rhs = self.parse_additive()?; node = Expr::Binary(Box::new(node), BinaryOp::Ge, Box::new(rhs)); }
-                Token::Le => { self.bump()?; let rhs = self.parse_additive()?; node = Expr::Binary(Box::new(node), BinaryOp::Le, Box::new(rhs)); }
+                Token::Greater => { self.bump()?; let rhs = self.parse_additive()?; node = Expr::Binary(Rc::new(node), BinaryOp::Gt, Rc::new(rhs)); }
+                Token::Less => { self.bump()?; let rhs = self.parse_additive()?; node = Expr::Binary(Rc::new(node), BinaryOp::Lt, Rc::new(rhs)); }
+                Token::Ge => { self.bump()?; let rhs = self.parse_additive()?; node = Expr::Binary(Rc::new(node), BinaryOp::Ge, Rc::new(rhs)); }
+                Token::Le => { self.bump()?; let rhs = self.parse_additive()?; node = Expr::Binary(Rc::new(node), BinaryOp::Le, Rc::new(rhs)); }
                 _ => break,
             }
         }
@@ -171,12 +184,12 @@ impl<'a> Parser<'a> {
                 Token::Plus => {
                     self.bump()?;
                     let rhs = self.parse_multiplicative()?;
-                    node = Expr::Binary(Box::new(node), BinaryOp::Add, Box::new(rhs));
+                    node = Expr::Binary(Rc::new(node), BinaryOp::Add, Rc::new(rhs));
                 }
                 Token::Minus => {
                     self.bump()?;
                     let rhs = self.parse_multiplicative()?;
-                    node = Expr::Binary(Box::new(node), BinaryOp::Sub, Box::new(rhs));
+                    node = Expr::Binary(Rc::new(node), BinaryOp::Sub, Rc::new(rhs));
                 }
                 _ => break,
             }
@@ -191,17 +204,17 @@ impl<'a> Parser<'a> {
                 Token::Star => {
                     self.bump()?;
                     let rhs = self.parse_unary()?;
-                    node = Expr::Binary(Box::new(node), BinaryOp::Mul, Box::new(rhs));
+                    node = Expr::Binary(Rc::new(node), BinaryOp::Mul, Rc::new(rhs));
                 }
                 Token::Slash => {
                     self.bump()?;
                     let rhs = self.parse_unary()?;
-                    node = Expr::Binary(Box::new(node), BinaryOp::Div, Box::new(rhs));
+                    node = Expr::Binary(Rc::new(node), BinaryOp::Div, Rc::new(rhs));
                 }
                 Token::Percent => {
                     self.bump()?;
                     let rhs = self.parse_unary()?;
-                    node = Expr::Binary(Box::new(node), BinaryOp::Mod, Box::new(rhs));
+                    node = Expr::Binary(Rc::new(node), BinaryOp::Mod, Rc::new(rhs));
                 }
                 _ => break,
             }
@@ -215,7 +228,7 @@ impl<'a> Parser<'a> {
         if let Token::Caret = self.lookahead {
             self.bump()?;
             let right = self.parse_unary()?; // exponent can be unary like -2
-            Ok(Expr::Binary(Box::new(left), BinaryOp::Pow, Box::new(right)))
+            Ok(Expr::Binary(Rc::new(left), BinaryOp::Pow, Rc::new(right)))
         } else {
             Ok(left)
         }
@@ -226,17 +239,17 @@ impl<'a> Parser<'a> {
             Token::Plus => {
                 self.bump()?;
                 let expr = self.parse_unary()?;
-                Ok(Expr::Unary(UnaryOp::Plus, Box::new(expr)))
+                Ok(Expr::Unary(UnaryOp::Plus, Rc::new(expr)))
             }
             Token::Minus => {
                 self.bump()?;
                 let expr = self.parse_unary()?;
-                Ok(Expr::Unary(UnaryOp::Minus, Box::new(expr)))
+                Ok(Expr::Unary(UnaryOp::Minus, Rc::new(expr)))
             }
             Token::Bang => {
                 self.bump()?;
                 let expr = self.parse_unary()?;
-                Ok(Expr::Unary(UnaryOp::Not, Box::new(expr)))
+                Ok(Expr::Unary(UnaryOp::Not, Rc::new(expr)))
             }
             _ => self.parse_power(),
         }
@@ -286,7 +299,7 @@ impl<'a> Parser<'a> {
                             // empty args
                         } else {
                             loop {
-                                let arg = if let Token::Ellipsis = self.lookahead { self.bump()?; Expr::Spread(Box::new(self.parse_expr()?)) } else { self.parse_expr()? };
+                                let arg = if let Token::Ellipsis = self.lookahead { self.bump()?; Expr::Spread(Rc::new(self.parse_expr()?)) } else { self.parse_expr()? };
                                 args.push(arg);
                                 match self.lookahead {
                                     Token::Comma => { self.bump()?; }
@@ -395,7 +408,7 @@ impl<'a> Parser<'a> {
                 }
                 _ => return Err(Error::new("Expected type name after '::'", None)),
             };
-            node = Expr::TypeCast { expr: Box::new(node), ty: tname };
+            node = Expr::TypeCast { expr: Rc::new(node), ty: tname };
         }
         Ok(node)
     }
@@ -413,7 +426,7 @@ impl<'a> Parser<'a> {
                     // Predicate style: name?
                     if let Token::QMark = self.lookahead {
                         self.bump()?; // consume '?'
-                        node = Expr::MethodCall { target: Box::new(node), name: name.to_lowercase(), args: vec![], predicate: true };
+                        node = Expr::MethodCall { target: Rc::new(node), name: name.to_lowercase(), args: vec![], predicate: true };
                         continue;
                     }
                     // Check for method call: '(' args ')'
@@ -425,7 +438,7 @@ impl<'a> Parser<'a> {
                                 // empty
                             } else {
                                 loop {
-                                    let arg = if let Token::Ellipsis = self.lookahead { self.bump()?; Expr::Spread(Box::new(self.parse_expr()?)) } else { self.parse_expr()? };
+                                    let arg = if let Token::Ellipsis = self.lookahead { self.bump()?; Expr::Spread(Rc::new(self.parse_expr()?)) } else { self.parse_expr()? };
                                     args.push(arg);
                                     match self.lookahead {
                                         Token::Comma => { self.bump()?; }
@@ -435,11 +448,11 @@ impl<'a> Parser<'a> {
                                 }
                             }
                             self.bump()?; // ')'
-                            node = Expr::MethodCall { target: Box::new(node), name: name.to_lowercase(), args, predicate: false };
+                            node = Expr::MethodCall { target: Rc::new(node), name: name.to_lowercase(), args, predicate: false };
                         }
                         _ => {
                             // No parentheses, treat as property access
-                            node = Expr::PropertyAccess { target: Box::new(node), property: name };
+                            node = Expr::PropertyAccess { target: Rc::new(node), property: name };
                         }
                     }
                 }
@@ -449,8 +462,38 @@ impl<'a> Parser<'a> {
                         Token::Identifier(s) => { self.bump()?; s }
                         _ => return self.err_here("Expected property name after '&.'"),
                     };
-                    // Safe navigation only supports property access, not method calls
-                    node = Expr::SafePropertyAccess { target: Box::new(node), property: name };
+                    // Check for method call after safe navigation
+                    match self.lookahead {
+                        Token::LParen => {
+                            // Safe method call
+                            self.bump()?; // '('
+                            let mut args = Vec::new();
+                            if let Token::RParen = self.lookahead {
+                                // empty args
+                            } else {
+                                loop {
+                                    let arg = if let Token::Ellipsis = self.lookahead { 
+                                        self.bump()?; 
+                                        Expr::Spread(Rc::new(self.parse_expr()?))}
+                                    else { 
+                                        self.parse_expr()? 
+                                    };
+                                    args.push(arg);
+                                    match self.lookahead {
+                                        Token::Comma => { self.bump()?; }
+                                        Token::RParen => break,
+                                        _ => return self.err_here("Expected ',' or ')' in safe method args"),
+                                    }
+                                }
+                            }
+                            self.bump()?; // ')'
+                            node = Expr::SafeMethodCall { target: Rc::new(node), name: name.to_lowercase(), args };
+                        }
+                        _ => {
+                            // Safe property access
+                            node = Expr::SafePropertyAccess { target: Rc::new(node), property: name };
+                        }
+                    }
                 }
             Token::LBracket => {
                 // Indexing or slicing
@@ -468,7 +511,7 @@ impl<'a> Parser<'a> {
                             Token::Colon => { start = Some(first); }
                             Token::RBracket => {
                                 self.bump()?; // ']'
-                                node = Expr::Index { target: Box::new(node), index: Box::new(first) };
+                                node = Expr::Index { target: Rc::new(node), index: Rc::new(first) };
                                 continue;
                             }
                             _ => return self.err_here("Expected ':' or ']' in indexing"),
@@ -487,7 +530,7 @@ impl<'a> Parser<'a> {
                     Token::RBracket => { self.bump()?; }
                     _ => return self.err_here("Expected ']' to close slice"),
                 }
-                node = Expr::Slice { target: Box::new(node), start: start.map(Box::new), end: end.map(Box::new) };
+                node = Expr::Slice { target: Rc::new(node), start: start.map(Rc::new), end: end.map(Rc::new) };
             }
             _ => break,
         }

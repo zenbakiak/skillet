@@ -4,15 +4,26 @@
 
 ## Table of Contents
 
+**🚀 Getting Started:**
 1. [Command Line Interface (CLI)](#command-line-interface-cli)
 2. [Rust Integration](#rust-integration)
-3. [Extending the Language](#extending-the-language)
-4. [JavaScript/Node Addon](#javascriptnode-addon)
-5. [API Surface](#api-surface)
+3. [API Surface](#api-surface)
+
+**✨ New Features:**
+4. [Type Conversion Methods](#type-conversion-methods) ⭐ **NEW**
+5. [Safe Navigation Operator](#safe-navigation-operator) ⭐ **NEW**
+
+**📚 Language Reference:**
 6. [Excel Formula Examples](#excel-formula-examples)
-7. [Built-in Functions Reference](#built-in-functions-reference)
+7. [Built-in Functions Reference](#built-in-functions-reference) → See [API_REFERENCE.md](API_REFERENCE.md) for complete reference
 8. [JSON Integration](#json-integration)
-9. [Advanced Features](#advanced-features)
+
+**🔧 Extensibility:**
+9. [Extending the Language](#extending-the-language)
+10. [JavaScript/Node Addon](#javascriptnode-addon)
+
+**⚡ Advanced:**
+11. [Advanced Features](#advanced-features)
 
 ---
 
@@ -1037,6 +1048,22 @@ sk "=:sales * IF(:sales > 100000, 0.08, IF(:sales > 50000, 0.06, 0.04))" sales=7
   - `fv`: Future value (optional, default 0)
   - `type`: Payment timing (optional, 0=end of period, 1=beginning)
 
+### Type Conversion Methods (Available on All Types)
+- `to_s()`, `to_string()` - Convert to string
+- `to_i()`, `to_int()` - Convert to integer
+- `to_f()`, `to_float()` - Convert to float
+- `to_a()`, `to_array()` - Convert to array
+- `to_json()` - Convert to JSON object
+- `to_bool()`, `to_boolean()` - Convert to boolean
+
+**Null Conversions:**
+- `null.to_s()` → `""` (empty string)
+- `null.to_i()` → `0` (zero)
+- `null.to_f()` → `0.0` (zero float)
+- `null.to_a()` → `[]` (empty array)
+- `null.to_json()` → `"{}"` (empty object)
+- `null.to_bool()` → `false`
+
 ---
 
 ## JSON Integration
@@ -1099,6 +1126,284 @@ sk "=IF(:employee.type = \"full-time\",
   },
   "hours_worked": 160
 }'
+```
+
+---
+
+## Type Conversion Methods
+
+Skillet provides Ruby-style conversion methods available on **all value types**, including null. These methods make handling mixed data types and null values much simpler and safer.
+
+### Available Conversion Methods
+
+All types support these conversion methods:
+
+- `to_s()` / `to_string()` - Convert to string
+- `to_i()` / `to_int()` - Convert to integer
+- `to_f()` / `to_float()` - Convert to float
+- `to_a()` / `to_array()` - Convert to array
+- `to_json()` - Convert to JSON object
+- `to_bool()` / `to_boolean()` - Convert to boolean
+
+### Null Conversions (Safe Defaults)
+
+Converting null values provides safe defaults:
+
+```bash
+# Null conversions always return safe defaults
+sk "null.to_s()"      # ""     - empty string
+sk "null.to_i()"      # 0      - zero
+sk "null.to_f()"      # 0.0    - zero float
+sk "null.to_a()"      # []     - empty array
+sk "null.to_json()"   # "{}"   - empty JSON object
+sk "null.to_bool()"   # false  - false
+```
+
+### String Conversions
+
+```bash
+# String to other types
+sk "\"123\".to_i()"           # 123 - parses number
+sk "\"123.45\".to_f()"        # 123.45 - parses float
+sk "\"abc\".to_i()"           # 0 - invalid strings become 0
+sk "\"hello\".to_a()"         # ["h", "e", "l", "l", "o"] - character array
+sk "\"hello\".to_bool()"      # true - non-empty strings are true
+sk "\"\".to_bool()"           # false - empty strings are false
+
+# Identity conversion
+sk "\"hello\".to_s()"         # "hello" - same string
+```
+
+### Number Conversions
+
+```bash
+# Number to other types
+sk "123.to_s()"               # "123" - formatted as string
+sk "123.45.to_s()"            # "123.45" - with decimals
+sk "123.45.to_i()"            # 123 - truncates to integer
+sk "123.45.to_f()"            # 123.45 - same float
+sk "42.to_a()"                # [42] - single-element array
+sk "0.to_bool()"              # false - zero is false
+sk "123.to_bool()"            # true - non-zero is true
+```
+
+### Boolean Conversions
+
+```bash
+# Boolean to other types
+sk "true.to_s()"              # "true" - string representation
+sk "false.to_s()"             # "false"
+sk "true.to_i()"              # 1 - true becomes 1
+sk "false.to_i()"             # 0 - false becomes 0
+sk "true.to_f()"              # 1.0 - true becomes 1.0
+sk "false.to_f()"             # 0.0 - false becomes 0.0
+sk "true.to_a()"              # [true] - single-element array
+sk "true.to_bool()"           # true - identity
+```
+
+### Array Conversions
+
+```bash
+# Array to other types
+sk "[1, 2, 3].to_s()"         # "[1, 2, 3]" - formatted string
+sk "[1, 2, 3].to_i()"         # 3 - array length
+sk "[].to_i()"                # 0 - empty array length
+sk "[1, 2, 3].to_f()"         # 3.0 - array length as float
+sk "[1, 2, 3].to_a()"         # [1, 2, 3] - identity
+sk "[].to_bool()"             # false - empty arrays are false
+sk "[1, 2, 3].to_bool()"      # true - non-empty arrays are true
+```
+
+### Practical Use Cases
+
+#### 1. Null-Safe Operations
+
+**Problem**: Accessing properties that might be null causes errors:
+```bash
+# This fails if FechaCierreCuenta is null
+sk ":data.FechaCierreCuenta.length()"  # Error: No methods available for Null type
+```
+
+**Solution**: Use conversion methods for null-safe operations:
+```bash
+# This works even if FechaCierreCuenta is null
+sk ":data.FechaCierreCuenta.to_s().length()"  # 0 (length of empty string)
+```
+
+#### 2. Filtering with Null Safety
+
+```bash
+# Filter accounts with empty closure dates (including nulls)
+sk ":cuentas := [
+  {\"FechaCierreCuenta\": null}, 
+  {\"FechaCierreCuenta\": \"\"}, 
+  {\"FechaCierreCuenta\": \"2023-01-01\"}
+]; 
+:cuentas.filter(:x.FechaCierreCuenta.to_s().length() == 0)"
+# Returns: [{"FechaCierreCuenta": null}, {"FechaCierreCuenta": ""}]
+```
+
+#### 3. Data Normalization
+
+```bash
+# Convert mixed data to consistent types
+sk ":mixed := [null, \"hello\", 123, true, []]; 
+:mixed.map(:x.to_s())"
+# Returns: ["", "hello", "123", "true", "[]"]
+
+# Convert all to numbers (with safe defaults)
+sk ":mixed := [\"123\", null, true, \"45.5\", \"abc\"]; 
+:mixed.map(:x.to_i())"
+# Returns: [123, 0, 1, 45, 0]
+```
+
+#### 4. Boolean Logic with Mixed Types
+
+```bash
+# Check if values are "truthy"
+sk ":values := [\"\", \"hello\", 0, 42, [], [1,2]]; 
+:values.map(:x.to_bool())"
+# Returns: [false, true, false, true, false, true]
+```
+
+#### 5. Safe String Concatenation
+
+```bash
+# Safely concatenate potentially null values
+sk ":first := null; :last := \"Smith\"; 
+CONCAT(:first.to_s(), \" \", :last.to_s()).trim()"
+# Returns: "Smith" (instead of failing)
+```
+
+#### 6. Dynamic Type Conversion
+
+```bash
+# Convert user input to appropriate types based on context
+sk ":user_input := \"123\"; 
+IF(:needs_number, :user_input.to_i(), :user_input.to_s())" needs_number=true
+# Returns: 123
+```
+
+#### 7. Array Creation from Mixed Data
+
+```bash
+# Create character arrays from strings
+sk "\"hello\".to_a().length()"  # 5
+
+# Ensure single values become arrays
+sk ":value := 42; :value.to_a().sum()"  # 42
+```
+
+### Ruby-Style Behavior
+
+Skillet's conversion methods follow Ruby conventions for intuitive behavior:
+
+1. **String to Number**: Invalid strings become 0 (like Ruby's `to_i`)
+2. **Boolean to Number**: `true` → 1, `false` → 0
+3. **Empty Values to Boolean**: Empty strings and arrays become `false`
+4. **Null Safety**: `null` converts to safe defaults for all types
+5. **String Arrays**: Strings convert to character arrays (`"hi"` → `["h", "i"]`)
+
+### Method Name Variants
+
+Both short and long forms are supported:
+
+- `to_s()` or `to_string()`
+- `to_i()` or `to_int()`  
+- `to_f()` or `to_float()`
+- `to_a()` or `to_array()`
+- `to_bool()` or `to_boolean()`
+
+### Chaining Conversions
+
+Conversion methods can be chained with other methods:
+
+```bash
+# Chain conversions and operations
+sk "null.to_s().length()"                    # 0
+sk "\"123.45\".to_f().round(1).to_s()"      # "123.5"
+sk "\"hello\".to_a().length().to_bool()"    # true (5 characters → true)
+```
+
+### Error Prevention
+
+Conversion methods eliminate many common runtime errors:
+
+```bash
+# Before: These might fail
+# :value.length()  # Fails if value is null
+# :number + 10     # Fails if number is a string
+
+# After: These always work
+# :value.to_s().length()     # Always returns a number
+# :number.to_i() + 10        # Always performs addition
+```
+
+---
+
+## Safe Navigation Operator
+
+Skillet provides a safe navigation operator `&.` that prevents errors when accessing properties or calling methods on null values.
+
+### Basic Safe Navigation
+
+The `&.` operator allows safe property access and method calls:
+
+```bash
+# Safe property access
+sk ":obj := {\"name\": \"John\"}; :obj&.name"        # "John"
+sk ":obj := {\"name\": \"John\"}; :obj&.missing"     # null (no error)
+sk ":null_obj := null; :null_obj&.anything"          # null (no error)
+
+# Without safe navigation (would cause errors)
+sk ":null_obj := null; :null_obj.anything"           # Error!
+```
+
+### Safe Method Calls
+
+Safe navigation also works with method calls:
+
+```bash
+# Safe method calls
+sk ":str := \"hello\"; :str&.length()"               # 5
+sk ":null_str := null; :null_str&.length()"          # null (no error)
+
+# Chained safe navigation and method calls
+sk ":obj := {\"name\": \"John\"}; :obj&.name&.length()"     # 4
+sk ":obj := {\"name\": null}; :obj&.name&.length()"         # null (no error)
+```
+
+### Combining Safe Navigation with Conversions
+
+Safe navigation works perfectly with conversion methods:
+
+```bash
+# Safe navigation + conversion for ultimate null safety
+sk ":data := [{\"date\": null}, {\"date\": \"2023-01-01\"}]; 
+:data.filter(:x&.date&.to_s().length() > 0)"
+# Returns: [{"date": "2023-01-01"}]
+
+# Traditional approach (safer)
+sk ":data := [{\"date\": null}, {\"date\": \"2023-01-01\"}]; 
+:data.filter(:x.date.to_s().length() > 0)"
+# Also works - conversion methods handle null gracefully
+```
+
+### When to Use Safe Navigation vs Conversions
+
+- **Use `&.`** when you want to preserve null values in the result
+- **Use `.to_*()` methods** when you want to convert null to a safe default
+
+```bash
+# Preserves nulls
+sk ":arr := [null, \"hello\", null]; 
+:arr.map(:x&.length())"
+# Returns: [null, 5, null]
+
+# Converts nulls to defaults  
+sk ":arr := [null, \"hello\", null]; 
+:arr.map(:x.to_s().length())"
+# Returns: [0, 5, 0]
 ```
 
 ---

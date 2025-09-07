@@ -185,7 +185,7 @@ pub fn exec_method(
                         _ => return Err(Error::new("sort expects numeric array", None)),
                     }
                 }
-                nums.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                nums.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
                 Ok(Value::Array(nums.into_iter().map(Value::Number).collect()))
             }
             _ => Err(Error::new("sort expects array receiver", None)),
@@ -682,7 +682,7 @@ pub fn exec_method_with_custom(
                         _ => return Err(Error::new("sort expects numeric array", None)),
                     }
                 }
-                nums.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                nums.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
                 Ok(Value::Array(nums.into_iter().map(Value::Number).collect()))
             }
             _ => Err(Error::new("sort expects array receiver", None)),

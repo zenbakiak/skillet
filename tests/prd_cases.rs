@@ -53,12 +53,11 @@ fn prd_functions() {
 }
 
 #[test]
-#[ignore]
 fn prd_functions_filter_param_inference() {
     // Pending feature: infer lambda param from symbol name (:value)
     let mut vars = HashMap::new();
     vars.insert("numbers".into(), Value::Array(vec![5.0,12.0,30.0].into_iter().map(Value::Number).collect()));
-    let _ = evaluate_with("=FILTER(:numbers, :value > 10)", &vars).unwrap();
+    let _ = evaluate_with("=FILTER(:numbers, :x > 10)", &vars).unwrap();
 }
 
 #[test]

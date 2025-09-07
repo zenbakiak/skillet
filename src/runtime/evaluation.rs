@@ -267,6 +267,7 @@ pub fn eval(expr: &Expr) -> Result<Value, Error> {
         Expr::Variable(_) => Err(Error::new("Use eval_with_vars for variables", None)),
         Expr::PropertyAccess { .. } => Err(Error::new("Use eval_with_vars for property access", None)),
         Expr::SafePropertyAccess { .. } => Err(Error::new("Use eval_with_vars for safe property access", None)),
+        Expr::SafeMethodCall { .. } => Err(Error::new("Use eval_with_vars for safe method calls", None)),
         Expr::Spread(_) => Err(Error::new("Spread not allowed here", None)),
         Expr::Assignment { .. } => Err(Error::new("Use eval_with_vars for assignments", None)),
         Expr::Sequence(_) => Err(Error::new("Use eval_with_vars for sequences", None)),
@@ -377,6 +378,14 @@ pub fn eval_with_vars(expr: &Expr, vars: &HashMap<String, Value>) -> Result<Valu
                 Value::Null => Ok(Value::Null), // Safe navigation on null returns null
                 _ => Err(Error::new("Property access requires JSON object", None))
             }
+        }
+        Expr::SafeMethodCall { target, name, args } => {
+            let target_value = eval_with_vars(target, vars)?;
+            if matches!(target_value, Value::Null) {
+                return Ok(Value::Null);
+            }
+            let args_expr = args;
+            exec_method(name, false, &target_value, args_expr, Some(vars))
         }
         Expr::Array(items) => {
             let mut out = Vec::with_capacity(items.len());
@@ -560,6 +569,14 @@ pub fn eval_with_vars_and_custom(expr: &Expr, vars: &HashMap<String, Value>, cus
                 Value::Null => Ok(Value::Null), // Safe navigation on null returns null
                 _ => Err(Error::new(format!("Property access only supported on JSON objects, got {:?}", target_value), None)),
             }
+        }
+        Expr::SafeMethodCall { target, name, args } => {
+            let target_value = eval_with_vars_and_custom(target, vars, custom_registry)?;
+            if matches!(target_value, Value::Null) {
+                return Ok(Value::Null);
+            }
+            let args_expr = args;
+            exec_method_with_custom(name, false, &target_value, args_expr, Some(vars), custom_registry)
         }
         Expr::Array(exprs) => {
             let mut items = Vec::new();
