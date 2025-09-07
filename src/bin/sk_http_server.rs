@@ -1,6 +1,7 @@
 mod http_server;
 
 use skillet::JSPluginLoader;
+use scalar_doc::Documentation;
 use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, atomic::{AtomicU64, Ordering}};
 use threadpool::ThreadPool;
@@ -70,6 +71,8 @@ fn handle_http_request(
     match (method, path_only) {
         ("GET", "/health") => handle_health(&mut stream, &stats, &request, server_token),
         ("GET", "/") => handle_root(&mut stream),
+        ("GET", "/docs") => handle_api_docs(&mut stream),
+        ("GET", "/openapi.yml") => handle_openapi_spec(&mut stream),
         ("POST", "/eval") => handle_eval_post(&mut stream, &request, stats, request_counter, server_token),
         ("GET", "/eval") => handle_eval_get(&mut stream, &request, stats, request_counter, server_token),
         ("POST", "/upload-js") => handle_upload_js(&mut stream, &request, server_admin_token),
@@ -86,6 +89,25 @@ fn handle_http_request(
 fn handle_root(stream: &mut TcpStream) {
     let html = load_html_file();
     send_http_response(stream, 200, "text/html", &html);
+}
+
+fn handle_api_docs(stream: &mut TcpStream) {
+    // Generate Scalar documentation HTML that points to our OpenAPI spec endpoint
+    let docs_html = match Documentation::new("Skillet HTTP Server API", "/openapi.yml").build() {
+        Ok(html) => html,
+        Err(e) => {
+            eprintln!("Error generating documentation: {}", e);
+            format!("<!DOCTYPE html><html><head><title>Documentation Error</title></head><body><h1>Error</h1><p>Failed to generate documentation: {}</p></body></html>", e)
+        }
+    };
+    
+    send_http_response(stream, 200, "text/html", &docs_html);
+}
+
+fn handle_openapi_spec(stream: &mut TcpStream) {
+    // Serve the OpenAPI specification YAML file
+    let openapi_spec = include_str!("../../openapi.yml");
+    send_http_response(stream, 200, "application/x-yaml", openapi_spec);
 }
 
 fn main() {
