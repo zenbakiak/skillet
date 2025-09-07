@@ -5,7 +5,7 @@ use std::time::Instant;
 use skillet::{evaluate_with_custom, evaluate_with_assignments, evaluate_with_assignments_and_context, Value};
 
 use super::auth::check_authentication;
-use super::types::{EvalRequest, EvalResponse, HealthResponse};
+use super::types::{EvalRequest, EvalResponse, HealthResponse, IncludeVariables};
 use super::utils::{send_http_response, send_http_error, parse_json_body, sanitize_json_key};
 use super::stats::ServerStats;
 
@@ -62,7 +62,7 @@ pub fn handle_eval_get(
     let mut expression = String::new();
     let mut variables = HashMap::new();
     let mut output_json = false;
-    let mut include_variables = false;
+    let mut include_variables = IncludeVariables::None;
 
     for param in query.split('&') {
         if let Some((key, value)) = param.split_once('=') {
@@ -70,7 +70,32 @@ pub fn handle_eval_get(
             match key {
                 "expr" | "expression" => expression = decoded_value.to_string(),
                 "output_json" => output_json = decoded_value == "true",
-                "include_variables" => include_variables = decoded_value == "true",
+                "include_variables" => {
+                    if decoded_value == "true" {
+                        include_variables = IncludeVariables::All;
+                    } else if decoded_value == "false" {
+                        include_variables = IncludeVariables::None;
+                    } else {
+                        let vars: Vec<String> = decoded_value
+                            .split(',')
+                            .map(|s| s.trim())
+                            .filter(|s| !s.is_empty())
+                            .map(|s| {
+                                if s.starts_with(':') {
+                                    s[1..].to_string()
+                                } else {
+                                    s.to_string()
+                                }
+                            })
+                            .collect();
+                        
+                        if vars.is_empty() {
+                            include_variables = IncludeVariables::None;
+                        } else {
+                            include_variables = IncludeVariables::Selected(vars);
+                        }
+                    }
+                }
                 _ => {
                     // Treat as variable
                     if let Ok(num) = decoded_value.parse::<f64>() {
@@ -163,7 +188,7 @@ fn process_eval_request(
     // Evaluate expression
     let (result, variable_context) = if req.expression.contains(";") || req.expression.contains(":=") {
         // Use the new function that returns both result and variable context
-        if req.include_variables.unwrap_or(false) {
+        if matches!(req.include_variables, Some(IncludeVariables::All) | Some(IncludeVariables::Selected(_))) {
             match evaluate_with_assignments_and_context(&req.expression, &vars) {
                 Ok((val, ctx)) => (Ok(val), Some(ctx)),
                 Err(e) => (Err(e), None),
@@ -194,7 +219,18 @@ fn process_eval_request(
                     // Include all variables that were assigned during evaluation
                     // Skip initial arguments that haven't changed
                     if !vars.contains_key(&key) || vars.get(&key) != Some(&value) {
-                        json_vars.insert(key, format_simple_output(&value));
+                        // Apply selective filtering based on include_variables
+                        let should_include = match &req.include_variables {
+                            Some(IncludeVariables::All) => true,
+                            Some(IncludeVariables::Selected(selected_vars)) => {
+                                selected_vars.contains(&key)
+                            }
+                            _ => false,
+                        };
+                        
+                        if should_include {
+                            json_vars.insert(key, format_simple_output(&value));
+                        }
                     }
                 }
                 if json_vars.is_empty() { None } else { Some(json_vars) }
