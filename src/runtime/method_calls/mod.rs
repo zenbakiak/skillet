@@ -163,6 +163,36 @@ fn exec_number_method(
         "cos" => Ok(Value::Number(num.cos())),
         "tan" => Ok(Value::Number(num.tan())),
         "int" => Ok(Value::Number(num.trunc())),
+        "between" => {
+            if args_expr.len() != 2 {
+                return Err(Error::new("between expects 2 arguments: min, max", None));
+            }
+            
+            use crate::runtime::evaluation::{eval, eval_with_vars};
+            let min_val = if let Some(vars) = base_vars {
+                eval_with_vars(&args_expr[0], vars)?
+            } else {
+                eval(&args_expr[0])?
+            };
+            let max_val = if let Some(vars) = base_vars {
+                eval_with_vars(&args_expr[1], vars)?
+            } else {
+                eval(&args_expr[1])?
+            };
+            
+            let min = match min_val {
+                Value::Number(n) => n,
+                Value::Currency(c) => c,
+                _ => return Err(Error::new("between min must be a number", None)),
+            };
+            let max = match max_val {
+                Value::Number(n) => n,
+                Value::Currency(c) => c,
+                _ => return Err(Error::new("between max must be a number", None)),
+            };
+            
+            Ok(Value::Boolean(num >= min && num <= max))
+        }
         _ => Err(Error::new(
             format!("Unknown number method: {}", name),
             None,
