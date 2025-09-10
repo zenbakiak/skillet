@@ -4,6 +4,30 @@ use crate::types::Value;
 
 pub fn exec_string(name: &str, args: &[Value]) -> Result<Value, Error> {
     match name {
+        "SUBSTITUTE" => {
+            // SUBSTITUTE(text, substr, replacement)
+            match (args.get(0), args.get(1), args.get(2)) {
+                (Some(Value::String(text)), Some(Value::String(substr)), Some(Value::String(repl))) => {
+                    Ok(Value::String(text.replace(substr, repl)))
+                }
+                _ => Err(Error::new(
+                    "SUBSTITUTE expects (text: string, substr: string, replacement: string)",
+                    None,
+                )),
+            }
+        }
+        "SUBSTITUTEM" => {
+            // SUBSTITUTEM(text, substr, replacement) - replace all occurrences (alias of SUBSTITUTE)
+            match (args.get(0), args.get(1), args.get(2)) {
+                (Some(Value::String(text)), Some(Value::String(substr)), Some(Value::String(repl))) => {
+                    Ok(Value::String(text.replace(substr, repl)))
+                }
+                _ => Err(Error::new(
+                    "SUBSTITUTEM expects (text: string, substr: string, replacement: string)",
+                    None,
+                )),
+            }
+        }
         "LEFT" => {
             // LEFT(String, [NumberOfCharacters]) -> default 1 character if omitted
             if args.is_empty() {
@@ -198,12 +222,36 @@ pub fn exec_string(name: &str, args: &[Value]) -> Result<Value, Error> {
             )),
             _ => Err(Error::new("SPLIT expects string, [separator]", None)),
         },
-        "REPLACE" => match (args.get(0), args.get(1), args.get(2)) {
-            (Some(Value::String(s)), Some(Value::String(from)), Some(Value::String(to))) => {
-                Ok(Value::String(s.replace(from, to)))
+        "REPLACE" => {
+            // Excel-like: REPLACE(old_text, start_num, num_chars, new_text)
+            // start_num is 1-based; num_chars may be 0; count by Unicode scalar values
+            if args.len() != 4 {
+                return Err(Error::new(
+                    "REPLACE expects (old_text: string, start_num: number, num_chars: number, new_text: string)",
+                    None,
+                ));
             }
-            _ => Err(Error::new("REPLACE expects string, search, replace", None)),
-        },
+            let old_text = match args.get(0) { Some(Value::String(s)) => s, _ => return Err(Error::new("REPLACE expects string as first argument", None)) };
+            let start_num = match args.get(1) { Some(Value::Number(n)) => *n, _ => return Err(Error::new("REPLACE expects number as second argument", None)) };
+            let num_chars = match args.get(2) { Some(Value::Number(n)) => *n, _ => return Err(Error::new("REPLACE expects number as third argument", None)) };
+            let new_text = match args.get(3) { Some(Value::String(s)) => s, _ => return Err(Error::new("REPLACE expects string as fourth argument", None)) };
+
+            let chars: Vec<char> = old_text.chars().collect();
+            let len = chars.len();
+
+            // Clamp start (1-based) to [1, len+1]
+            let start_idx_1b = if start_num.is_finite() { start_num.floor().max(1.0) as usize } else { 1usize };
+            let start_idx = start_idx_1b.saturating_sub(1).min(len);
+
+            let take = if num_chars.is_finite() && num_chars > 0.0 { num_chars.floor() as usize } else { 0usize };
+            let end_idx = start_idx.saturating_add(take).min(len);
+
+            let mut out = String::new();
+            out.extend(chars[0..start_idx].iter());
+            out.push_str(new_text);
+            out.extend(chars[end_idx..len].iter());
+            Ok(Value::String(out))
+        }
         "REVERSE" => match args.get(0) {
             Some(Value::String(s)) => Ok(Value::String(s.chars().rev().collect())),
             _ => Err(Error::new("REVERSE expects string", None)),

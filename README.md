@@ -10,6 +10,8 @@ Skillet is a high-performance, embeddable expression engine written in Rust, ins
 **✨ New Features:**
 - **Ruby-style Type Conversion Methods**: `null.to_s()`, `"123".to_i()`, `[1,2,3].to_bool()` - available on all types
 - **Safe Navigation Operator**: `obj&.property&.method()` - prevents null reference errors
+- **String Helpers**: `SUBSTITUTE(text, substr, replacement)`, `SUBSTITUTEM(text, substr, replacement)` and Excel-style `REPLACE(old_text, start_num, num_chars, new_text)`
+- **JSON Digging**: `DIG(json, ['path','to','key'], default)` and method form `json.dig([...], default)`
 - **Enhanced Null Safety**: Conversion methods provide safe defaults for null values
 - **Performance Optimized**: ~3ms evaluation time (100x+ improvement from original 300ms)
 
@@ -57,6 +59,24 @@ cargo run --bin sk -- "[null, \"hello\"].map(:x.to_s())"      # ["", "hello"]
 **✨ New: Safe navigation operator:**
 ```bash
 cargo run --bin sk -- ":data := {\"name\": null}; :data&.name&.length()"  # null (no error!)
+```
+
+**✨ New: String helpers and JSON dig:**
+```bash
+# SUBSTITUTE replaces all occurrences of a substring
+cargo run --bin sk -- "SUBSTITUTE('foo bar foo', 'foo', 'baz')"      # "baz bar baz"
+
+# SUBSTITUTEM: same as SUBSTITUTE (replace multiple occurrences)
+cargo run --bin sk -- "SUBSTITUTEM('a-a-a', '-', '_')"               # "a_a_a"
+
+# REPLACE: positional, 1-based start
+cargo run --bin sk -- "REPLACE('abcdef', 3, 2, 'XY')"                 # "abXYef"
+
+# DIG: navigate JSON safely with a path (arrays supported)
+cargo run --bin sk -- ":obj := {\"user\": {\"posts\": [{\"title\": \"First\"}]}}; DIG(:obj, ['user','posts',0,'title'])"  # "First"
+
+# Method form
+cargo run --bin sk -- ":obj := {\"user\": {\"name\": \"Jane\"}}; :obj.dig(['user','name'])"   # "Jane"
 ```
 
 **Advanced array operations:**
@@ -214,7 +234,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 - Functions (subset):
   - Math: `SUM`, `AVG/AVERAGE`, `MIN`, `MAX`, `ROUND`, `CEIL`, `FLOOR`, `ABS`, `SQRT`, `POW`
   - Arrays: `ARRAY`, `FIRST`, `LAST`, `CONTAINS`, `UNIQUE`, `SORT`, `REVERSE`, `JOIN`, `FLATTEN`
-  - Strings: `CONCAT`, `UPPER`, `LOWER`, `TRIM`, `LENGTH`, `SPLIT`, `REPLACE`
+  - Strings: `CONCAT`, `UPPER`, `LOWER`, `TRIM`, `LENGTH`, `SPLIT`, `SUBSTITUTE`, `REPLACE`
+  - JSON: `DIG(json, path_array, [default])`
   - Logic: `ISBLANK`
   - Functional: `FILTER(array, expr, [param])`, `MAP(array, expr, [param])`, `REDUCE(array, expr, initial, [valParam], [accParam])`
   - Conditional aggregations: `SUMIF(array, expr)`, `AVGIF(array, expr)`, `COUNTIF(array, expr)`

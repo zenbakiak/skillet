@@ -1017,6 +1017,8 @@ sk "=:sales * IF(:sales > 100000, 0.08, IF(:sales > 50000, 0.06, 0.04))" sales=7
 - `LEFT(text, [num_chars])` - Leftmost characters (default 1)
 - `RIGHT(text, [num_chars])` - Rightmost characters (default 1)
 - `MID(text, start, [num_chars])` - Substring from 1-based start
+- `SUBSTITUTE(text, substr, replacement)` - Replace all occurrences of a substring
+- `REPLACE(old_text, start_num, num_chars, new_text)` - Excel-style positional replace (1-based start)
 - `ISNUMBER(value)` - Check if numeric
 - `ISTEXT(value)` - Check if text
 
@@ -1100,6 +1102,28 @@ sk "=:products[0].price" --json '{
     {"name": "mouse", "price": 29.99}
   ]
 }'
+```
+
+### JSON Digging (DIG and .dig())
+
+Use `DIG(json, path_array, [default])` or the method form `json.dig(path_array, [default])` to safely navigate nested JSON. The `path_array` mixes string keys and numeric array indexes. If any part of the path is missing, returns the provided default or `null`.
+
+```bash
+# Function form
+sk ":obj := {\"user\": {\"posts\": [{\"title\": \"First\"}, {\"title\": \"Second\"}]}}; DIG(:obj, ['user','posts',1,'title'])"
+# -> "Second"
+
+# With default when missing
+sk ":obj := {\"a\": {\"b\": 1}}; DIG(:obj, ['a','x'], 'fallback')"
+# -> "fallback"
+
+# Method form
+sk ":obj := {\"user\": {\"name\": \"Jane\"}}; :obj.dig(['user','name'])"
+# -> "Jane"
+
+# Works with safe navigation on the receiver
+sk ":obj := NULL; :obj&.dig(['a','b'])"
+# -> null
 ```
 
 ### Complex Business Logic with JSON
