@@ -12,9 +12,19 @@ fn string_literals_and_functions() {
     assert_eq!(s(evaluate("LOWER(\"AbC\")").unwrap()), "abc");
     assert_eq!(s(evaluate("TRIM(\"  hi  \")").unwrap()), "hi");
     assert_eq!(n(evaluate("LENGTH(\"hé\")").unwrap()), 2.0);
-    // SPLIT and REPLACE
+    // SPLIT and SUBSTITUTE/REPLACE
     match evaluate("SPLIT('a,b,c', ',')").unwrap() { Value::Array(v) => assert_eq!(v, vec![Value::String("a".into()), Value::String("b".into()), Value::String("c".into())]), _ => panic!() }
-    assert_eq!(s(evaluate("REPLACE('foo bar foo', 'foo', 'baz')").unwrap()), "baz bar baz");
+    // SUBSTITUTE replaces all occurrences of a substring
+    assert_eq!(s(evaluate("SUBSTITUTE('foo bar foo', 'foo', 'baz')").unwrap()), "baz bar baz");
+    // SUBSTITUTEM is an alias that replaces all occurrences
+    assert_eq!(s(evaluate("SUBSTITUTEM('a-a-a', '-', '_')").unwrap()), "a_a_a");
+
+    // REPLACE is Excel-style positional replacement (1-based start)
+    assert_eq!(s(evaluate("REPLACE('abcdef', 3, 2, 'XY')").unwrap()), "abXYef");
+    // Insert without removing when num_chars is 0
+    assert_eq!(s(evaluate("REPLACE('abc', 1, 0, 'X')").unwrap()), "Xabc");
+    // Replace to end if num exceeds length
+    assert_eq!(s(evaluate("REPLACE('hello', 4, 10, 'X')").unwrap()), "helX");
 
     // Excel-like LEFT/RIGHT/MID
     assert_eq!(s(evaluate("LEFT('Hello', 2)").unwrap()), "He");

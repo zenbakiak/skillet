@@ -12,6 +12,7 @@ pub struct FunctionDispatch {
     datetime_functions: HashSet<&'static str>,
     financial_functions: HashSet<&'static str>,
     statistical_functions: HashSet<&'static str>,
+    json_functions: HashSet<&'static str>,
 }
 
 impl FunctionDispatch {
@@ -51,6 +52,8 @@ impl FunctionDispatch {
         string_functions.insert("SUBSTRING");
         string_functions.insert("SPLIT");
         string_functions.insert("REPLACE");
+        string_functions.insert("SUBSTITUTE");
+        string_functions.insert("SUBSTITUTEM");
         // Note: REVERSE is handled in both string and array modules, prioritize array
         string_functions.insert("ISBLANK");
         string_functions.insert("ISNUMBER");
@@ -107,6 +110,9 @@ impl FunctionDispatch {
         statistical_functions.insert("QUARTILEINC");
         statistical_functions.insert("QUARTILE_INC");
         
+        let mut json_functions = HashSet::new();
+        json_functions.insert("DIG");
+        
         Self {
             arithmetic_functions,
             logical_functions,
@@ -115,6 +121,7 @@ impl FunctionDispatch {
             datetime_functions,
             financial_functions,
             statistical_functions,
+            json_functions,
         }
     }
     
@@ -150,6 +157,10 @@ impl FunctionDispatch {
             return statistical::exec_statistical(name, args);
         }
         
+        if self.json_functions.contains(name) {
+            return crate::runtime::json::exec_json(name, args);
+        }
+        
         Err(Error::new(format!("Unknown function: {}", name), None))
     }
     
@@ -161,7 +172,8 @@ impl FunctionDispatch {
         self.array_functions.contains(name) ||
         self.datetime_functions.contains(name) ||
         self.financial_functions.contains(name) ||
-        self.statistical_functions.contains(name)
+        self.statistical_functions.contains(name) ||
+        self.json_functions.contains(name)
     }
     
     /// Get the total number of registered functions
@@ -172,7 +184,8 @@ impl FunctionDispatch {
         self.array_functions.len() +
         self.datetime_functions.len() +
         self.financial_functions.len() +
-        self.statistical_functions.len()
+        self.statistical_functions.len() +
+        self.json_functions.len()
     }
 }
 

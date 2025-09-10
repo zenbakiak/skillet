@@ -269,6 +269,56 @@ fn exec_json_method(
             }
         }
         
+        "dig" => {
+            // :json_obj.dig([path...], [default])
+            if args_expr.is_empty() {
+                return Err(Error::new("dig(path_array, [default]) expects at least 1 argument", None));
+            }
+            use crate::runtime::evaluation::{eval, eval_with_vars};
+            let path_val = if let Some(vars) = base_vars {
+                eval_with_vars(&args_expr[0], vars)?
+            } else {
+                eval(&args_expr[0])?
+            };
+            let default_val = if args_expr.len() > 1 {
+                Some(if let Some(vars) = base_vars { eval_with_vars(&args_expr[1], vars)? } else { eval(&args_expr[1])? })
+            } else { None };
+
+            let path_vals = match path_val {
+                Value::Array(a) => a,
+                _ => return Err(Error::new("dig expects first argument to be an array path", None)),
+            };
+
+            let parsed: serde_json::Value = serde_json::from_str(json_str)
+                .map_err(|e| Error::new(format!("Invalid JSON: {}", e), None))?;
+            let mut cur = &parsed;
+            let mut ok = true;
+            for seg in &path_vals {
+                match seg {
+                    Value::String(key) => {
+                        if let serde_json::Value::Object(map) = cur {
+                            if let Some(next) = map.get(key) { cur = next; } else { ok = false; break; }
+                        } else { ok = false; break; }
+                    }
+                    Value::Number(n) => {
+                        if let serde_json::Value::Array(arr) = cur {
+                            let idx = if n.is_finite() { n.floor() as isize } else { -1 };
+                            if idx >= 0 && (idx as usize) < arr.len() { cur = &arr[idx as usize]; } else { ok = false; break; }
+                        } else { ok = false; break; }
+                    }
+                    _ => { ok = false; break; }
+                }
+            }
+
+            if ok {
+                crate::json_to_value(cur.clone())
+            } else if let Some(defv) = default_val {
+                Ok(defv)
+            } else {
+                Ok(Value::Null)
+            }
+        }
+        
         _ => Err(Error::new(
             format!("Unknown JSON method: {}", name),
             None,
