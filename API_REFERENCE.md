@@ -247,6 +247,22 @@ MID("Hello", 2, 3)           # "ell" (1-based start)
 MID("Hello", 3)              # "llo" (rest of string)
 ```
 
+#### `SUBSTITUTE(text, substr, replacement)`, `SUBSTITUTEM(text, substr, replacement)`
+Replace all occurrences of `substr` with `replacement`. `SUBSTITUTEM` is an alias that performs the same operation (substitute multiple occurrences).
+```bash
+SUBSTITUTE("foo bar foo", "foo", "baz")   # "baz bar baz"
+SUBSTITUTE("a-a-a", "-", "_")             # "a_a_a"
+SUBSTITUTEM("a-a-a", "-", "_")            # "a_a_a"
+```
+
+#### `REPLACE(old_text, start_num, num_chars, new_text)`
+Excel-style positional replace using 1-based `start_num` and character counts.
+```bash
+REPLACE("abcdef", 3, 2, "XY")             # "abXYef"
+REPLACE("abc", 1, 0, "X")                 # "Xabc" (insert)
+REPLACE("hello", 4, 10, "X")              # "helX" (clamped)
+```
+
 #### `ISNUMBER(value)`, `ISTEXT(value)`
 Type checking.
 ```bash
@@ -612,6 +628,25 @@ Check if key exists.
 ```bash
 {"name": "John"}.has_key("name")     # true
 {"name": "John"}.has("age")          # false
+```
+
+#### `.dig(path_array, [default])`
+Safely navigate nested JSON using an array of keys and/or indexes. Returns `default` or `null` if not found.
+```bash
+{"user": {"posts": [{"title": "First"}]}}.dig(['user','posts',0,'title'])  # "First"
+{"a": {"b": 1}}.dig(['a','x'], 'fallback')                                  # "fallback"
+```
+
+---
+
+## JSON Functions
+
+#### `DIG(json_obj, path_array, [default])`
+Navigate nested JSON by path. Accepts keys (strings) and array indexes (numbers). If the path is missing, returns `default` if provided, otherwise `null`.
+```bash
+:obj := {"user": {"name": "Jane", "posts": [{"title": "First"}, {"title": "Second"}]}};
+DIG(:obj, ['user','posts',1,'title'])      # "Second"
+DIG(:obj, ['user','missing'], 'N/A')       # "N/A"
 ```
 
 ---
