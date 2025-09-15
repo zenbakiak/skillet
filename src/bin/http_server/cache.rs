@@ -218,7 +218,7 @@ impl BufferPool {
     }
 }
 
-/// Thread-local buffer pool for HTTP parsing
+// Thread-local buffer pool for HTTP parsing
 thread_local! {
     static HTTP_BUFFER_POOL: std::cell::RefCell<BufferPool> = 
         std::cell::RefCell::new(BufferPool::new(4, 65536)); // Increased to 64KB for large requests

@@ -253,7 +253,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 - Ternary: `= :score >= 90 ? 'A' : 'B'`
 - Named lambda param: `= [1,2,3,4].map(:v * 10, 'v')` → `[10,20,30,40]`
 - Reduce with named params: `= [1,2,3].reduce(:a + :v, 0, 'v', 'a')` → `6`
-- SUMIF: `= SUMIF([1,-2,3,-4], :x > 0)` → `4`
+- PRODUCT: `= PRODUCT(2, 3, 4)` → `24`
+- SUMIF: `= SUMIF([1,-2,3,-4], :x > 0)` → `4` (lambda-style)
+- SUMIF Excel-style: `= SUMIF([10,20,30,40], ">25")` → `70`
 - FLATTEN: `= FLATTEN([1,[2,[3]],4])` → `[1,2,3,4]`
 
 ## Notes
@@ -293,14 +295,14 @@ Scripts:
 
 ## Built-in Functions
 
-- Arithmetic: `SUM`, `AVG`/`AVERAGE`, `MIN`, `MAX`, `ROUND`, `CEIL`, `CEILING`, `FLOOR`, `ABS`, `SQRT`, `POW`/`POWER`, `MOD`, `INT`
+- Arithmetic: `SUM`, `PRODUCT`/`MULTIPLY`, `AVG`/`AVERAGE`, `MIN`, `MAX`, `ROUND`, `CEIL`, `CEILING`, `FLOOR`, `ABS`, `SQRT`, `POW`/`POWER`, `MOD`, `INT`
 - Logical: `AND`, `OR`, `NOT`, `XOR`, `IF`, `IFS`
 - String: `LENGTH`, `CONCAT`, `UPPER`, `LOWER`, `TRIM`, `SUBSTRING`, `SPLIT`, `REPLACE`, `REVERSE`, `ISBLANK`, `ISNUMBER`, `ISTEXT`
 - Array: `ARRAY`, `FLATTEN`, `FIRST`, `LAST`, `CONTAINS`, `IN`, `COUNT`, `UNIQUE`, `SORT`, `REVERSE`, `JOIN`
 - Date/Time: `NOW`, `DATE`, `TIME`, `YEAR`, `MONTH`, `DAY`, `DATEADD`, `DATEDIFF`
 - Financial: `PMT`, `DB`, `FV`, `IPMT`
 - Statistical: `MEDIAN`, `MODE.SNGL` (`MODESNGL`, `MODE_SNGL`), `STDEV.P` (`STDEVP`, `STDEV_P`), `VAR.P` (`VARP`, `VAR_P`), `PERCENTILE.INC` (`PERCENTILEINC`, `PERCENTILE_INC`), `QUARTILE.INC` (`QUARTILEINC`, `QUARTILE_INC`)
-- Functional: `FILTER(array, expr, [param])`, `MAP(array, expr, [param])`, `REDUCE(array, expr, initial, [valParam], [accParam])`, `SUMIF(array, expr)`, `AVGIF(array, expr)`, `COUNTIF(array, expr)`
+- Functional: `FILTER(array, expr, [param])`, `MAP(array, expr, [param])`, `REDUCE(array, expr, initial, [valParam], [accParam])`, `SUMIF(array, expr_or_criteria [, sum_array])`, `AVGIF(array, expr)`, `COUNTIF(array, expr)`
 
 ## API Surface (Rust)
 

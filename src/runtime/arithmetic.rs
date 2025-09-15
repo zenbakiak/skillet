@@ -117,6 +117,25 @@ pub fn exec_arithmetic(name: &str, args: &[Value]) -> Result<Value, Error> {
             for a in args { visit(a, &mut cur); }
             Ok(Value::Number(cur.unwrap_or(0.0)))
         }
+        "PRODUCT" | "MULTIPLY" => {
+            let mut acc = 1.0;
+            fn multiply_value(v: &Value, acc: &mut f64) {
+                match v {
+                    Value::Number(n) => *acc *= *n,
+                    Value::Array(items) => {
+                        for it in items { multiply_value(it, acc); }
+                    }
+                    Value::Boolean(_) => {}
+                    Value::String(_) => {}
+                    Value::Null => {}
+                    Value::Currency(n) => *acc *= *n,
+                    Value::DateTime(_) => {}
+                    Value::Json(_) => {}
+                }
+            }
+            for a in args { multiply_value(a, &mut acc); }
+            Ok(Value::Number(acc))
+        }
         _ => Err(Error::new(format!("Unknown arithmetic function: {}", name), None)),
     }
 }

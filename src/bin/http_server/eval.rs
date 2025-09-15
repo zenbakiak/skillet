@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::net::TcpStream;
 use std::sync::{Arc, atomic::{AtomicU64, Ordering}};
 use std::time::Instant;
-use skillet::{evaluate_with_custom, evaluate_with_assignments, evaluate_with_assignments_and_context, Value};
+use skillet::Value;
 
 use super::auth::check_authentication;
 use super::cache::{evaluate_cached, get_cache_stats, clear_cache};
