@@ -94,7 +94,7 @@ Add to your Cargo project (from crates.io):
 
 ```toml
 [dependencies]
-skillet = "0.4.1"
+skillet = "0.5.0"
 ```
 
 Or with cargo-edit:
