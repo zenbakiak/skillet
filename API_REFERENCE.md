@@ -65,6 +65,14 @@ SUM([1, 2, 3], [4, 5])       # 15 (arrays are flattened)
 SUM(...[1, 2, 3])            # 6 (spread operator)
 ```
 
+#### `PRODUCT(...)`, `MULTIPLY(...)`
+Product of all arguments.
+```bash
+PRODUCT(1, 2, 3, 4)          # 24
+MULTIPLY(2, 3, 4)            # 24 (alias)
+PRODUCT([2, 3, 4])           # 24 (works with arrays)
+```
+
 #### `AVERAGE(...)`
 Average of all arguments.
 ```bash
@@ -343,10 +351,21 @@ REDUCE([1,2,3,4], :acc + :x, 0)    # 10
 REDUCE(orders, :acc + :x.total, 0)
 ```
 
-#### `SUMIF(array, condition)`
-Conditional sum.
+#### `SUMIF(array, condition [, sum_array])`
+Conditional sum. Supports both lambda expressions and Excel-style criteria.
 ```bash
+# Lambda-style (existing)
 SUMIF([1, -2, 3, -4], :x > 0)      # 4
+
+# Excel-style criteria
+SUMIF([10, 20, 30, 40], ">25")     # 70
+SUMIF([10, 20, 30, 40], "=20")     # 20
+SUMIF([10, 20, 30, 40], "<>20")    # 80
+SUMIF([10, 20, 30, 40], ">=20")    # 90
+SUMIF([10, 20, 30, 40], "<=20")    # 30
+
+# With separate sum array
+SUMIF([10, 30, 50], ">20", [1, 2, 3])  # 5 (sums 2+3)
 ```
 
 #### `AVGIF(array, condition)`

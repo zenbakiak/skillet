@@ -52,6 +52,12 @@ fn math_builtins() {
     assert!(approxv(evaluate("POW(2, 8)").unwrap(), 256.0));
     // LENGTH for arrays
     assert!(approxv(evaluate("LENGTH([1,2,3,4])").unwrap(), 4.0));
+    // PRODUCT and MULTIPLY
+    assert!(approxv(evaluate("PRODUCT(2, 3, 4)").unwrap(), 24.0));
+    assert!(approxv(evaluate("MULTIPLY(2, 3, 4)").unwrap(), 24.0));
+    assert!(approxv(evaluate("PRODUCT([2, 3, 4])").unwrap(), 24.0));
+    assert!(approxv(evaluate("MULTIPLY([2, 3, 4])").unwrap(), 24.0));
+    assert!(approxv(evaluate("PRODUCT()").unwrap(), 1.0));
 }
 
 #[test]
@@ -96,4 +102,34 @@ fn type_casting_minimal() {
     assert!(matches!(evaluate("TRUE::Float").unwrap(), Number(1.0)));
     assert!(matches!(evaluate("0::Boolean").unwrap(), Value::Boolean(false)));
     match evaluate("123::String").unwrap() { Value::String(s) => assert_eq!(s, "123"), _ => panic!("expected string") }
+}
+
+#[test]
+fn sumif_function() {
+    // Test SUMIF with greater than criteria
+    assert!(approxv(evaluate("SUMIF([10, 20, 30, 40], \">25\")").unwrap(), 70.0));
+    
+    // Test SUMIF with less than criteria
+    assert!(approxv(evaluate("SUMIF([10, 20, 30, 40], \"<25\")").unwrap(), 30.0));
+    
+    // Test SUMIF with equals criteria
+    assert!(approxv(evaluate("SUMIF([10, 20, 30, 40], \"=20\")").unwrap(), 20.0));
+    
+    // Test SUMIF with not equals criteria
+    assert!(approxv(evaluate("SUMIF([10, 20, 30, 40], \"<>20\")").unwrap(), 80.0));
+    
+    // Test SUMIF with greater than or equal criteria
+    assert!(approxv(evaluate("SUMIF([10, 20, 30, 40], \">=20\")").unwrap(), 90.0));
+    
+    // Test SUMIF with less than or equal criteria
+    assert!(approxv(evaluate("SUMIF([10, 20, 30, 40], \"<=20\")").unwrap(), 30.0));
+    
+    // Test SUMIF with separate sum range
+    let mut vars = HashMap::new();
+    vars.insert("range".to_string(), Value::Array(vec![Value::Number(10.0), Value::Number(30.0), Value::Number(50.0)]));
+    vars.insert("sum_range".to_string(), Value::Array(vec![Value::Number(1.0), Value::Number(2.0), Value::Number(3.0)]));
+    assert!(approxv(evaluate_with("SUMIF(:range, \">20\", :sum_range)", &vars).unwrap(), 5.0));
+    
+    // Test SUMIF with numeric criteria (no string)
+    assert!(approxv(evaluate("SUMIF([10, 20, 30, 40], 20)").unwrap(), 20.0));
 }

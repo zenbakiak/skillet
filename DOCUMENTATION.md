@@ -982,6 +982,7 @@ sk "=:sales * IF(:sales > 100000, 0.08, IF(:sales > 50000, 0.06, 0.04))" sales=7
 
 ### Arithmetic Functions
 - `SUM(...)` - Sum of all arguments
+- `PRODUCT(...)`, `MULTIPLY(...)` - Product of all arguments
 - `AVERAGE(...)`, `AVG(...)` - Average of arguments
 - `MAX(...)` - Maximum value
 - `MIN(...)` - Minimum value
@@ -1037,7 +1038,7 @@ sk "=:sales * IF(:sales > 100000, 0.08, IF(:sales > 50000, 0.06, 0.04))" sales=7
 - `FIND(array, expression)` - Find first element matching expression (returns element or Null)
 - `MAP(array, expression)` - Transform array elements
 - `REDUCE(array, expression, initial)` - Reduce array to single value
-- `SUMIF(array, condition)` - Conditional sum
+- `SUMIF(array, condition [, sum_array])` - Conditional sum (supports lambda and Excel-style criteria)
 - `AVGIF(array, condition)` - Conditional average
 - `COUNTIF(array, condition)` - Conditional count
 - `BETWEEN(min, max, value)` - Check if value is within range (inclusive)

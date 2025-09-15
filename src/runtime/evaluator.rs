@@ -488,11 +488,25 @@ impl Evaluator {
     }
     
     fn eval_sumif<C: EvaluationContext>(args: &[Expr], context: &C) -> Result<Value, Error> {
-        if args.len() != 2 { 
-            return Err(Error::new("SUMIF expects (array, expr)", None)); 
+        if args.len() < 2 || args.len() > 3 { 
+            return Err(Error::new("SUMIF expects (array, criteria) or (array, criteria, sum_array)", None)); 
         }
         let arr_v = Self::eval(&args[0], context)?;
-        let lambda = &args[1];
+        let criteria_expr = &args[1];
+        let sum_array = if args.len() == 3 { Some(Self::eval(&args[2], context)?) } else { None };
+        
+        // First try to evaluate the criteria as a static value (Excel-style string criteria)
+        if let Ok(criteria_value) = Self::eval(criteria_expr, context) {
+            if let Value::String(_) | Value::Number(_) = criteria_value {
+                // Excel-style criteria - use string/numeric comparison logic
+                return Self::eval_sumif_excel_style(&arr_v, &criteria_value, sum_array.as_ref().unwrap_or(&arr_v));
+            }
+        }
+        
+        // If that fails, fall back to lambda-based evaluation (existing behavior)
+        if args.len() != 2 {
+            return Err(Error::new("Lambda-style SUMIF expects exactly (array, expr)", None));
+        }
         
         match arr_v {
             Value::Array(items) => {
@@ -502,7 +516,7 @@ impl Evaluator {
                     let mut env = base_vars.clone();
                     env.insert("x".into(), it.clone());
                     let var_context = VariableContext::with_owned(env);
-                    if let Value::Boolean(true) = Self::eval(lambda, &var_context)? {
+                    if let Value::Boolean(true) = Self::eval(criteria_expr, &var_context)? {
                         match it { 
                             Value::Number(n) | Value::Currency(n) => acc += n, 
                             _ => {} 
@@ -513,6 +527,126 @@ impl Evaluator {
             }
             _ => Err(Error::new("SUMIF first arg must be array", None)),
         }
+    }
+    
+    fn eval_sumif_excel_style(range: &Value, criteria: &Value, sum_range: &Value) -> Result<Value, Error> {
+        fn meets_criteria(value: &Value, criteria: &Value) -> bool {
+            match criteria {
+                Value::String(crit) => {
+                    if let Some(stripped) = crit.strip_prefix(">=") {
+                        if let Ok(threshold) = stripped.parse::<f64>() {
+                            match value {
+                                Value::Number(n) => *n >= threshold,
+                                Value::Currency(n) => *n >= threshold,
+                                _ => false,
+                            }
+                        } else { false }
+                    } else if let Some(stripped) = crit.strip_prefix("<=") {
+                        if let Ok(threshold) = stripped.parse::<f64>() {
+                            match value {
+                                Value::Number(n) => *n <= threshold,
+                                Value::Currency(n) => *n <= threshold,
+                                _ => false,
+                            }
+                        } else { false }
+                    } else if let Some(stripped) = crit.strip_prefix("<>") {
+                        if let Ok(threshold) = stripped.parse::<f64>() {
+                            match value {
+                                Value::Number(n) => *n != threshold,
+                                Value::Currency(n) => *n != threshold,
+                                _ => true,
+                            }
+                        } else { 
+                            match value {
+                                Value::String(s) => s != stripped,
+                                _ => true,
+                            }
+                        }
+                    } else if let Some(stripped) = crit.strip_prefix('>') {
+                        if let Ok(threshold) = stripped.parse::<f64>() {
+                            match value {
+                                Value::Number(n) => *n > threshold,
+                                Value::Currency(n) => *n > threshold,
+                                _ => false,
+                            }
+                        } else { false }
+                    } else if let Some(stripped) = crit.strip_prefix('<') {
+                        if let Ok(threshold) = stripped.parse::<f64>() {
+                            match value {
+                                Value::Number(n) => *n < threshold,
+                                Value::Currency(n) => *n < threshold,
+                                _ => false,
+                            }
+                        } else { false }
+                    } else if let Some(stripped) = crit.strip_prefix('=') {
+                        if let Ok(threshold) = stripped.parse::<f64>() {
+                            match value {
+                                Value::Number(n) => *n == threshold,
+                                Value::Currency(n) => *n == threshold,
+                                _ => false,
+                            }
+                        } else {
+                            match value {
+                                Value::String(s) => s == stripped,
+                                _ => false,
+                            }
+                        }
+                    } else if let Ok(threshold) = crit.parse::<f64>() {
+                        match value {
+                            Value::Number(n) => *n == threshold,
+                            Value::Currency(n) => *n == threshold,
+                            _ => false,
+                        }
+                    } else {
+                        match value {
+                            Value::String(s) => s == crit,
+                            _ => false,
+                        }
+                    }
+                }
+                Value::Number(threshold) => {
+                    match value {
+                        Value::Number(n) => *n == *threshold,
+                        Value::Currency(n) => *n == *threshold,
+                        _ => false,
+                    }
+                }
+                _ => false,
+            }
+        }
+        
+        fn sum_if_helper(range_val: &Value, sum_val: &Value, criteria: &Value) -> f64 {
+            match (range_val, sum_val) {
+                (Value::Array(range_items), Value::Array(sum_items)) => {
+                    let mut acc = 0.0;
+                    let min_len = std::cmp::min(range_items.len(), sum_items.len());
+                    for i in 0..min_len {
+                        if meets_criteria(&range_items[i], criteria) {
+                            match &sum_items[i] {
+                                Value::Number(n) => acc += *n,
+                                Value::Currency(n) => acc += *n,
+                                _ => {}
+                            }
+                        }
+                    }
+                    acc
+                }
+                (range_val, sum_val) => {
+                    if meets_criteria(range_val, criteria) {
+                        match sum_val {
+                            Value::Number(n) => *n,
+                            Value::Currency(n) => *n,
+                            _ => 0.0,
+                        }
+                    } else {
+                        0.0
+                    }
+                }
+            }
+        }
+        
+        let result = sum_if_helper(range, sum_range, criteria);
+        Ok(Value::Number(result))
     }
     
     fn eval_avgif<C: EvaluationContext>(args: &[Expr], context: &C) -> Result<Value, Error> {
