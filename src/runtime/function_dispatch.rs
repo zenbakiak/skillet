@@ -34,6 +34,8 @@ impl FunctionDispatch {
         arithmetic_functions.insert("POWER");
         arithmetic_functions.insert("MOD");
         arithmetic_functions.insert("INT");
+        arithmetic_functions.insert("PRODUCT");
+        arithmetic_functions.insert("MULTIPLY");
         
         let mut logical_functions = HashSet::new();
         logical_functions.insert("AND");
