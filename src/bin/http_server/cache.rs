@@ -218,7 +218,7 @@ impl BufferPool {
     }
 }
 
-/// Thread-local buffer pool for HTTP parsing
+// Thread-local buffer pool for HTTP parsing
 thread_local! {
     static HTTP_BUFFER_POOL: std::cell::RefCell<BufferPool> = 
         std::cell::RefCell::new(BufferPool::new(4, 65536)); // Increased to 64KB for large requests
@@ -260,7 +260,7 @@ impl<T> ResponsePool<T> {
     }
 }
 
-/// Response pooling for EvalResponse objects
+// Response pooling for EvalResponse objects
 thread_local! {
     static RESPONSE_POOL: std::cell::RefCell<ResponsePool<super::types::EvalResponse>> = 
         std::cell::RefCell::new(ResponsePool::new(8));
