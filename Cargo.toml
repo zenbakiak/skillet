@@ -17,6 +17,7 @@ include = [
   "SERVER_USAGE_GUIDE.md",
   "DAEMON_DEPLOYMENT_GUIDE.md",
   "DAEMON_FLAG_GUIDE.md",
+  "openapi.yml",
   "src/**",
   "tests/**"
 ]
