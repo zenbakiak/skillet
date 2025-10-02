@@ -109,3 +109,70 @@ fn test_cli_help_message() {
     assert!(stderr.contains("Usage: sk"));
     assert!(stderr.contains("Examples:"));
 }
+
+// JSONPath Tests
+#[test]
+fn test_cli_jsonpath_sum() {
+    let json_data = r#"{"accounts": [{"id": 1, "amount": 300.1}, {"id": 4, "amount": 890.1}]}"#;
+    let (stdout, _stderr, code) = run_sk(&["=SUM(JQ(:json_data, \"$.accounts[*].amount\"))", "--json", json_data]).unwrap();
+    assert_eq!(code, 0);
+    assert_eq!(stdout, "Number(1190.2)");
+}
+
+#[test]
+fn test_cli_jsonpath_avg() {
+    let json_data = r#"{"scores": [{"value": 85}, {"value": 92}, {"value": 78}, {"value": 95}]}"#;
+    let (stdout, _stderr, code) = run_sk(&["=AVG(JQ(:json_data, \"$.scores[*].value\"))", "--json", json_data]).unwrap();
+    assert_eq!(code, 0);
+    assert_eq!(stdout, "Number(87.5)");
+}
+
+#[test]
+fn test_cli_jsonpath_max() {
+    let json_data = r#"{"temperatures": [{"reading": 22.5}, {"reading": 31.2}, {"reading": 18.7}, {"reading": 29.8}]}"#;
+    let (stdout, _stderr, code) = run_sk(&["=MAX(JQ(:json_data, \"$.temperatures[*].reading\"))", "--json", json_data]).unwrap();
+    assert_eq!(code, 0);
+    assert_eq!(stdout, "Number(31.2)");
+}
+
+#[test]
+fn test_cli_jsonpath_min() {
+    let json_data = r#"{"prices": [{"cost": 15.99}, {"cost": 8.50}, {"cost": 23.75}, {"cost": 12.30}]}"#;
+    let (stdout, _stderr, code) = run_sk(&["=MIN(JQ(:json_data, \"$.prices[*].cost\"))", "--json", json_data]).unwrap();
+    assert_eq!(code, 0);
+    assert_eq!(stdout, "Number(8.5)");
+}
+
+#[test]
+fn test_cli_jsonpath_nested() {
+    let json_data = r#"{"departments": [{"name": "Sales", "employees": [{"salary": 50000}, {"salary": 55000}]}, {"name": "Engineering", "employees": [{"salary": 75000}, {"salary": 80000}, {"salary": 70000}]}]}"#;
+    let (stdout, _stderr, code) = run_sk(&["=SUM(JQ(:json_data, \"$.departments[*].employees[*].salary\"))", "--json", json_data]).unwrap();
+    assert_eq!(code, 0);
+    assert_eq!(stdout, "Number(330000.0)");
+}
+
+#[test]
+fn test_cli_jsonpath_with_filter() {
+    let json_data = r#"{"products": [{"name": "A", "price": 10, "category": "electronics"}, {"name": "B", "price": 20, "category": "books"}, {"name": "C", "price": 30, "category": "electronics"}, {"name": "D", "price": 15, "category": "books"}]}"#;
+    let (stdout, _stderr, code) = run_sk(&["=SUM(JQ(:json_data, \"$.products[?(@.category == 'electronics')].price\"))", "--json", json_data]).unwrap();
+    assert_eq!(code, 0);
+    assert_eq!(stdout, "Number(40.0)");
+}
+
+#[test]
+fn test_cli_jsonpath_output_json() {
+    let json_data = r#"{"accounts": [{"amount": 100.0}, {"amount": 200.0}]}"#;
+    let (stdout, _stderr, code) = run_sk(&["=SUM(JQ(:json_data, \"$.accounts[*].amount\"))", "--json", json_data, "--output-json"]).unwrap();
+    assert_eq!(code, 0);
+    // Check that the output contains JSON structure with the result
+    assert!(stdout.contains("\"result\""));
+    assert!(stdout.contains("300"));
+}
+
+#[test]
+fn test_cli_jsonpath_complex_expression() {
+    let json_data = r#"{"sales": [{"amount": 100}, {"amount": 200}], "bonus": 50}"#;
+    let (stdout, _stderr, code) = run_sk(&["=SUM(JQ(:json_data, \"$.sales[*].amount\")) + :bonus", "--json", json_data]).unwrap();
+    assert_eq!(code, 0);
+    assert_eq!(stdout, "Number(350.0)");
+}

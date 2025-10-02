@@ -194,6 +194,11 @@ fn process_eval_request(
     let vars = match req.arguments {
         Some(json_vars) => {
             let mut result = HashMap::new();
+
+            // Add the original JSON data for JQ function
+            let json_str = serde_json::to_string(&json_vars).unwrap_or_default();
+            result.insert("json_data".to_string(), Value::Json(json_str));
+
             for (key, value) in json_vars {
                 match skillet::json_to_value(value) {
                     Ok(v) => {

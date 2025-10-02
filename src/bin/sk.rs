@@ -114,6 +114,10 @@ fn main() {
             let vars = match json_value {
                 serde_json::Value::Object(map) => {
                     let mut result = HashMap::new();
+
+                    // Add the original JSON data for JQ function
+                    result.insert("json_data".to_string(), skillet::Value::Json(json_str.clone()));
+
                     for (key, value) in map {
                         let skillet_value = match skillet::json_to_value(value) {
                             Ok(v) => v,
