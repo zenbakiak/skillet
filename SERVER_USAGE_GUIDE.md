@@ -196,6 +196,12 @@ echo '{"expression": "=SUM(:a, :b)", "variables": {"a": 10, "b": 20}}' | nc loca
 
 # Complex JSON data
 echo '{"expression": "=:user.age * 12", "variables": {"user": {"name": "Alice", "age": 25}}}' | nc localhost 8080
+
+# JSONPath queries with JQ function
+echo '{"expression": "SUM(JQ(:arguments, \"$.accounts[*].amount\"))", "variables": {"accounts": [{"amount": 100}, {"amount": 200}, {"amount": 300}]}}' | nc localhost 8080
+
+# JSONPath with filtering
+echo '{"expression": "AVG(JQ(:arguments, \"$.scores[?(@.subject == '\''math'\'')].value\"))", "variables": {"scores": [{"subject": "math", "value": 85}, {"subject": "english", "value": 92}, {"subject": "math", "value": 78}]}}' | nc localhost 8080
 ```
 
 ### 4. Bash Function

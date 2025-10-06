@@ -337,7 +337,10 @@ impl Evaluator {
                                     return Err(Error::new("Spread expects array", None)); 
                                 }
                             }
-                            _ => ev_args.push(Self::eval(a, context)?),
+                            _ => {
+                                let val = Self::eval(a, context)?;
+                                ev_args.push(val);
+                            }
                         }
                     }
                     return reg.execute(name, ev_args);
@@ -354,6 +357,25 @@ impl Evaluator {
             "SUMIF" => Self::eval_sumif(args, context),
             "AVGIF" => Self::eval_avgif(args, context),
             "COUNTIF" => Self::eval_countif(args, context),
+            "JQ" => {
+                if args.len() != 2 {
+                    return Err(Error::new("JQ expects exactly 2 arguments: json_data, jsonpath_expression", None));
+                }
+
+                let json_data = Self::eval(&args[0], context)?;
+                let path_expr = Self::eval(&args[1], context)?;
+
+                let path = match path_expr {
+                    Value::String(s) => s,
+                    _ => return Err(Error::new("JQ second argument must be a string", None)),
+                };
+
+                if !crate::runtime::jsonpath::is_jsonpath(&path) {
+                    return Err(Error::new("JQ second argument must be a valid JSONPath expression starting with $", None));
+                }
+
+                crate::runtime::jsonpath::apply_jsonpath(&json_data, &path)
+            }
             _ => {
                 // Evaluate arguments for built-in functions
                 let mut ev_args = Vec::new();
@@ -361,13 +383,16 @@ impl Evaluator {
                     match a {
                         Expr::Spread(inner) => {
                             let v = Self::eval(inner, context)?;
-                            if let Value::Array(items) = v { 
-                                ev_args.extend(items); 
-                            } else { 
-                                return Err(Error::new("Spread expects array", None)); 
+                            if let Value::Array(items) = v {
+                                ev_args.extend(items);
+                            } else {
+                                return Err(Error::new("Spread expects array", None));
                             }
                         }
-                        _ => ev_args.push(Self::eval(a, context)?),
+                        _ => {
+                            let val = Self::eval(a, context)?;
+                            ev_args.push(val);
+                        }
                     }
                 }
                 exec_builtin_fast(name, &ev_args)

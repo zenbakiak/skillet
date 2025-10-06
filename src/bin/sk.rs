@@ -18,13 +18,13 @@ fn sanitize_json_key(key: &str) -> String {
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    
+
     // Register built-in Rust functions (none by default)
-    
+
     // Auto-load JavaScript functions from hooks directory
     let hooks_dir = std::env::var("SKILLET_HOOKS_DIR").unwrap_or_else(|_| "hooks".to_string());
     let js_loader = JSPluginLoader::new(hooks_dir);
-    
+
     match js_loader.auto_register() {
         Ok(count) => {
             if count > 0 {
@@ -35,7 +35,7 @@ fn main() {
             eprintln!("Warning: Failed to load JavaScript functions: {}", e);
         }
     }
-    
+
     if args.is_empty() {
         eprintln!("Usage: sk \"expression\" [options] [var=value ...]");
         eprintln!("       sk \"expression\" --json '{{\"var\": \"value\"}}'");
@@ -67,10 +67,10 @@ fn main() {
     let mut output_json = false;
     let mut vars = HashMap::new();
     let mut i = 0;
-    
+
     while i < args.len() {
         let arg = &args[i];
-        
+
         if i == 0 {
             // First argument is always the expression
             expr = arg;
@@ -93,13 +93,13 @@ fn main() {
             eprintln!("Invalid variable assignment: '{}'. Use format: var=value", arg);
             std::process::exit(1);
         }
-        
+
         i += 1;
     }
-    
+
     // Measure execution time
     let start_time = Instant::now();
-    
+
     let result = if let Some(json_str) = json_input {
         // For JSON input, first check if expression contains assignments/sequences
         if expr.contains(";") || expr.contains(":=") {
@@ -114,6 +114,10 @@ fn main() {
             let vars = match json_value {
                 serde_json::Value::Object(map) => {
                     let mut result = HashMap::new();
+
+                    // Add the original JSON data for JQ function
+                    result.insert("arguments".to_string(), skillet::Value::Json(json_str.clone()));
+
                     for (key, value) in map {
                         let skillet_value = match skillet::json_to_value(value) {
                             Ok(v) => v,
@@ -141,7 +145,7 @@ fn main() {
     } else {
         evaluate_with_custom(expr, &vars)
     };
-    
+
     let execution_time = start_time.elapsed();
     let execution_time_ms = execution_time.as_secs_f64() * 1000.0;
 
@@ -188,24 +192,24 @@ fn format_json_output(value: &Value, execution_time_ms: f64) -> String {
             }
         }
     };
-    
+
     let output = json!({
         "result": result_value,
         "type": type_name,
         "execution_time": format!("{:.2} ms", execution_time_ms)
     });
-    
+
     serde_json::to_string_pretty(&output).unwrap_or_else(|_| "{}".to_string())
 }
 
 fn parse_value(s: &str) -> Value {
     // Try to parse as different types
-    
+
     // Check for string (quoted)
     if (s.starts_with('"') && s.ends_with('"')) || (s.starts_with('\'') && s.ends_with('\'')) {
         return Value::String(s[1..s.len()-1].to_string());
     }
-    
+
     // Check for boolean
     match s.to_lowercase().as_str() {
         "true" => return Value::Boolean(true),
@@ -213,7 +217,7 @@ fn parse_value(s: &str) -> Value {
         "null" => return Value::Null,
         _ => {}
     }
-    
+
     // Check for array (basic support for [1,2,3] format)
     if s.starts_with('[') && s.ends_with(']') {
         let inner = &s[1..s.len()-1];
@@ -225,12 +229,12 @@ fn parse_value(s: &str) -> Value {
             .collect();
         return Value::Array(items);
     }
-    
+
     // Try to parse as number
     if let Ok(num) = s.parse::<f64>() {
         return Value::Number(num);
     }
-    
+
     // Default to string if nothing else matches
     Value::String(s.to_string())
 }

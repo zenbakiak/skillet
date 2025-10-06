@@ -89,7 +89,7 @@ pub fn handle_eval_get(
                                 }
                             })
                             .collect();
-                        
+
                         if vars.is_empty() {
                             include_variables = IncludeVariables::None;
                         } else {
@@ -173,12 +173,12 @@ pub fn handle_cache_clear(
 
     // Clear the expression cache
     clear_cache();
-    
+
     let response = serde_json::json!({
         "success": true,
         "message": "Expression cache cleared successfully"
     });
-    
+
     send_http_response(stream, 200, "application/json", &response.to_string());
 }
 
@@ -194,6 +194,11 @@ fn process_eval_request(
     let vars = match req.arguments {
         Some(json_vars) => {
             let mut result = HashMap::new();
+
+            // Add the original JSON data for JQ function
+            let json_str = serde_json::to_string(&json_vars).unwrap_or_default();
+            result.insert("arguments".to_string(), Value::Json(json_str));
+
             for (key, value) in json_vars {
                 match skillet::json_to_value(value) {
                     Ok(v) => {
@@ -220,7 +225,7 @@ fn process_eval_request(
     // Evaluate expression with caching
     let include_variables = matches!(req.include_variables, Some(IncludeVariables::All) | Some(IncludeVariables::Selected(_)));
     let cached_result = evaluate_cached(&req.expression, &vars, include_variables);
-    
+
     let (result, variable_context) = match cached_result.result {
         Ok(value) => (Ok(value), cached_result.variable_context),
         Err(error_msg) => (Err(skillet::Error::new(error_msg, None)), None),
@@ -253,7 +258,7 @@ fn process_eval_request(
                             }
                             _ => false,
                         };
-                        
+
                         if should_include {
                             json_vars.insert(key, format_simple_output(&value));
                         }

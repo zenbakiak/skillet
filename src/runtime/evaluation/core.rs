@@ -205,8 +205,8 @@ pub fn eval_with_vars(expr: &Expr, vars: &HashMap<String, Value>) -> Result<Valu
 }
 
 pub fn eval_with_vars_and_custom(
-    expr: &Expr, 
-    vars: &HashMap<String, Value>, 
+    expr: &Expr,
+    vars: &HashMap<String, Value>,
     custom_registry: &Arc<RwLock<FunctionRegistry>>
 ) -> Result<Value, Error> {
     match expr {

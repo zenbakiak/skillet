@@ -17,6 +17,7 @@
 6. [Excel Formula Examples](#excel-formula-examples)
 7. [Built-in Functions Reference](#built-in-functions-reference) → See [API_REFERENCE.md](API_REFERENCE.md) for complete reference
 8. [JSON Integration](#json-integration)
+   - [JSONPath Queries](#jsonpath-queries-jq-function) ⭐ **NEW**
 
 **🔧 Extensibility:**
 9. [Extending the Language](#extending-the-language)
@@ -1126,6 +1127,42 @@ sk ":obj := {\"user\": {\"name\": \"Jane\"}}; :obj.dig(['user','name'])"
 sk ":obj := NULL; :obj&.dig(['a','b'])"
 # -> null
 ```
+
+### JSONPath Queries (JQ Function)
+
+Use `JQ(json_data, "$.path.expression")` to perform powerful JSONPath queries on JSON data. The JQ function provides JSONPath syntax for complex data extraction and filtering. When using `--json` flag, the JSON data is automatically available as the `:arguments` variable.
+
+```bash
+# Basic JSONPath queries with aggregation functions
+sk 'SUM(JQ(:arguments, "$.accounts[*].amount"))' --json '{"accounts":[{"amount":100},{"amount":200},{"amount":300}]}'
+# -> 600
+
+sk 'AVG(JQ(:arguments, "$.scores[*].value"))' --json '{"scores":[{"value":85},{"value":92},{"value":78},{"value":95}]}'
+# -> 87.5
+
+# JSONPath with filters
+sk 'SUM(JQ(:arguments, "$.products[?(@.category == '\''electronics'\'')].price"))' --json '{"products":[{"category":"electronics","price":999},{"category":"books","price":25},{"category":"electronics","price":599}]}'
+# -> 1598
+
+# Nested JSONPath queries
+sk 'SUM(JQ(:arguments, "$.departments[*].employees[*].salary"))' --json '{"departments":[{"employees":[{"salary":50000},{"salary":60000}]},{"employees":[{"salary":70000}]}]}'
+# -> 180000
+
+# Mix JSONPath results with other variables and operations
+sk 'SUM(JQ(:arguments, "$.sales[*].amount")) + :bonus' --json '{"sales":[{"amount":100},{"amount":200}],"bonus":50}'
+# -> 350
+
+# Use with MIN/MAX functions
+sk 'MIN(JQ(:arguments, "$.temperatures[*].reading"))' --json '{"temperatures":[{"reading":22.5},{"reading":31.2},{"reading":18.7}]}'
+# -> 18.7
+```
+
+**JSONPath Syntax Support:**
+- Basic property access: `$.property`
+- Array indexing: `$.array[0]`, `$.array[*]` (all elements)
+- Nested access: `$.level1.level2.property`
+- Filtering: `$.array[?(@.property == 'value')]`
+- Multiple conditions: `$.array[?(@.price > 100 && @.category == 'electronics')]`
 
 ### Complex Business Logic with JSON
 

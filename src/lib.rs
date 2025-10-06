@@ -66,10 +66,14 @@ pub fn evaluate_with(input: &str, vars: &HashMap<String, Value>) -> Result<Value
 pub fn evaluate_with_json(input: &str, json_vars: &str) -> Result<Value, Error> {
     let json_value: serde_json::Value = serde_json::from_str(json_vars)
         .map_err(|e| Error::new(format!("Invalid JSON: {}", e), None))?;
-    
+
     let vars = match json_value {
         serde_json::Value::Object(map) => {
             let mut result = HashMap::new();
+
+            // Add the original JSON data for JQ function
+            result.insert("arguments".to_string(), Value::Json(json_vars.to_string()));
+
             for (key, value) in map {
                 let skillet_value = json_to_value(value)?;
                 let sanitized_key = sanitize_json_key(&key);
@@ -79,7 +83,7 @@ pub fn evaluate_with_json(input: &str, json_vars: &str) -> Result<Value, Error> 
         }
         _ => return Err(Error::new("JSON must be an object with key-value pairs", None)),
     };
-    
+
     evaluate_with(input, &vars)
 }
 
@@ -159,10 +163,14 @@ pub fn evaluate_with_custom(input: &str, vars: &HashMap<String, Value>) -> Resul
 pub fn evaluate_with_json_custom(input: &str, json_vars: &str) -> Result<Value, Error> {
     let json_value: serde_json::Value = serde_json::from_str(json_vars)
         .map_err(|e| Error::new(format!("Invalid JSON: {}", e), None))?;
-    
+
     let vars = match json_value {
         serde_json::Value::Object(map) => {
             let mut result = HashMap::new();
+
+            // Add the original JSON data for JQ function
+            result.insert("arguments".to_string(), Value::Json(json_vars.to_string()));
+
             for (key, value) in map {
                 let skillet_value = json_to_value(value)?;
                 let sanitized_key = sanitize_json_key(&key);
@@ -172,9 +180,10 @@ pub fn evaluate_with_json_custom(input: &str, json_vars: &str) -> Result<Value, 
         }
         _ => return Err(Error::new("JSON must be an object with key-value pairs", None)),
     };
-    
+
     evaluate_with_custom(input, &vars)
 }
+
 
 /// Evaluate with assignments and sequences - handles complex expressions with variable assignments
 pub fn evaluate_with_assignments(input: &str, vars: &HashMap<String, Value>) -> Result<Value, Error> {
