@@ -21,7 +21,7 @@ fn test_sum_with_jsonpath() {
     }"#;
 
     // Test SUM with JSONPath
-    let result = evaluate_with_json(r#"SUM(JQ(:json_data, "$.accounts[*].amount"))"#, json_params).unwrap();
+    let result = evaluate_with_json(r#"SUM(JQ(:arguments, "$.accounts[*].amount"))"#, json_params).unwrap();
     if let Value::Number(sum) = result {
         assert!(approx(sum, 1190.2));
     } else {
@@ -33,7 +33,7 @@ fn test_sum_with_jsonpath() {
 fn test_sum_with_jsonpath_variables() {
     // Test using JSONPath with variables directly
     let mut vars = HashMap::new();
-    vars.insert("json_data".to_string(), Value::Json(r#"{
+    vars.insert("arguments".to_string(), Value::Json(r#"{
         "accounts": [
             {"amount": 100.0},
             {"amount": 200.0},
@@ -41,7 +41,7 @@ fn test_sum_with_jsonpath_variables() {
         ]
     }"#.to_string()));
 
-    let result = skillet::evaluate_with(r#"SUM(JQ(:json_data, "$.accounts[*].amount"))"#, &vars).unwrap();
+    let result = skillet::evaluate_with(r#"SUM(JQ(:arguments, "$.accounts[*].amount"))"#, &vars).unwrap();
     if let Value::Number(sum) = result {
         assert!(approx(sum, 600.0));
     } else {
@@ -60,7 +60,7 @@ fn test_avg_with_jsonpath() {
         ]
     }"#;
 
-    let result = evaluate_with_json(r#"AVG(JQ(:json_data, "$.scores[*].value"))"#, json_params).unwrap();
+    let result = evaluate_with_json(r#"AVG(JQ(:arguments, "$.scores[*].value"))"#, json_params).unwrap();
     if let Value::Number(avg) = result {
         assert!(approx(avg, 87.5));
     } else {
@@ -79,7 +79,7 @@ fn test_max_with_jsonpath() {
         ]
     }"#;
 
-    let result = evaluate_with_json(r#"MAX(JQ(:json_data, "$.temperatures[*].reading"))"#, json_params).unwrap();
+    let result = evaluate_with_json(r#"MAX(JQ(:arguments, "$.temperatures[*].reading"))"#, json_params).unwrap();
     if let Value::Number(max_val) = result {
         assert!(approx(max_val, 31.2));
     } else {
@@ -98,7 +98,7 @@ fn test_min_with_jsonpath() {
         ]
     }"#;
 
-    let result = evaluate_with_json(r#"MIN(JQ(:json_data, "$.prices[*].cost"))"#, json_params).unwrap();
+    let result = evaluate_with_json(r#"MIN(JQ(:arguments, "$.prices[*].cost"))"#, json_params).unwrap();
     if let Value::Number(min_val) = result {
         assert!(approx(min_val, 8.50));
     } else {
@@ -128,7 +128,7 @@ fn test_nested_jsonpath() {
         ]
     }"#;
 
-    let result = evaluate_with_json(r#"SUM(JQ(:json_data, "$.departments[*].employees[*].salary"))"#, json_params).unwrap();
+    let result = evaluate_with_json(r#"SUM(JQ(:arguments, "$.departments[*].employees[*].salary"))"#, json_params).unwrap();
     if let Value::Number(total_salary) = result {
         assert!(approx(total_salary, 330000.0));
     } else {
@@ -148,7 +148,7 @@ fn test_jsonpath_with_filter() {
     }"#;
 
     // Sum prices of electronics only
-    let result = evaluate_with_json(r#"SUM(JQ(:json_data, "$.products[?(@.category == 'electronics')].price"))"#, json_params).unwrap();
+    let result = evaluate_with_json(r#"SUM(JQ(:arguments, "$.products[?(@.category == 'electronics')].price"))"#, json_params).unwrap();
     if let Value::Number(electronics_total) = result {
         assert!(approx(electronics_total, 40.0));
     } else {

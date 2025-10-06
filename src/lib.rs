@@ -72,7 +72,7 @@ pub fn evaluate_with_json(input: &str, json_vars: &str) -> Result<Value, Error> 
             let mut result = HashMap::new();
 
             // Add the original JSON data for JQ function
-            result.insert("json_data".to_string(), Value::Json(json_vars.to_string()));
+            result.insert("arguments".to_string(), Value::Json(json_vars.to_string()));
 
             for (key, value) in map {
                 let skillet_value = json_to_value(value)?;
@@ -169,7 +169,7 @@ pub fn evaluate_with_json_custom(input: &str, json_vars: &str) -> Result<Value, 
             let mut result = HashMap::new();
 
             // Add the original JSON data for JQ function
-            result.insert("json_data".to_string(), Value::Json(json_vars.to_string()));
+            result.insert("arguments".to_string(), Value::Json(json_vars.to_string()));
 
             for (key, value) in map {
                 let skillet_value = json_to_value(value)?;
