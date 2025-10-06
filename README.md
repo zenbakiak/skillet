@@ -1,6 +1,6 @@
 ![logo](/skillet-logo.png)
 
-# Skillet — “Lightning-fast formulas, Rust-powered.”
+# Skillet — “Lightning-fast Excel-like formulas, Rust-powered.”
 
 [![Crates.io](https://img.shields.io/crates/v/skillet.svg)](https://crates.io/crates/skillet)
 [![Docs.rs](https://docs.rs/skillet/badge.svg)](https://docs.rs/skillet)
@@ -12,6 +12,7 @@ Skillet is a high-performance, embeddable expression engine written in Rust, ins
 - **Safe Navigation Operator**: `obj&.property&.method()` - prevents null reference errors
 - **String Helpers**: `SUBSTITUTE(text, substr, replacement)`, `SUBSTITUTEM(text, substr, replacement)` and Excel-style `REPLACE(old_text, start_num, num_chars, new_text)`
 - **JSON Digging**: `DIG(json, ['path','to','key'], default)` and method form `json.dig([...], default)`
+- **JSONPath Queries**: `JQ(json_data, "$.path.to.data")` for powerful JSON queries with aggregation support
 - **Enhanced Null Safety**: Conversion methods provide safe defaults for null values
 - **Performance Optimized**: ~3ms evaluation time (100x+ improvement from original 300ms)
 
@@ -79,6 +80,22 @@ cargo run --bin sk -- ":obj := {\"user\": {\"posts\": [{\"title\": \"First\"}]}}
 cargo run --bin sk -- ":obj := {\"user\": {\"name\": \"Jane\"}}; :obj.dig(['user','name'])"   # "Jane"
 ```
 
+**✨ New: JSONPath integration with JQ function:**
+```bash
+# Use JQ function to query JSON data with JSONPath expressions
+# JSON data is automatically available as 'arguments' variable
+cargo run --bin sk -- 'SUM(JQ(:arguments, "$.accounts[*].amount"))' --json '{"accounts":[{"amount":100},{"amount":200}]}'  # 300
+
+# Complex JSONPath queries with aggregation functions
+cargo run --bin sk -- 'AVG(JQ(:arguments, "$.scores[*].value"))' --json '{"scores":[{"value":85},{"value":92},{"value":78}]}'  # 85
+
+# JSONPath with filters
+cargo run --bin sk -- 'SUM(JQ(:arguments, "$.products[?(@.category == '\''electronics'\'')].price"))' --json '{"products":[{"category":"electronics","price":100},{"category":"books","price":50}]}'  # 100
+
+# Mix JSONPath results with other variables
+cargo run --bin sk -- 'SUM(JQ(:arguments, "$.sales[*].amount")) + :bonus' --json '{"sales":[{"amount":100},{"amount":200}],"bonus":50}'  # 350
+```
+
 **Advanced array operations:**
 ```bash
 cargo run --bin sk -- "[30,60,80,100].filter(:x > 50).map(:x * 0.9).sum()"  # 216
@@ -94,7 +111,7 @@ Add to your Cargo project (from crates.io):
 
 ```toml
 [dependencies]
-skillet = "0.5.2"
+skillet = "0.5.3"
 ```
 
 Or with cargo-edit:
@@ -235,7 +252,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
   - Math: `SUM`, `AVG/AVERAGE`, `MIN`, `MAX`, `ROUND`, `CEIL`, `FLOOR`, `ABS`, `SQRT`, `POW`
   - Arrays: `ARRAY`, `FIRST`, `LAST`, `CONTAINS`, `UNIQUE`, `SORT`, `REVERSE`, `JOIN`, `FLATTEN`
   - Strings: `CONCAT`, `UPPER`, `LOWER`, `TRIM`, `LENGTH`, `SPLIT`, `SUBSTITUTE`, `REPLACE`
-  - JSON: `DIG(json, path_array, [default])`
+  - JSON: `DIG(json, path_array, [default])`, `JQ(json_data, jsonpath_expression)`
   - Logic: `ISBLANK`
   - Functional: `FILTER(array, expr, [param])`, `MAP(array, expr, [param])`, `REDUCE(array, expr, initial, [valParam], [accParam])`
   - Conditional aggregations: `SUMIF(array, expr)`, `AVGIF(array, expr)`, `COUNTIF(array, expr)`

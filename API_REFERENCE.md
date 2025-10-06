@@ -668,6 +668,33 @@ DIG(:obj, ['user','posts',1,'title'])      # "Second"
 DIG(:obj, ['user','missing'], 'N/A')       # "N/A"
 ```
 
+#### `JQ(json_data, jsonpath_expression)`
+Execute JSONPath queries on JSON data. Supports complex path expressions, filtering, and array operations. Returns the matching data that can be used with aggregation functions.
+```bash
+# Basic property access
+JQ(:arguments, "$.user.name")              # Extract user name
+JQ(:arguments, "$.accounts[*].amount")     # All account amounts
+
+# Array filtering
+JQ(:arguments, "$.products[?(@.price > 100)]")                    # Products over $100
+JQ(:arguments, "$.items[?(@.category == 'electronics')].price")   # Electronic item prices
+
+# Nested queries
+JQ(:arguments, "$.departments[*].employees[*].salary")            # All employee salaries
+
+# Use with aggregation functions
+SUM(JQ(:arguments, "$.sales[*].amount"))   # Total sales
+AVG(JQ(:arguments, "$.scores[*].value"))   # Average score
+MIN(JQ(:arguments, "$.prices[*].cost"))    # Minimum price
+```
+
+**JSONPath Syntax:**
+- `$.property` - Access property
+- `$.array[n]` - Access array element by index
+- `$.array[*]` - Access all array elements
+- `$.array[?(@.field == 'value')]` - Filter array elements
+- `$.nested.property` - Access nested properties
+
 ---
 
 ## Type Conversion Methods

@@ -13,6 +13,7 @@ pub mod datetime;
 pub mod financial;
 pub mod statistical;
 pub mod json;
+pub mod jsonpath;
 
 // Re-export the main public functions
 pub use evaluation::{eval, eval_with_vars, eval_with_vars_and_custom, eval_with_assignments, eval_with_assignments_and_context};
