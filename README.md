@@ -1,6 +1,6 @@
 ![logo](/skillet-logo.png)
 
-# Skillet — “Lightning-fast formulas, Rust-powered.”
+# Skillet — “Lightning-fast Excel-like formulas, Rust-powered.”
 
 [![Crates.io](https://img.shields.io/crates/v/skillet.svg)](https://crates.io/crates/skillet)
 [![Docs.rs](https://docs.rs/skillet/badge.svg)](https://docs.rs/skillet)
@@ -111,7 +111,7 @@ Add to your Cargo project (from crates.io):
 
 ```toml
 [dependencies]
-skillet = "0.5.2"
+skillet = "0.5.3"
 ```
 
 Or with cargo-edit:
