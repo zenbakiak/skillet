@@ -12,3 +12,4 @@ Secrets*.toml
 .env
 .env.prd
 *.prd.*
+dist/

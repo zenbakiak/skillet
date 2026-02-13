@@ -1,0 +1,209 @@
+============================================================
+  SKILLET HTTP SERVER BENCHMARK RESULTS
+  Server: sk_http_server v0.5.3 (release build)
+  Date: Fri Feb  6 15:27 CST 2026
+  CPU: Apple M3 Pro (11 cores)
+  OS: macOS Darwin 25.2.0
+  Worker threads: 11
+============================================================
+
+TEST SCENARIOS (Real Mortgage/Financial Calculations)
+============================================================
+
+  S1: Basic Mortgage Present Value
+      Expression: 3 lines, 2 variable assignments
+      Args: plazo=20, mensualidad=22670, tasa=0.111
+      Result: 2,045,169.29
+
+  S2: Long-term Mortgage Present Value
+      Expression: 3 lines, 2 variable assignments
+      Args: plazo=30, mensualidad=15000, tasa=0.0895
+      Result: 1,448,940.41
+
+  S3: Max Loan Capacity
+      Expression: 6 lines, 5 variable assignments
+      Args: plazo=15, tasa=0.1025, ingreso_mensual=85000,
+            porcentaje_endeudamiento=0.33, porcentaje_enganche=0.20
+      Result: 1,859,958.18
+
+  S4: CAT Calculation (most complex)
+      Expression: 7 lines, 6 variable assignments
+      Args: plazo=20, tasa=0.111, monto_credito=2500000
+      Result: 8.3016%
+
+  S5: Full Monthly Payment with Insurance
+      Expression: 8 lines, 7 variable assignments
+      Args: plazo=20, tasa=0.115, monto=3500000,
+            valor_propiedad=4500000, comision_pct=0.01
+      Result: 41,155.17/mo
+
+============================================================
+  SINGLE-CONNECTION LATENCY (c=1, n=5000)
+  Pure expression evaluation time, no concurrency overhead
+============================================================
+
+  Scenario                              Throughput    Mean     p50    p95    p99
+  ---------------------------------------------------------------------------
+  S1: Basic mortgage PV                  787 req/s   1.27ms   1ms    1ms    1ms
+  S2: 30yr mortgage PV                   784 req/s   1.28ms   1ms    1ms    1ms
+  S3: Max loan capacity (6 lines)        783 req/s   1.28ms   1ms    1ms    1ms
+  S4: CAT calculation (7 lines)          780 req/s   1.28ms   1ms    1ms    1ms
+  S5: Full payment w/insurance (8 lines) 779 req/s   1.28ms   1ms    1ms    1ms
+
+============================================================
+  THROUGHPUT SCALING (n=5000, varying concurrency)
+============================================================
+
+  Concurrency   S1 Basic      S4 Complex    S5 Insurance
+  -----------------------------------------------------------
+  c=1             779 req/s     773 req/s     777 req/s
+  c=2           1,545 req/s   1,547 req/s   1,546 req/s
+  c=5           3,815 req/s   3,767 req/s   3,817 req/s
+  c=8           6,004 req/s   5,912 req/s   5,917 req/s
+
+============================================================
+  SUSTAINED LOAD (50,000 requests, c=5)
+============================================================
+
+  Scenario       Throughput     Duration   p50    p99    p100
+  -----------------------------------------------------------
+  S1 Basic       3,808 req/s    13.1s      1ms    1ms    41ms
+  S4 Complex     3,811 req/s    13.1s      1ms    1ms    43ms
+
+============================================================
+  SERVER-SIDE EVALUATION TIME
+============================================================
+
+  Avg expression eval time:   0.006 ms  (5.8 microseconds)
+  Cache hit rate:             99.8%
+  TCP overhead (conn close):  ~1.27ms
+
+============================================================
+  KEY FINDINGS
+============================================================
+
+  1. Expression evaluation is blazing fast: ~6 microseconds per
+     evaluation (cache hit), ~0.04-0.07ms cold.
+
+  2. Near-linear scaling from c=1 to c=8 (~7.7x on 8 connections).
+
+  3. All 5 scenarios (3-8 expression lines) have virtually identical
+     performance -- complexity doesn't matter at this scale.
+
+  4. 99th percentile = 1ms across all tests -- extremely consistent.
+
+  5. Bottleneck is TCP, not computation: the 1.28ms per-request time
+     is dominated by TCP connection setup/teardown, not expression
+     evaluation.
+
+  6. Sustained throughput: ~3,800 req/s at c=5 for 50K requests
+     without degradation.
+
+  7. Server limitation: non-blocking polling accept loop caps
+     concurrent connections at ~c=8-10; TIME_WAIT socket exhaustion
+     after ~50-60K cumulative connections on macOS.
+
+============================================================
+  PAYLOADS USED
+============================================================
+
+--- Scenario 1 ---
+{
+    "expression": [
+        ":tasa_mensual := ((1 + :tasa)^(1/12))/100;",
+        ":plazo_en_meses := :plazo * 12;",
+        ":mensualidad * (1 - (1 + :tasa_mensual)^((-1)*:plazo_en_meses)) / (:tasa_mensual)",
+        ""
+    ],
+    "arguments": {
+        "plazo": 20,
+        "mensualidad": 22670.0,
+        "tasa": 0.111
+    },
+    "include_variables": true
+}
+
+--- Scenario 2 ---
+{
+    "expression": [
+        ":tasa_mensual := ((1 + :tasa)^(1/12))/100;",
+        ":plazo_en_meses := :plazo * 12;",
+        ":mensualidad * (1 - (1 + :tasa_mensual)^((-1)*:plazo_en_meses)) / (:tasa_mensual)",
+        ""
+    ],
+    "arguments": {
+        "plazo": 30,
+        "mensualidad": 15000.0,
+        "tasa": 0.0895
+    },
+    "include_variables": true
+}
+
+--- Scenario 3 ---
+{
+    "expression": [
+        ":tasa_mensual := ((1 + :tasa)^(1/12))/100;",
+        ":plazo_en_meses := :plazo * 12;",
+        ":capacidad_pago := :ingreso_mensual * :porcentaje_endeudamiento;",
+        ":monto_maximo := :capacidad_pago * (1 - (1 + :tasa_mensual)^((-1)*:plazo_en_meses)) / (:tasa_mensual);",
+        ":enganche := :monto_maximo * :porcentaje_enganche;",
+        ":monto_maximo - :enganche",
+        ""
+    ],
+    "arguments": {
+        "plazo": 15,
+        "tasa": 0.1025,
+        "ingreso_mensual": 85000.0,
+        "porcentaje_endeudamiento": 0.33,
+        "porcentaje_enganche": 0.20
+    },
+    "include_variables": true
+}
+
+--- Scenario 4 ---
+{
+    "expression": [
+        ":tasa_mensual := ((1 + :tasa)^(1/12))/100;",
+        ":plazo_en_meses := :plazo * 12;",
+        ":pago_mensual := :monto_credito * :tasa_mensual / (1 - (1 + :tasa_mensual)^((-1)*:plazo_en_meses));",
+        ":total_pagado := :pago_mensual * :plazo_en_meses;",
+        ":total_intereses := :total_pagado - :monto_credito;",
+        ":cat := (:total_pagado / :monto_credito - 1) / :plazo * 100;",
+        ":cat",
+        ""
+    ],
+    "arguments": {
+        "plazo": 20,
+        "tasa": 0.111,
+        "monto_credito": 2500000.0
+    },
+    "include_variables": true
+}
+
+--- Scenario 5 ---
+{
+    "expression": [
+        ":tasa_mensual := ((1 + :tasa)^(1/12))/100;",
+        ":plazo_en_meses := :plazo * 12;",
+        ":pago_mensual := :monto * :tasa_mensual / (1 - (1 + :tasa_mensual)^((-1)*:plazo_en_meses));",
+        ":seguro_vida := :monto * 0.00035;",
+        ":seguro_danos := :valor_propiedad * 0.00025;",
+        ":comision_apertura := :monto * :comision_pct;",
+        ":pago_total_mensual := :pago_mensual + :seguro_vida + :seguro_danos;",
+        ":pago_total_mensual",
+        ""
+    ],
+    "arguments": {
+        "plazo": 20,
+        "tasa": 0.1150,
+        "monto": 3500000.0,
+        "valor_propiedad": 4500000.0,
+        "comision_pct": 0.01
+    },
+    "include_variables": true
+}
+
+============================================================
+  TOOL: Apache Bench (ab) v2.3
+  Benchmark methodology: Connection: close per request
+============================================================

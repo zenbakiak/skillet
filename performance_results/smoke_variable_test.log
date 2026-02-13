@@ -1,0 +1,3 @@
+    Finished `release` profile [optimized] target(s) in 0.06s
+     Running `/Users/zenbakiak/Sandbox/Skillet-lang/skillet/target/release/sk '=:x + :y' x=10 y=20`
+Number(30.0)

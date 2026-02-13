@@ -1,0 +1,110 @@
+Command: cargo test --test sk_performance test_benchmark_function_operations --release
+Started at: Fri Feb  6 14:54:39 CST 2026
+----------------------------------------
+warning: unused doc comment
+   --> src/bin/http_server/cache.rs:263:1
+    |
+263 | /// Response pooling for EvalResponse objects
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ rustdoc does not generate documentation for macro invocations
+    |
+    = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+    = note: `#[warn(unused_doc_comments)]` on by default
+
+warning: fields `execution_time_ms` and `cache_hit` are never read
+  --> src/bin/http_server/cache.rs:14:9
+   |
+11 | pub struct CachedResult {
+   |            ------------ fields in this struct
+...
+14 |     pub execution_time_ms: f64,
+   |         ^^^^^^^^^^^^^^^^^
+15 |     pub cache_hit: bool,
+   |         ^^^^^^^^^
+   |
+   = note: `CachedResult` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+   = note: `#[warn(dead_code)]` on by default
+
+warning: struct `ResponsePool` is never constructed
+   --> src/bin/http_server/cache.rs:238:12
+    |
+238 | pub struct ResponsePool<T> {
+    |            ^^^^^^^^^^^^
+
+warning: associated items `new`, `get`, and `return_item` are never used
+   --> src/bin/http_server/cache.rs:244:8
+    |
+243 | impl<T> ResponsePool<T> {
+    | ----------------------- associated items in this implementation
+244 |     fn new(capacity: usize) -> Self {
+    |        ^^^
+...
+251 |     fn get(&mut self) -> Option<T> {
+    |        ^^^
+...
+255 |     fn return_item(&mut self, item: T) {
+    |        ^^^^^^^^^^^
+
+warning: function `get_pooled_response` is never used
+   --> src/bin/http_server/cache.rs:270:8
+    |
+270 | pub fn get_pooled_response() -> Option<super::types::EvalResponse> {
+    |        ^^^^^^^^^^^^^^^^^^^
+
+warning: function `return_pooled_response` is never used
+   --> src/bin/http_server/cache.rs:275:8
+    |
+275 | pub fn return_pooled_response(response: super::types::EvalResponse) {
+    |        ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: field `content_type` is never read
+ --> src/bin/http_server/multipart.rs:7:9
+  |
+4 | pub struct MultipartField {
+  |            -------------- field in this struct
+...
+7 |     pub content_type: Option<String>,
+  |         ^^^^^^^^^^^^
+  |
+  = note: `MultipartField` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: method `get_field` is never used
+  --> src/bin/http_server/multipart.rs:17:12
+   |
+16 | impl MultipartData {
+   | ------------------ method in this implementation
+17 |     pub fn get_field(&self, name: &str) -> Option<&MultipartField> {
+   |            ^^^^^^^^^
+
+warning: field `duration` is never read
+  --> src/bin/sk_http_bench.rs:16:5
+   |
+11 | struct BenchConfig {
+   |        ----------- field in this struct
+...
+16 |     duration: Option<Duration>,
+   |     ^^^^^^^^
+   |
+   = note: `BenchConfig` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+   = note: `#[warn(dead_code)]` on by default
+
+warning: field `total_time` is never read
+  --> src/bin/sk_http_bench.rs:24:5
+   |
+21 | struct BenchResult {
+   |        ----------- field in this struct
+...
+24 |     total_time: Duration,
+   |     ^^^^^^^^^^
+   |
+   = note: `BenchResult` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: `skillet` (bin "sk_http_server") generated 8 warnings
+warning: `skillet` (bin "sk_http_bench") generated 2 warnings
+    Finished `release` profile [optimized] target(s) in 0.07s
+     Running tests/sk_performance.rs (/Users/zenbakiak/Sandbox/Skillet-lang/skillet/target/release/deps/sk_performance-59c0e9132bc5ecad)
+
+running 1 test
+test tests::test_benchmark_function_operations ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 17.81s
+
