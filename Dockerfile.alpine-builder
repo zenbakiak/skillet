@@ -1,0 +1,69 @@
+# Multi-stage build for Alpine Linux (musl) binaries
+# This creates statically-linked binaries compatible with Alpine and ruby:3.4.8-alpine
+
+# Use Debian-based Rust to cross-compile to musl (proc-macros need glibc to build)
+FROM rust:1.81 AS builder
+
+# Install musl cross-compilation tools
+RUN apt-get update && apt-get install -y \
+    musl-tools \
+    musl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Add musl target
+RUN rustup target add x86_64-unknown-linux-musl
+
+WORKDIR /build
+
+# Copy project files
+COPY Cargo.toml Cargo.lock ./
+COPY src ./src
+COPY openapi.yml ./openapi.yml
+
+# Build for musl with static linking
+# This allows binaries to run on Alpine Linux
+ENV RUSTFLAGS="-C target-feature=+crt-static"
+RUN cargo build --release --target x86_64-unknown-linux-musl --bins
+
+# Move binaries to a standard location for easier copying
+RUN mkdir -p /build/target/release && \
+    cp /build/target/x86_64-unknown-linux-musl/release/sk /build/target/release/ && \
+    cp /build/target/x86_64-unknown-linux-musl/release/sk_server /build/target/release/ && \
+    cp /build/target/x86_64-unknown-linux-musl/release/sk_client /build/target/release/ && \
+    cp /build/target/x86_64-unknown-linux-musl/release/sk_http_server /build/target/release/ && \
+    cp /build/target/x86_64-unknown-linux-musl/release/sk_http_bench /build/target/release/
+
+# Create distribution stage with just the binaries
+FROM scratch AS binaries
+
+# Copy all built binaries
+COPY --from=builder /build/target/release/sk /binaries/sk
+COPY --from=builder /build/target/release/sk_server /binaries/sk_server
+COPY --from=builder /build/target/release/sk_client /binaries/sk_client
+COPY --from=builder /build/target/release/sk_http_server /binaries/sk_http_server
+COPY --from=builder /build/target/release/sk_http_bench /binaries/sk_http_bench
+
+# Runtime image for testing
+FROM ruby:3.4.8-alpine AS runtime-test
+
+# Install minimal runtime dependencies
+RUN apk add --no-cache ca-certificates curl
+
+WORKDIR /app
+
+# Copy binaries from builder
+COPY --from=builder /build/target/release/sk_http_server ./
+COPY --from=builder /build/target/release/sk ./
+COPY --from=builder /build/target/release/sk_server ./
+COPY --from=builder /build/target/release/sk_client ./
+
+# Create hooks directory for JavaScript functions
+RUN mkdir -p /app/hooks
+
+ENV PORT=8080
+ENV HOST=0.0.0.0
+
+EXPOSE 8080
+
+# Default to HTTP server, but can be overridden
+CMD ["./sk_http_server", "8080", "--host", "0.0.0.0"]

@@ -1,0 +1,92 @@
+# Example: Using Skillet in a Ruby on Rails Alpine project
+# This Dockerfile shows how to integrate pre-built Skillet binaries
+# into your Ruby application
+
+# Build stage: Create Skillet binaries
+FROM rust:1.81-alpine AS skillet-builder
+
+RUN apk add --no-cache \
+    musl-dev \
+    pkgconfig \
+    openssl-dev \
+    openssl-libs-static \
+    git
+
+WORKDIR /skillet
+
+# Option 1: Clone from GitHub (replace with your actual repo)
+# RUN git clone https://github.com/zenbakiak/skillet.git .
+
+# Option 2: Copy from local directory (if building from Skillet source)
+COPY . .
+
+# Build binaries with static linking for musl
+ENV RUSTFLAGS="-C target-feature=+crt-static"
+RUN cargo build --release --bin sk_http_server --bin sk
+
+# Main application stage
+FROM ruby:3.4.8-alpine
+
+# Install runtime dependencies
+RUN apk add --no-cache \
+    ca-certificates \
+    curl \
+    tzdata \
+    postgresql-dev \
+    nodejs \
+    yarn
+
+# Create app user
+RUN addgroup -g 1000 app && \
+    adduser -D -u 1000 -G app app
+
+# Copy Skillet binaries from builder
+COPY --from=skillet-builder /skillet/target/release/sk_http_server /usr/local/bin/
+COPY --from=skillet-builder /skillet/target/release/sk /usr/local/bin/
+
+# Verify binaries work
+RUN sk "1 + 1" || echo "Skillet installation verified"
+
+# Switch to app user
+USER app
+WORKDIR /app
+
+# Install Ruby dependencies
+COPY --chown=app:app Gemfile Gemfile.lock ./
+RUN bundle install
+
+# Copy application code
+COPY --chown=app:app . .
+
+# Precompile assets (if Rails)
+# RUN RAILS_ENV=production bundle exec rails assets:precompile
+
+# Create startup script that runs both Skillet and Rails
+RUN cat > /app/start.sh << 'EOF'
+#!/bin/sh
+set -e
+
+echo "Starting Skillet HTTP server on port 5074..."
+sk_http_server 5074 --host 127.0.0.1 &
+SKILLET_PID=$!
+
+echo "Starting Rails application on port 3000..."
+bundle exec rails server -b 0.0.0.0 -p 3000 &
+RAILS_PID=$!
+
+# Wait for either process to exit
+wait -n $SKILLET_PID $RAILS_PID
+
+# If one exits, kill the other
+kill $SKILLET_PID $RAILS_PID 2>/dev/null
+exit 1
+EOF
+
+RUN chmod +x /app/start.sh
+
+EXPOSE 3000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD curl -f http://localhost:3000/health || exit 1
+
+CMD ["/app/start.sh"]

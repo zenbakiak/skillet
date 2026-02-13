@@ -1,0 +1,3 @@
+    Finished `release` profile [optimized] target(s) in 0.06s
+     Running `/Users/zenbakiak/Sandbox/Skillet-lang/skillet/target/release/sk '=:user.name' --json '{"user": {"name": "test"}}'`
+String("test")

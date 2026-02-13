@@ -1,0 +1,26 @@
+# Minimal dockerignore for Alpine binary builds
+# Only exclude what's absolutely necessary
+
+# Build artifacts (but include Cargo.lock!)
+target/
+
+# Git
+.git/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+logs/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Large test/bench files (not needed for build)
+benches/
+performance_results/
