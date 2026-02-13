@@ -2,6 +2,21 @@ use crate::error::Error;
 use crate::runtime::utils::is_blank;
 use crate::types::Value;
 
+/// Get the byte offset corresponding to a character index, without collecting into Vec<char>.
+#[inline]
+fn char_byte_offset(s: &str, char_idx: usize) -> usize {
+    s.char_indices()
+        .nth(char_idx)
+        .map(|(i, _)| i)
+        .unwrap_or(s.len())
+}
+
+/// Count the number of characters without collecting into Vec<char>.
+#[inline]
+fn char_count(s: &str) -> usize {
+    s.chars().count()
+}
+
 pub fn exec_string(name: &str, args: &[Value]) -> Result<Value, Error> {
     match name {
         "SUBSTITUTE" => {
@@ -43,9 +58,8 @@ pub fn exec_string(name: &str, args: &[Value]) -> Result<Value, Error> {
                 None => 1.0,
             };
             let take = if n.is_finite() && n > 0.0 { n as usize } else { 0usize };
-            let chars: Vec<char> = s.chars().collect();
-            let end = take.min(chars.len());
-            Ok(Value::String(chars[0..end].iter().collect()))
+            let byte_end = char_byte_offset(s, take);
+            Ok(Value::String(s[..byte_end].to_string()))
         }
         "RIGHT" => {
             // RIGHT(String, [NumberOfCharacters]) -> default 1 character if omitted
@@ -62,10 +76,10 @@ pub fn exec_string(name: &str, args: &[Value]) -> Result<Value, Error> {
                 None => 1.0,
             };
             let take = if n.is_finite() && n > 0.0 { n as usize } else { 0usize };
-            let chars: Vec<char> = s.chars().collect();
-            let len = chars.len();
-            let start = len.saturating_sub(take).min(len);
-            Ok(Value::String(chars[start..len].iter().collect()))
+            let len = char_count(s);
+            let start_char = len.saturating_sub(take);
+            let byte_start = char_byte_offset(s, start_char);
+            Ok(Value::String(s[byte_start..].to_string()))
         }
         "MID" => {
             // MID(String, StartingPosition [, NumberOfCharacters])
@@ -90,8 +104,7 @@ pub fn exec_string(name: &str, args: &[Value]) -> Result<Value, Error> {
                 None => None,
             };
 
-            let chars: Vec<char> = s.chars().collect();
-            let total = chars.len();
+            let total = char_count(s);
             // Excel-like: 1-based start; clamp below 1 to 1
             let start_index = if start_num.is_finite() {
                 let s1 = if start_num < 1.0 { 1.0 } else { start_num.floor() } as usize;
@@ -108,7 +121,9 @@ pub fn exec_string(name: &str, args: &[Value]) -> Result<Value, Error> {
             if start_index >= total || start_index >= end_index {
                 Ok(Value::String(String::new()))
             } else {
-                Ok(Value::String(chars[start_index..end_index].iter().collect()))
+                let byte_start = char_byte_offset(s, start_index);
+                let byte_end = char_byte_offset(s, end_index);
+                Ok(Value::String(s[byte_start..byte_end].to_string()))
             }
         }
         "LENGTH" => match args.get(0) {
@@ -191,8 +206,7 @@ pub fn exec_string(name: &str, args: &[Value]) -> Result<Value, Error> {
                 }
             };
 
-            let chars: Vec<char> = string.chars().collect();
-            let string_len = chars.len();
+            let string_len = char_count(string);
 
             let end = if let Some(Value::Number(len)) = args.get(2) {
                 let length = *len as usize;
@@ -207,8 +221,9 @@ pub fn exec_string(name: &str, args: &[Value]) -> Result<Value, Error> {
             if start >= string_len {
                 Ok(Value::String(String::new()))
             } else {
-                let substring: String = chars[start..end].iter().collect();
-                Ok(Value::String(substring))
+                let byte_start = char_byte_offset(string, start);
+                let byte_end = char_byte_offset(string, end);
+                Ok(Value::String(string[byte_start..byte_end].to_string()))
             }
         }
         "SPLIT" => match (args.get(0), args.get(1)) {
@@ -236,8 +251,7 @@ pub fn exec_string(name: &str, args: &[Value]) -> Result<Value, Error> {
             let num_chars = match args.get(2) { Some(Value::Number(n)) => *n, _ => return Err(Error::new("REPLACE expects number as third argument", None)) };
             let new_text = match args.get(3) { Some(Value::String(s)) => s, _ => return Err(Error::new("REPLACE expects string as fourth argument", None)) };
 
-            let chars: Vec<char> = old_text.chars().collect();
-            let len = chars.len();
+            let len = char_count(old_text);
 
             // Clamp start (1-based) to [1, len+1]
             let start_idx_1b = if start_num.is_finite() { start_num.floor().max(1.0) as usize } else { 1usize };
@@ -246,10 +260,13 @@ pub fn exec_string(name: &str, args: &[Value]) -> Result<Value, Error> {
             let take = if num_chars.is_finite() && num_chars > 0.0 { num_chars.floor() as usize } else { 0usize };
             let end_idx = start_idx.saturating_add(take).min(len);
 
-            let mut out = String::new();
-            out.extend(chars[0..start_idx].iter());
+            let byte_start = char_byte_offset(old_text, start_idx);
+            let byte_end = char_byte_offset(old_text, end_idx);
+
+            let mut out = String::with_capacity(old_text.len() + new_text.len());
+            out.push_str(&old_text[..byte_start]);
             out.push_str(new_text);
-            out.extend(chars[end_idx..len].iter());
+            out.push_str(&old_text[byte_end..]);
             Ok(Value::String(out))
         }
         "REVERSE" => match args.get(0) {
@@ -257,19 +274,19 @@ pub fn exec_string(name: &str, args: &[Value]) -> Result<Value, Error> {
             _ => Err(Error::new("REVERSE expects string", None)),
         },
         "ISBLANK" => {
-            let v = args.get(0).cloned().unwrap_or(Value::Null);
-            Ok(Value::Boolean(is_blank(&v)))
+            match args.get(0) {
+                Some(v) => Ok(Value::Boolean(is_blank(v))),
+                None => Ok(Value::Boolean(true)),
+            }
         }
         "ISNUMBER" => {
-            let v = args.get(0).cloned().unwrap_or(Value::Null);
             Ok(Value::Boolean(matches!(
-                v,
-                Value::Number(_) | Value::Currency(_)
+                args.get(0),
+                Some(Value::Number(_) | Value::Currency(_))
             )))
         }
         "ISTEXT" => {
-            let v = args.get(0).cloned().unwrap_or(Value::Null);
-            Ok(Value::Boolean(matches!(v, Value::String(_))))
+            Ok(Value::Boolean(matches!(args.get(0), Some(Value::String(_)))))
         }
         "INCLUDES" => {
             // INCLUDES(string, substring) -> boolean

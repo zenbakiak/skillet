@@ -68,13 +68,13 @@ pub fn exec_array(name: &str, args: &[Value]) -> Result<Value, Error> {
             _ => Err(Error::new("SORT expects array", None))
         },
         "REVERSE" => match args.get(0) {
-            Some(Value::Array(items)) => { let mut v = items.clone(); v.reverse(); Ok(Value::Array(v)) }
+            Some(Value::Array(items)) => Ok(Value::Array(items.iter().rev().cloned().collect())),
             _ => Err(Error::new("REVERSE expects array", None))
         },
         "JOIN" => match args.get(0) {
             Some(Value::Array(items)) => {
                 let sep = match args.get(1) { Some(Value::String(s)) => s.as_str(), _ => "," };
-                let mut parts: Vec<String> = Vec::new();
+                let mut parts: Vec<String> = Vec::with_capacity(items.len());
                 for it in items {
                     match it {
                         Value::String(s) => parts.push(s.clone()),

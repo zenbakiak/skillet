@@ -44,25 +44,25 @@ pub fn eval_higher_order_function_with_custom(
 
 // FILTER implementation
 fn eval_filter(args: &[Expr], vars: &HashMap<String, Value>) -> Result<Value, Error> {
-    if args.len() < 2 { 
-        return Err(Error::new("FILTER expects (array, expr, [param])", None)); 
+    if args.len() < 2 {
+        return Err(Error::new("FILTER expects (array, expr, [param])", None));
     }
-    
+
     let arr_v = eval_with_vars(&args[0], vars)?;
     let lambda = &args[1];
     let param_name = get_param_name(args.get(2), vars)?;
-    
+
     match arr_v {
         Value::Array(items) => {
-            let mut out = Vec::new();
+            let mut out = Vec::with_capacity(items.len());
+            let mut env = vars.clone();
             for it in items {
-                let mut env = vars.clone(); 
                 env.insert(param_name.clone(), it.clone());
-                if let Expr::Spread(_) = lambda { 
-                    return Err(Error::new("Invalid lambda", None)); 
+                if let Expr::Spread(_) = lambda {
+                    return Err(Error::new("Invalid lambda", None));
                 }
-                if let Value::Boolean(true) = eval_with_vars(lambda, &env)? { 
-                    out.push(it); 
+                if let Value::Boolean(true) = eval_with_vars(lambda, &env)? {
+                    out.push(it);
                 }
             }
             Ok(Value::Array(out))
@@ -72,22 +72,22 @@ fn eval_filter(args: &[Expr], vars: &HashMap<String, Value>) -> Result<Value, Er
 }
 
 fn eval_filter_with_custom(
-    args: &[Expr], 
+    args: &[Expr],
     vars: &HashMap<String, Value>,
     custom_registry: &Arc<RwLock<FunctionRegistry>>
 ) -> Result<Value, Error> {
-    if args.len() < 2 { 
-        return Err(Error::new("FILTER expects (array, expr)", None)); 
+    if args.len() < 2 {
+        return Err(Error::new("FILTER expects (array, expr)", None));
     }
-    
+
     let arr_v = eval_with_vars_and_custom(&args[0], vars, custom_registry)?;
     let lambda = &args[1];
-    
+
     match arr_v {
         Value::Array(items) => {
-            let mut out = Vec::new();
+            let mut out = Vec::with_capacity(items.len());
+            let mut env = vars.clone();
             for it in items {
-                let mut env = vars.clone(); 
                 env.insert("x".into(), it.clone());
                 if let Value::Boolean(true) = eval_with_vars_and_custom(lambda, &env, custom_registry)? {
                     out.push(it);
@@ -101,24 +101,24 @@ fn eval_filter_with_custom(
 
 // FIND implementation
 fn eval_find(args: &[Expr], vars: &HashMap<String, Value>) -> Result<Value, Error> {
-    if args.len() < 2 { 
-        return Err(Error::new("FIND expects (array, expr, [param])", None)); 
+    if args.len() < 2 {
+        return Err(Error::new("FIND expects (array, expr, [param])", None));
     }
-    
+
     let arr_v = eval_with_vars(&args[0], vars)?;
     let lambda = &args[1];
     let param_name = get_param_name(args.get(2), vars)?;
-    
+
     match arr_v {
         Value::Array(items) => {
+            let mut env = vars.clone();
             for it in items {
-                let mut env = vars.clone(); 
                 env.insert(param_name.clone(), it.clone());
-                if let Expr::Spread(_) = lambda { 
-                    return Err(Error::new("Invalid lambda", None)); 
+                if let Expr::Spread(_) = lambda {
+                    return Err(Error::new("Invalid lambda", None));
                 }
-                if let Value::Boolean(true) = eval_with_vars(lambda, &env)? { 
-                    return Ok(it); 
+                if let Value::Boolean(true) = eval_with_vars(lambda, &env)? {
+                    return Ok(it);
                 }
             }
             Ok(Value::Null)
@@ -128,21 +128,21 @@ fn eval_find(args: &[Expr], vars: &HashMap<String, Value>) -> Result<Value, Erro
 }
 
 fn eval_find_with_custom(
-    args: &[Expr], 
+    args: &[Expr],
     vars: &HashMap<String, Value>,
     custom_registry: &Arc<RwLock<FunctionRegistry>>
 ) -> Result<Value, Error> {
-    if args.len() < 2 { 
-        return Err(Error::new("FIND expects (array, expr)", None)); 
+    if args.len() < 2 {
+        return Err(Error::new("FIND expects (array, expr)", None));
     }
-    
+
     let arr_v = eval_with_vars_and_custom(&args[0], vars, custom_registry)?;
     let lambda = &args[1];
-    
+
     match arr_v {
         Value::Array(items) => {
+            let mut env = vars.clone();
             for it in items {
-                let mut env = vars.clone(); 
                 env.insert("x".into(), it.clone());
                 if let Value::Boolean(true) = eval_with_vars_and_custom(lambda, &env, custom_registry)? {
                     return Ok(it);
@@ -156,22 +156,22 @@ fn eval_find_with_custom(
 
 // MAP implementation
 fn eval_map(args: &[Expr], vars: &HashMap<String, Value>) -> Result<Value, Error> {
-    if args.len() < 2 { 
-        return Err(Error::new("MAP expects (array, expr, [param])", None)); 
+    if args.len() < 2 {
+        return Err(Error::new("MAP expects (array, expr, [param])", None));
     }
-    
+
     let arr_v = eval_with_vars(&args[0], vars)?;
     let lambda = &args[1];
     let param_name = get_param_name(args.get(2), vars)?;
-    
+
     match arr_v {
         Value::Array(items) => {
-            let mut out = Vec::new();
+            let mut out = Vec::with_capacity(items.len());
+            let mut env = vars.clone();
             for it in items {
-                let mut env = vars.clone(); 
                 env.insert(param_name.clone(), it.clone());
-                if let Expr::Spread(_) = lambda { 
-                    return Err(Error::new("Invalid lambda", None)); 
+                if let Expr::Spread(_) = lambda {
+                    return Err(Error::new("Invalid lambda", None));
                 }
                 out.push(eval_with_vars(lambda, &env)?);
             }
@@ -182,22 +182,22 @@ fn eval_map(args: &[Expr], vars: &HashMap<String, Value>) -> Result<Value, Error
 }
 
 fn eval_map_with_custom(
-    args: &[Expr], 
+    args: &[Expr],
     vars: &HashMap<String, Value>,
     custom_registry: &Arc<RwLock<FunctionRegistry>>
 ) -> Result<Value, Error> {
-    if args.len() < 2 { 
-        return Err(Error::new("MAP expects (array, expr)", None)); 
+    if args.len() < 2 {
+        return Err(Error::new("MAP expects (array, expr)", None));
     }
-    
+
     let arr_v = eval_with_vars_and_custom(&args[0], vars, custom_registry)?;
     let lambda = &args[1];
-    
+
     match arr_v {
         Value::Array(items) => {
-            let mut out = Vec::new();
+            let mut out = Vec::with_capacity(items.len());
+            let mut env = vars.clone();
             for it in items {
-                let mut env = vars.clone(); 
                 env.insert("x".into(), it);
                 out.push(eval_with_vars_and_custom(lambda, &env, custom_registry)?);
             }
@@ -209,25 +209,25 @@ fn eval_map_with_custom(
 
 // REDUCE implementation
 fn eval_reduce(args: &[Expr], vars: &HashMap<String, Value>) -> Result<Value, Error> {
-    if args.len() < 3 { 
-        return Err(Error::new("REDUCE expects (array, expr, initial, [valParam], [accParam])", None)); 
+    if args.len() < 3 {
+        return Err(Error::new("REDUCE expects (array, expr, initial, [valParam], [accParam])", None));
     }
-    
+
     let arr_v = eval_with_vars(&args[0], vars)?;
     let lambda = &args[1];
     let mut acc = eval_with_vars(&args[2], vars)?;
-    
+
     let val_param = get_param_name(args.get(3), vars).unwrap_or_else(|_| "x".into());
     let acc_param = get_param_name(args.get(4), vars).unwrap_or_else(|_| "acc".into());
-    
+
     match arr_v {
         Value::Array(items) => {
+            let mut env = vars.clone();
             for it in items {
-                let mut env = vars.clone(); 
-                env.insert(val_param.clone(), it.clone()); 
+                env.insert(val_param.clone(), it.clone());
                 env.insert(acc_param.clone(), acc);
-                if let Expr::Spread(_) = lambda { 
-                    return Err(Error::new("Invalid lambda", None)); 
+                if let Expr::Spread(_) = lambda {
+                    return Err(Error::new("Invalid lambda", None));
                 }
                 acc = eval_with_vars(lambda, &env)?;
             }
@@ -238,23 +238,23 @@ fn eval_reduce(args: &[Expr], vars: &HashMap<String, Value>) -> Result<Value, Er
 }
 
 fn eval_reduce_with_custom(
-    args: &[Expr], 
+    args: &[Expr],
     vars: &HashMap<String, Value>,
     custom_registry: &Arc<RwLock<FunctionRegistry>>
 ) -> Result<Value, Error> {
-    if args.len() < 3 { 
-        return Err(Error::new("REDUCE expects (array, expr, initial)", None)); 
+    if args.len() < 3 {
+        return Err(Error::new("REDUCE expects (array, expr, initial)", None));
     }
-    
+
     let arr_v = eval_with_vars_and_custom(&args[0], vars, custom_registry)?;
     let lambda = &args[1];
     let mut acc = eval_with_vars_and_custom(&args[2], vars, custom_registry)?;
-    
+
     match arr_v {
         Value::Array(items) => {
+            let mut env = vars.clone();
             for it in items {
-                let mut env = vars.clone(); 
-                env.insert("acc".into(), acc); 
+                env.insert("acc".into(), acc);
                 env.insert("x".into(), it);
                 acc = eval_with_vars_and_custom(lambda, &env, custom_registry)?;
             }
@@ -266,24 +266,24 @@ fn eval_reduce_with_custom(
 
 // SUMIF implementation
 fn eval_sumif(args: &[Expr], vars: &HashMap<String, Value>) -> Result<Value, Error> {
-    if args.len() != 2 { 
-        return Err(Error::new("SUMIF expects (array, expr)", None)); 
+    if args.len() != 2 {
+        return Err(Error::new("SUMIF expects (array, expr)", None));
     }
-    
+
     let arr_v = eval_with_vars(&args[0], vars)?;
     let lambda = &args[1];
-    
+
     match arr_v {
         Value::Array(items) => {
             let mut acc = 0.0;
+            let mut env = vars.clone();
             for it in items {
-                let mut env = vars.clone(); 
                 env.insert("x".into(), it.clone());
                 if let Value::Boolean(true) = eval_with_vars(lambda, &env)? {
-                    match it { 
-                        Value::Number(n) => acc += n, 
-                        Value::Currency(n) => acc += n, 
-                        _ => {} 
+                    match it {
+                        Value::Number(n) => acc += n,
+                        Value::Currency(n) => acc += n,
+                        _ => {}
                     }
                 }
             }
@@ -294,27 +294,27 @@ fn eval_sumif(args: &[Expr], vars: &HashMap<String, Value>) -> Result<Value, Err
 }
 
 fn eval_sumif_with_custom(
-    args: &[Expr], 
+    args: &[Expr],
     vars: &HashMap<String, Value>,
     custom_registry: &Arc<RwLock<FunctionRegistry>>
 ) -> Result<Value, Error> {
-    if args.len() != 2 { 
-        return Err(Error::new("SUMIF expects (array, expr)", None)); 
+    if args.len() != 2 {
+        return Err(Error::new("SUMIF expects (array, expr)", None));
     }
-    
+
     let arr_v = eval_with_vars_and_custom(&args[0], vars, custom_registry)?;
     let lambda = &args[1];
-    
+
     match arr_v {
         Value::Array(items) => {
             let mut acc = 0.0;
+            let mut env = vars.clone();
             for it in items {
-                let mut env = vars.clone(); 
                 env.insert("x".into(), it.clone());
                 if let Value::Boolean(true) = eval_with_vars_and_custom(lambda, &env, custom_registry)? {
-                    match it { 
-                        Value::Number(n) | Value::Currency(n) => acc += n, 
-                        _ => {} 
+                    match it {
+                        Value::Number(n) | Value::Currency(n) => acc += n,
+                        _ => {}
                     }
                 }
             }
@@ -326,27 +326,27 @@ fn eval_sumif_with_custom(
 
 // AVGIF implementation
 fn eval_avgif(args: &[Expr], vars: &HashMap<String, Value>) -> Result<Value, Error> {
-    if args.len() != 2 { 
-        return Err(Error::new("AVGIF expects (array, expr)", None)); 
+    if args.len() != 2 {
+        return Err(Error::new("AVGIF expects (array, expr)", None));
     }
-    
+
     let arr_v = eval_with_vars(&args[0], vars)?;
     let lambda = &args[1];
-    
+
     match arr_v {
         Value::Array(items) => {
-            let mut acc = 0.0; 
+            let mut acc = 0.0;
             let mut count = 0usize;
+            let mut env = vars.clone();
             for it in items {
-                let mut env = vars.clone(); 
                 env.insert("x".into(), it.clone());
                 if let Value::Boolean(true) = eval_with_vars(lambda, &env)? {
-                    match it { 
-                        Value::Number(n) | Value::Currency(n) => { 
-                            acc += n; 
-                            count += 1; 
-                        }, 
-                        _ => {} 
+                    match it {
+                        Value::Number(n) | Value::Currency(n) => {
+                            acc += n;
+                            count += 1;
+                        },
+                        _ => {}
                     }
                 }
             }
@@ -357,31 +357,31 @@ fn eval_avgif(args: &[Expr], vars: &HashMap<String, Value>) -> Result<Value, Err
 }
 
 fn eval_avgif_with_custom(
-    args: &[Expr], 
+    args: &[Expr],
     vars: &HashMap<String, Value>,
     custom_registry: &Arc<RwLock<FunctionRegistry>>
 ) -> Result<Value, Error> {
-    if args.len() != 2 { 
-        return Err(Error::new("AVGIF expects (array, expr)", None)); 
+    if args.len() != 2 {
+        return Err(Error::new("AVGIF expects (array, expr)", None));
     }
-    
+
     let arr_v = eval_with_vars_and_custom(&args[0], vars, custom_registry)?;
     let lambda = &args[1];
-    
+
     match arr_v {
         Value::Array(items) => {
-            let mut acc = 0.0; 
+            let mut acc = 0.0;
             let mut count = 0usize;
+            let mut env = vars.clone();
             for it in items {
-                let mut env = vars.clone(); 
                 env.insert("x".into(), it.clone());
                 if let Value::Boolean(true) = eval_with_vars_and_custom(lambda, &env, custom_registry)? {
-                    match it { 
-                        Value::Number(n) | Value::Currency(n) => { 
-                            acc += n; 
-                            count += 1; 
-                        }, 
-                        _ => {} 
+                    match it {
+                        Value::Number(n) | Value::Currency(n) => {
+                            acc += n;
+                            count += 1;
+                        },
+                        _ => {}
                     }
                 }
             }
@@ -393,21 +393,21 @@ fn eval_avgif_with_custom(
 
 // COUNTIF implementation
 fn eval_countif(args: &[Expr], vars: &HashMap<String, Value>) -> Result<Value, Error> {
-    if args.len() != 2 { 
-        return Err(Error::new("COUNTIF expects (array, expr)", None)); 
+    if args.len() != 2 {
+        return Err(Error::new("COUNTIF expects (array, expr)", None));
     }
-    
+
     let arr_v = eval_with_vars(&args[0], vars)?;
     let lambda = &args[1];
-    
+
     match arr_v {
         Value::Array(items) => {
             let mut count = 0usize;
+            let mut env = vars.clone();
             for it in items {
-                let mut env = vars.clone(); 
                 env.insert("x".into(), it.clone());
-                if let Value::Boolean(true) = eval_with_vars(lambda, &env)? { 
-                    count += 1; 
+                if let Value::Boolean(true) = eval_with_vars(lambda, &env)? {
+                    count += 1;
                 }
             }
             Ok(Value::Number(count as f64))
@@ -417,25 +417,25 @@ fn eval_countif(args: &[Expr], vars: &HashMap<String, Value>) -> Result<Value, E
 }
 
 fn eval_countif_with_custom(
-    args: &[Expr], 
+    args: &[Expr],
     vars: &HashMap<String, Value>,
     custom_registry: &Arc<RwLock<FunctionRegistry>>
 ) -> Result<Value, Error> {
-    if args.len() != 2 { 
-        return Err(Error::new("COUNTIF expects (array, expr)", None)); 
+    if args.len() != 2 {
+        return Err(Error::new("COUNTIF expects (array, expr)", None));
     }
-    
+
     let arr_v = eval_with_vars_and_custom(&args[0], vars, custom_registry)?;
     let lambda = &args[1];
-    
+
     match arr_v {
         Value::Array(items) => {
             let mut count = 0usize;
+            let mut env = vars.clone();
             for it in items {
-                let mut env = vars.clone(); 
                 env.insert("x".into(), it.clone());
-                if let Value::Boolean(true) = eval_with_vars_and_custom(lambda, &env, custom_registry)? { 
-                    count += 1; 
+                if let Value::Boolean(true) = eval_with_vars_and_custom(lambda, &env, custom_registry)? {
+                    count += 1;
                 }
             }
             Ok(Value::Number(count as f64))
