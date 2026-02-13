@@ -1,28 +1,29 @@
 use crate::types::Value;
 use crate::error::Error;
-use jsonpath_rust::JsonPathQuery;
-use serde_json;
+use jsonpath_rust::JsonPath;
 
 /// Apply JSONPath query to a JSON string or JSON Value
 pub fn apply_jsonpath(json_data: &Value, path: &str) -> Result<Value, Error> {
     // Convert Value to serde_json::Value
     let json_value = value_to_json(json_data)?;
 
-    // Apply JSONPath query - this returns a serde_json::Value directly
-    let result = json_value.path(path)
+    // Apply JSONPath query - returns Vec<&serde_json::Value>
+    let results = json_value.query(path)
         .map_err(|e| Error::new(format!("JSONPath error: {}", e), None))?;
 
-    // Convert result back to our Value type
-    let converted = json_to_value(result)?;
-
     // Handle special cases for better usability
-    match converted {
-        Value::Null => Ok(Value::Array(vec![])), // No matches -> empty array
-        Value::Array(ref arr) if arr.len() == 1 => {
-            // Single-element array -> unwrap to the element for easier arithmetic
-            Ok(arr[0].clone())
+    if results.is_empty() {
+        Ok(Value::Array(vec![]))
+    } else if results.len() == 1 {
+        // Single-element -> unwrap for easier arithmetic
+        json_to_value(results[0].clone())
+    } else {
+        // Multiple results -> array
+        let mut arr = Vec::with_capacity(results.len());
+        for r in results {
+            arr.push(json_to_value(r.clone())?);
         }
-        other => Ok(other)
+        Ok(Value::Array(arr))
     }
 }
 

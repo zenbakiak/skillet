@@ -30,23 +30,25 @@ pub fn exec_method(
     if predicate {
         return exec_predicate(name, recv);
     }
-    
-    // Check for conversion methods first (available on all types)
+
+    // Compute lowercase once for all dispatch checks
     let lname = name.to_lowercase();
+
+    // Check for conversion methods first (available on all types)
     match lname.as_str() {
-        "to_s" | "to_string" | "to_i" | "to_int" | "to_f" | "to_float" | 
+        "to_s" | "to_string" | "to_i" | "to_int" | "to_f" | "to_float" |
         "to_a" | "to_array" | "to_json" | "to_bool" | "to_boolean" => {
             return exec_conversion_method(name, recv);
         }
         _ => {}
     }
-    
+
     // Dispatch to appropriate method handler based on receiver type
     match recv {
         Value::String(_) => exec_string_method(name, recv, args_expr, base_vars),
         Value::Array(_) => {
             // Check for higher-order functions first
-            match name.to_lowercase().as_str() {
+            match lname.as_str() {
                 "filter" => exec_filter(recv, args_expr, base_vars),
                 "map" => exec_map(recv, args_expr, base_vars),
                 "find" => exec_find(recv, args_expr, base_vars),
@@ -75,23 +77,25 @@ pub fn exec_method_with_custom(
     if predicate {
         return exec_predicate(name, recv);
     }
-    
-    // Check for conversion methods first (available on all types)
+
+    // Compute lowercase once for all dispatch checks
     let lname = name.to_lowercase();
+
+    // Check for conversion methods first (available on all types)
     match lname.as_str() {
-        "to_s" | "to_string" | "to_i" | "to_int" | "to_f" | "to_float" | 
+        "to_s" | "to_string" | "to_i" | "to_int" | "to_f" | "to_float" |
         "to_a" | "to_array" | "to_json" | "to_bool" | "to_boolean" => {
             return exec_conversion_method(name, recv);
         }
         _ => {}
     }
-    
-    // First try method dispatch
-    let method_result = match recv {
+
+    // Dispatch to appropriate method handler based on receiver type
+    match recv {
         Value::String(_) => exec_string_method(name, recv, args_expr, base_vars),
         Value::Array(_) => {
             // Check for higher-order functions first
-            match name.to_lowercase().as_str() {
+            match lname.as_str() {
                 "filter" => lambda_methods::exec_filter_with_custom(recv, args_expr, base_vars, custom_registry),
                 "map" => lambda_methods::exec_map_with_custom(recv, args_expr, base_vars, custom_registry),
                 "find" => lambda_methods::exec_find_with_custom(recv, args_expr, base_vars, custom_registry),
@@ -105,9 +109,7 @@ pub fn exec_method_with_custom(
             format!("No methods available for {:?} type", recv),
             None,
         )),
-    };
-    
-    method_result
+    }
 }
 
 /// Handle number method calls

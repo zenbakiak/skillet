@@ -1,10 +1,11 @@
-# Build artifacts
+# Minimal dockerignore for Alpine binary builds
+# Only exclude what's absolutely necessary
+
+# Build artifacts (but include Cargo.lock!)
 target/
-Cargo.lock
 
 # Git
 .git/
-.gitignore
 
 # IDE
 .vscode/
@@ -12,19 +13,7 @@ Cargo.lock
 *.swp
 *.swo
 
-# Documentation
-*.md
-docs/
-
-# CI/CD
-.github/
-
-# Docker
-Dockerfile*
-docker-compose*.yml
-.dockerignore
-
-# Logs and runtime
+# Logs
 logs/
 *.log
 
@@ -32,6 +21,6 @@ logs/
 .DS_Store
 Thumbs.db
 
-# Test files
-tests/
+# Large test/bench files (not needed for build)
 benches/
+performance_results/

@@ -68,6 +68,11 @@ impl<'a> VariableContext<'a> {
     pub fn make_mut(&mut self) -> &mut HashMap<String, Value> {
         self.variables.to_mut()
     }
+
+    /// Consume the context and return the owned variables HashMap
+    pub fn into_variables(self) -> HashMap<String, Value> {
+        self.variables.into_owned()
+    }
 }
 
 impl<'a> EvaluationContext for VariableContext<'a> {
@@ -413,13 +418,14 @@ impl Evaluator {
         
         match arr_v {
             Value::Array(items) => {
-                let mut out = Vec::new();
-                let base_vars = context.clone_variables();
+                let mut out = Vec::with_capacity(items.len());
+                let mut env = context.clone_variables();
                 for it in items {
-                    let mut env = base_vars.clone();
                     env.insert(param_name.clone(), it.clone());
                     let var_context = VariableContext::with_owned(env);
-                    if let Value::Boolean(true) = Self::eval(lambda, &var_context)? {
+                    let matches = matches!(Self::eval(lambda, &var_context)?, Value::Boolean(true));
+                    env = var_context.into_variables();
+                    if matches {
                         out.push(it);
                     }
                 }
@@ -428,25 +434,26 @@ impl Evaluator {
             _ => Err(Error::new("FILTER first arg must be array", None)),
         }
     }
-    
+
     fn eval_find<C: EvaluationContext>(args: &[Expr], context: &C) -> Result<Value, Error> {
-        if args.len() < 2 { 
-            return Err(Error::new("FIND expects (array, expr)", None)); 
+        if args.len() < 2 {
+            return Err(Error::new("FIND expects (array, expr)", None));
         }
         let arr_v = Self::eval(&args[0], context)?;
         let lambda = &args[1];
-        let param_name = if args.len() > 2 { 
+        let param_name = if args.len() > 2 {
             if let Value::String(s) = Self::eval(&args[2], context)? { s } else { "x".into() }
         } else { "x".into() };
-        
+
         match arr_v {
             Value::Array(items) => {
-                let base_vars = context.clone_variables();
+                let mut env = context.clone_variables();
                 for it in items {
-                    let mut env = base_vars.clone();
                     env.insert(param_name.clone(), it.clone());
                     let var_context = VariableContext::with_owned(env);
-                    if let Value::Boolean(true) = Self::eval(lambda, &var_context)? {
+                    let matches = matches!(Self::eval(lambda, &var_context)?, Value::Boolean(true));
+                    env = var_context.into_variables();
+                    if matches {
                         return Ok(it);
                     }
                 }
@@ -455,56 +462,57 @@ impl Evaluator {
             _ => Err(Error::new("FIND first arg must be array", None)),
         }
     }
-    
+
     fn eval_map<C: EvaluationContext>(args: &[Expr], context: &C) -> Result<Value, Error> {
-        if args.len() < 2 { 
-            return Err(Error::new("MAP expects (array, expr)", None)); 
+        if args.len() < 2 {
+            return Err(Error::new("MAP expects (array, expr)", None));
         }
         let arr_v = Self::eval(&args[0], context)?;
         let lambda = &args[1];
-        let param_name = if args.len() > 2 { 
+        let param_name = if args.len() > 2 {
             if let Value::String(s) = Self::eval(&args[2], context)? { s } else { "x".into() }
         } else { "x".into() };
-        
+
         match arr_v {
             Value::Array(items) => {
-                let mut out = Vec::new();
-                let base_vars = context.clone_variables();
+                let mut out = Vec::with_capacity(items.len());
+                let mut env = context.clone_variables();
                 for it in items {
-                    let mut env = base_vars.clone();
                     env.insert(param_name.clone(), it);
                     let var_context = VariableContext::with_owned(env);
-                    out.push(Self::eval(lambda, &var_context)?);
+                    let result = Self::eval(lambda, &var_context)?;
+                    env = var_context.into_variables();
+                    out.push(result);
                 }
                 Ok(Value::Array(out))
             }
             _ => Err(Error::new("MAP first arg must be array", None)),
         }
     }
-    
+
     fn eval_reduce<C: EvaluationContext>(args: &[Expr], context: &C) -> Result<Value, Error> {
-        if args.len() < 3 { 
-            return Err(Error::new("REDUCE expects (array, expr, initial)", None)); 
+        if args.len() < 3 {
+            return Err(Error::new("REDUCE expects (array, expr, initial)", None));
         }
         let arr_v = Self::eval(&args[0], context)?;
         let lambda = &args[1];
         let mut acc = Self::eval(&args[2], context)?;
-        let val_param = if args.len() > 3 { 
+        let val_param = if args.len() > 3 {
             if let Value::String(s) = Self::eval(&args[3], context)? { s } else { "x".into() }
         } else { "x".into() };
-        let acc_param = if args.len() > 4 { 
+        let acc_param = if args.len() > 4 {
             if let Value::String(s) = Self::eval(&args[4], context)? { s } else { "acc".into() }
         } else { "acc".into() };
-        
+
         match arr_v {
             Value::Array(items) => {
-                let base_vars = context.clone_variables();
+                let mut env = context.clone_variables();
                 for it in items {
-                    let mut env = base_vars.clone();
                     env.insert(val_param.clone(), it);
                     env.insert(acc_param.clone(), acc);
                     let var_context = VariableContext::with_owned(env);
                     acc = Self::eval(lambda, &var_context)?;
+                    env = var_context.into_variables();
                 }
                 Ok(acc)
             }
@@ -536,15 +544,16 @@ impl Evaluator {
         match arr_v {
             Value::Array(items) => {
                 let mut acc = 0.0;
-                let base_vars = context.clone_variables();
+                let mut env = context.clone_variables();
                 for it in items {
-                    let mut env = base_vars.clone();
                     env.insert("x".into(), it.clone());
                     let var_context = VariableContext::with_owned(env);
-                    if let Value::Boolean(true) = Self::eval(criteria_expr, &var_context)? {
-                        match it { 
-                            Value::Number(n) | Value::Currency(n) => acc += n, 
-                            _ => {} 
+                    let matches = matches!(Self::eval(criteria_expr, &var_context)?, Value::Boolean(true));
+                    env = var_context.into_variables();
+                    if matches {
+                        match it {
+                            Value::Number(n) | Value::Currency(n) => acc += n,
+                            _ => {}
                         }
                     }
                 }
@@ -685,15 +694,16 @@ impl Evaluator {
             Value::Array(items) => {
                 let mut acc = 0.0;
                 let mut count = 0usize;
-                let base_vars = context.clone_variables();
+                let mut env = context.clone_variables();
                 for it in items {
-                    let mut env = base_vars.clone();
                     env.insert("x".into(), it.clone());
                     let var_context = VariableContext::with_owned(env);
-                    if let Value::Boolean(true) = Self::eval(lambda, &var_context)? {
-                        match it { 
-                            Value::Number(n) | Value::Currency(n) => { acc += n; count += 1; }, 
-                            _ => {} 
+                    let matches = matches!(Self::eval(lambda, &var_context)?, Value::Boolean(true));
+                    env = var_context.into_variables();
+                    if matches {
+                        match it {
+                            Value::Number(n) | Value::Currency(n) => { acc += n; count += 1; },
+                            _ => {}
                         }
                     }
                 }
@@ -702,24 +712,25 @@ impl Evaluator {
             _ => Err(Error::new("AVGIF first arg must be array", None)),
         }
     }
-    
+
     fn eval_countif<C: EvaluationContext>(args: &[Expr], context: &C) -> Result<Value, Error> {
-        if args.len() != 2 { 
-            return Err(Error::new("COUNTIF expects (array, expr)", None)); 
+        if args.len() != 2 {
+            return Err(Error::new("COUNTIF expects (array, expr)", None));
         }
         let arr_v = Self::eval(&args[0], context)?;
         let lambda = &args[1];
-        
+
         match arr_v {
             Value::Array(items) => {
                 let mut count = 0usize;
-                let base_vars = context.clone_variables();
+                let mut env = context.clone_variables();
                 for it in items {
-                    let mut env = base_vars.clone();
                     env.insert("x".into(), it);
                     let var_context = VariableContext::with_owned(env);
-                    if let Value::Boolean(true) = Self::eval(lambda, &var_context)? { 
-                        count += 1; 
+                    let matches = matches!(Self::eval(lambda, &var_context)?, Value::Boolean(true));
+                    env = var_context.into_variables();
+                    if matches {
+                        count += 1;
                     }
                 }
                 Ok(Value::Number(count as f64))
@@ -778,7 +789,7 @@ pub fn eval_with_assignments(expr: &Expr, vars: &HashMap<String, Value>) -> Resu
 pub fn eval_with_assignments_and_context(expr: &Expr, vars: &HashMap<String, Value>) -> Result<(Value, HashMap<String, Value>), Error> {
     let mut context = VariableContext::with_owned(vars.clone());
     let result = eval_with_assignments_context(expr, &mut context)?;
-    let final_vars = context.variables.into_owned();
+    let final_vars = context.into_variables();
     Ok((result, final_vars))
 }
 
