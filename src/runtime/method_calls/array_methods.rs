@@ -220,6 +220,40 @@ pub fn exec_array_method(
             Ok(Value::Array(compacted))
         }
 
+        "merge" => {
+            // Estimate capacity: receiver + all arguments
+            let mut capacity = recv_array.len();
+            for arg_expr in args_expr {
+                let arg_val = if let Some(vars) = base_vars {
+                    eval_with_vars(arg_expr, vars)?
+                } else {
+                    eval(arg_expr)?
+                };
+                capacity += match &arg_val {
+                    Value::Array(items) => items.len(),
+                    _ => 1,
+                };
+            }
+
+            let mut result = Vec::with_capacity(capacity);
+            result.extend_from_slice(recv_array);
+
+            for arg_expr in args_expr {
+                let arg_val = if let Some(vars) = base_vars {
+                    eval_with_vars(arg_expr, vars)?
+                } else {
+                    eval(arg_expr)?
+                };
+
+                match arg_val {
+                    Value::Array(items) => result.extend(items),
+                    other => result.push(other),
+                }
+            }
+
+            Ok(Value::Array(result))
+        }
+
         _ => Err(Error::new(
             format!("Unknown array method: {}", name),
             None,

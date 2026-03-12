@@ -77,6 +77,7 @@ impl FunctionDispatch {
         array_functions.insert("SORT");
         array_functions.insert("REVERSE");
         array_functions.insert("JOIN");
+        array_functions.insert("MERGE");
         
         let mut datetime_functions = HashSet::new();
         datetime_functions.insert("NOW");

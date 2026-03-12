@@ -91,6 +91,25 @@ pub fn exec_array(name: &str, args: &[Value]) -> Result<Value, Error> {
             }
             _ => Err(Error::new("JOIN expects array, [separator]", None))
         },
+        "MERGE" => {
+            // Estimate capacity: count array lengths + scalar elements
+            let mut capacity = 0;
+            for arg in args {
+                capacity += match arg {
+                    Value::Array(items) => items.len(),
+                    _ => 1,
+                };
+            }
+
+            let mut result = Vec::with_capacity(capacity);
+            for arg in args {
+                match arg {
+                    Value::Array(items) => result.extend_from_slice(items),
+                    other => result.push(other.clone()),
+                }
+            }
+            Ok(Value::Array(result))
+        },
         _ => Err(Error::new(format!("Unknown array function: {}", name), None)),
     }
 }
