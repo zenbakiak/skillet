@@ -1,4 +1,5 @@
-use skillet::{evaluate, Value};
+use skillet::{evaluate, evaluate_with_assignments, Value};
+use std::collections::HashMap;
 
 fn s(v: Value) -> String { if let Value::String(s) = v { s } else { panic!("expected string") } }
 fn b(v: Value) -> bool { if let Value::Boolean(b) = v { b } else { panic!("expected bool") } }
@@ -52,4 +53,61 @@ fn sumif_avgif_countif_flatten() {
     assert!(matches!(evaluate("COUNTIF([1,2,3,4], :x % 2 == 0)").unwrap(), Number(2.0)));
     match evaluate("FLATTEN([1,[2,[3]],4])").unwrap() { Value::Array(v) => assert_eq!(v, vec![Number(1.0), Number(2.0), Number(3.0), Number(4.0)]), _ => panic!() }
     match evaluate("[1,[2,[3]],4].flatten()").unwrap() { Value::Array(v) => assert_eq!(v, vec![Number(1.0), Number(2.0), Number(3.0), Number(4.0)]), _ => panic!() }
+}
+
+#[test]
+fn merge_function_and_method() {
+    use Value::*;
+
+    // Function syntax: MERGE with arrays
+    match evaluate("MERGE([1,2,3], [4,5,6])").unwrap() {
+        Array(v) => assert_eq!(v, vec![Number(1.0), Number(2.0), Number(3.0), Number(4.0), Number(5.0), Number(6.0)]),
+        _ => panic!("Expected array")
+    }
+
+    // Function syntax: MERGE with arrays and scalars
+    match evaluate("MERGE([1,2,3], 4, 5, 6)").unwrap() {
+        Array(v) => assert_eq!(v, vec![Number(1.0), Number(2.0), Number(3.0), Number(4.0), Number(5.0), Number(6.0)]),
+        _ => panic!("Expected array")
+    }
+
+    // Function syntax: MERGE with variables
+    let vars = HashMap::new();
+    match evaluate_with_assignments(":arr1 := [1,2,3,4]; MERGE([1,2,3,4], :arr1, 5, 6)", &vars).unwrap() {
+        Array(v) => assert_eq!(v, vec![
+            Number(1.0), Number(2.0), Number(3.0), Number(4.0),
+            Number(1.0), Number(2.0), Number(3.0), Number(4.0),
+            Number(5.0), Number(6.0)
+        ]),
+        _ => panic!("Expected array")
+    }
+
+    // Method syntax: array.merge()
+    match evaluate("[1,2,3].merge([4,5,6])").unwrap() {
+        Array(v) => assert_eq!(v, vec![Number(1.0), Number(2.0), Number(3.0), Number(4.0), Number(5.0), Number(6.0)]),
+        _ => panic!("Expected array")
+    }
+
+    // Method syntax: with variables and scalars
+    let vars2 = HashMap::new();
+    match evaluate_with_assignments(":arr1 := [1,2,3]; :arr2 := [4,5]; :arr1.merge(:arr2, 6, 7)", &vars2).unwrap() {
+        Array(v) => assert_eq!(v, vec![
+            Number(1.0), Number(2.0), Number(3.0),
+            Number(4.0), Number(5.0),
+            Number(6.0), Number(7.0)
+        ]),
+        _ => panic!("Expected array")
+    }
+
+    // Method syntax: chaining
+    match evaluate("[1].merge([2,3]).merge(4, [5,6])").unwrap() {
+        Array(v) => assert_eq!(v, vec![Number(1.0), Number(2.0), Number(3.0), Number(4.0), Number(5.0), Number(6.0)]),
+        _ => panic!("Expected array")
+    }
+
+    // Mixed types
+    match evaluate("MERGE([1,2], ['a', 'b'], true)").unwrap() {
+        Array(v) => assert_eq!(v, vec![Number(1.0), Number(2.0), String("a".into()), String("b".into()), Boolean(true)]),
+        _ => panic!("Expected array")
+    }
 }
