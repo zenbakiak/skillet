@@ -1,5 +1,5 @@
 # Multi-stage build for Skillet HTTP Server
-FROM rust:1.81-slim as builder
+FROM rust:1.84-slim as builder
 
 # Install system dependencies for building
 RUN apt-get update && apt-get install -y \
