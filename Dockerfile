@@ -13,8 +13,8 @@ COPY . .
 # Build the HTTP server binary
 RUN cargo build --release --bin sk_http_server
 
-# Runtime image
-FROM debian:bookworm-slim
+# Runtime image - use sid to match builder's GLIBC 2.39
+FROM debian:sid-slim
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y \
@@ -35,25 +35,38 @@ USER skillet
 # Copy binary from builder
 COPY --from=builder --chown=skillet:skillet /app/target/release/sk_http_server ./
 
-# Create health check script
-RUN echo '#!/bin/bash\ncurl -f http://localhost:${PORT:-8080}/health > /dev/null 2>&1' > health-check.sh && \
-    chmod +x health-check.sh
 
 # Environment variables with defaults
-ENV PORT=8080
+ENV DOCKER_PORT=8080
 ENV HOST=0.0.0.0
 ENV AUTH_TOKEN=""
 ENV ADMIN_TOKEN=""
 ENV SKILLET_HOOKS_DIR=/app/hooks
 
-# Expose port
-EXPOSE $PORT
+# Create startup script
+RUN printf '#!/bin/sh\n\
+    set -e\n\
+    PORT="${PORT:-${DOCKER_PORT:-8080}}"\n\
+    echo "Starting sk_http_server on port $PORT listening on ${HOST}"\n\
+    \n\
+    # Build command with optional arguments\n\
+    CMD="./sk_http_server $PORT --host ${HOST}"\n\
+    if [ -n "$AUTH_TOKEN" ]; then\n\
+    CMD="$CMD --token $AUTH_TOKEN"\n\
+    fi\n\
+    if [ -n "$ADMIN_TOKEN" ]; then\n\
+    CMD="$CMD --admin-token $ADMIN_TOKEN"\n\
+    fi\n\
+    \n\
+    echo "Executing: $CMD"\n\
+    exec $CMD\n' > start.sh && chmod +x start.sh
+
+# Expose port (Cloud Run uses PORT env var at runtime)
+EXPOSE 8080
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD ./health-check.sh || exit 1
+    CMD curl -f http://localhost:${PORT:-${DOCKER_PORT}}/health || exit 1
 
-# Default command with environment variable support
-CMD sh -c './sk_http_server $PORT --host $HOST \
-    ${AUTH_TOKEN:+--token "$AUTH_TOKEN"} \
-    ${ADMIN_TOKEN:+--admin-token "$ADMIN_TOKEN"}'
+# Default command
+CMD ["./start.sh"]
