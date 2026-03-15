@@ -104,10 +104,24 @@ where
             let mut expressions = Vec::new();
 
             while let Some(expr) = seq.next_element::<String>()? {
-                expressions.push(expr);
+                // Trim leading and trailing whitespace from each line
+                let trimmed = expr.trim();
+
+                // Skip empty lines
+                if trimmed.is_empty() {
+                    continue;
+                }
+
+                // Skip comment lines (starting with # or //)
+                if trimmed.starts_with('#') || trimmed.starts_with("//") {
+                    continue;
+                }
+
+                expressions.push(trimmed.to_string());
             }
 
-            Ok(expressions.join(""))
+            // Join with a space to prevent tokens from merging
+            Ok(expressions.join(" "))
         }
     }
 

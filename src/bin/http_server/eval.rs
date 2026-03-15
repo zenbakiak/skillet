@@ -193,15 +193,17 @@ fn process_eval_request(
     // Convert JSON variables to Skillet values with key sanitization
     let vars = match req.arguments {
         Some(json_vars) => {
-            let mut result = HashMap::new();
+            // Pre-allocate HashMap with known size + 1 for "arguments"
+            let mut result = HashMap::with_capacity(json_vars.len() + 1);
 
-            // Add the original JSON data for JQ function
+            // Add the original JSON data for JQ function (serialize once)
             let json_str = serde_json::to_string(&json_vars).unwrap_or_default();
             result.insert("arguments".to_string(), Value::Json(json_str));
 
             for (key, value) in json_vars {
                 match skillet::json_to_value(value) {
                     Ok(v) => {
+                        // Only sanitize if necessary (fast path optimization)
                         let sanitized_key = sanitize_json_key(&key);
                         result.insert(sanitized_key, v);
                     }
