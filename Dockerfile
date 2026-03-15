@@ -51,7 +51,7 @@ RUN printf '#!/bin/sh\n\
     echo "Starting sk_http_server on port $PORT listening on ${HOST}"\n\
     \n\
     # Build command with optional arguments\n\
-    CMD="./sk_http_server $PORT --host ${HOST} --threads ${SK_THREADS:-8}"\n\
+    CMD="./sk_http_server $PORT --host ${HOST} --threads ${SK_THREADS:-2}"\n\
     if [ -n "$AUTH_TOKEN" ]; then\n\
     CMD="$CMD --token $AUTH_TOKEN"\n\
     fi\n\
