@@ -6,6 +6,12 @@ use serde_json;
 use super::cache::{get_pooled_buffer, return_pooled_buffer};
 
 pub fn sanitize_json_key(key: &str) -> String {
+    // Fast path: if key is already valid, return as-is (no allocation)
+    if key.chars().all(|c| c.is_alphanumeric() || c == '_') {
+        return key.to_string();
+    }
+
+    // Slow path: sanitize invalid characters
     key.chars()
         .map(|c| {
             if c.is_alphanumeric() || c == '_' {
@@ -98,9 +104,14 @@ pub fn read_complete_http_request(stream: &mut TcpStream) -> Result<String, std:
         }
     }
 
-    let result = String::from_utf8(buffer.clone()).map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid UTF-8"));
-    return_pooled_buffer(buffer);
-    result
+    // Convert buffer to string without cloning (consume the buffer)
+    String::from_utf8(buffer).map_err(|e| {
+        // If conversion fails, we can't return the buffer to pool (it was consumed)
+        // but we return the original buffer via the error
+        let original_buffer = e.into_bytes();
+        return_pooled_buffer(original_buffer);
+        std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid UTF-8")
+    })
 }
 
 fn find_headers_end(buffer: &[u8]) -> Option<usize> {
@@ -124,14 +135,20 @@ pub fn send_http_response(stream: &mut TcpStream, status: u16, content_type: &st
         200 => "OK",
         400 => "Bad Request",
         401 => "Unauthorized",
-        408 => "Request Timeout", 
+        408 => "Request Timeout",
         413 => "Payload Too Large",
         404 => "Not Found",
         500 => "Internal Server Error",
         _ => "Unknown",
     };
 
-    let response = format!(
+    // Pre-allocate response buffer with estimated size to avoid reallocations
+    let estimated_size = 256 + body.len(); // Headers ~256 bytes + body
+    let mut response = String::with_capacity(estimated_size);
+
+    use std::fmt::Write;
+    let _ = write!(
+        &mut response,
         "HTTP/1.1 {} {}\r\n\
          Access-Control-Allow-Origin: *\r\n\
          Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS\r\n\

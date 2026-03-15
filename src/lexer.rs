@@ -77,6 +77,33 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    fn skip_line_comment(&mut self) {
+        // Skip until end of line
+        while let Some(ch) = self.peek() {
+            self.pos += 1;
+            if ch == b'\n' {
+                break;
+            }
+        }
+    }
+
+    fn skip_block_comment(&mut self) -> Result<(), Error> {
+        // We've already consumed '/*', now skip until '*/'
+        let start = self.pos - 2;
+        while let Some(ch) = self.peek() {
+            if ch == b'*' {
+                self.pos += 1;
+                if matches!(self.peek(), Some(b'/')) {
+                    self.pos += 1;
+                    return Ok(());
+                }
+            } else {
+                self.pos += 1;
+            }
+        }
+        Err(Error::new("Unterminated block comment", Some(start)))
+    }
+
     fn number(&mut self, first: u8) -> Result<Token, Error> {
         let start = self.pos - 1;
         let mut end = self.pos;
@@ -217,11 +244,36 @@ impl<'a> Lexer<'a> {
     }
 
     pub fn next_token(&mut self) -> Result<Token, Error> {
-        self.skip_ws();
-        let ch = match self.bump() {
-            Some(c) => c,
-            None => return Ok(Token::Eof),
-        };
+        loop {
+            self.skip_ws();
+            let ch = match self.peek() {
+                Some(c) => c,
+                None => return Ok(Token::Eof),
+            };
+
+            // Check for comments
+            if ch == b'#' {
+                self.skip_line_comment();
+                continue; // Skip whitespace and check again
+            } else if ch == b'/' {
+                // Peek ahead to check for // or /*
+                if let Some(&next_ch) = self.input.get(self.pos + 1) {
+                    if next_ch == b'/' {
+                        self.skip_line_comment();
+                        continue; // Skip whitespace and check again
+                    } else if next_ch == b'*' {
+                        self.pos += 2; // Consume '/*'
+                        self.skip_block_comment()?;
+                        continue; // Skip whitespace and check again
+                    }
+                }
+            }
+
+            // Not a comment, proceed with normal tokenization
+            break;
+        }
+
+        let ch = self.bump().unwrap(); // Safe because we peeked above
 
         let tok = match ch {
             b'0'..=b'9' => return self.number(ch),
