@@ -41,6 +41,7 @@ ENV DOCKER_PORT=8080
 ENV HOST=0.0.0.0
 ENV AUTH_TOKEN=""
 ENV ADMIN_TOKEN=""
+ENV SK_THREADS=2
 ENV SKILLET_HOOKS_DIR=/app/hooks
 
 # Create startup script
@@ -50,7 +51,7 @@ RUN printf '#!/bin/sh\n\
     echo "Starting sk_http_server on port $PORT listening on ${HOST}"\n\
     \n\
     # Build command with optional arguments\n\
-    CMD="./sk_http_server $PORT --host ${HOST}"\n\
+    CMD="./sk_http_server $PORT --host ${HOST} --threads ${SK_THREADS:-8}"\n\
     if [ -n "$AUTH_TOKEN" ]; then\n\
     CMD="$CMD --token $AUTH_TOKEN"\n\
     fi\n\
