@@ -13,3 +13,4 @@ Secrets*.toml
 .env.prd
 *.prd.*
 dist/
+skill-publish

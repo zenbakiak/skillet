@@ -19,9 +19,8 @@ cp "$PROJECT_DIR/.dockerignore" "$PROJECT_DIR/.dockerignore.backup" 2>/dev/null 
 cp "$PROJECT_DIR/.dockerignore.alpine" "$PROJECT_DIR/.dockerignore"
 
 # Build using Docker multi-stage build
-echo "📦 Building binaries with Docker (x86_64/amd64)..."
+echo "📦 Building binaries with Docker (native build)..."
 docker build \
-    --platform linux/amd64 \
     --target binaries \
     -f "$PROJECT_DIR/Dockerfile.alpine-builder" \
     -t skillet-alpine-binaries \
@@ -49,7 +48,7 @@ echo "Built binaries:"
 ls -lh "$DIST_DIR"
 echo ""
 echo "🧪 Testing sk binary..."
-docker run --rm -v "$DIST_DIR:/test" ruby:3.4.8-alpine /test/sk "2 + 3 * 4"
+docker run --rm --platform linux/arm64 -v "$DIST_DIR:/test" ruby:3.4.8-alpine /test/sk "2 + 3 * 4"
 
 echo ""
 echo "📋 Next steps:"

@@ -2,16 +2,17 @@
 # This creates statically-linked binaries compatible with Alpine and ruby:3.4.8-alpine
 
 # Use Debian-based Rust to cross-compile to musl (proc-macros need glibc to build)
-FROM rust:1.81 AS builder
+# Using latest stable Rust (1.85+ required for edition2024)
+FROM rust:latest AS builder
 
-# Install musl cross-compilation tools
+# Install musl cross-compilation tools for both x86_64 and aarch64
 RUN apt-get update && apt-get install -y \
     musl-tools \
     musl-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Add musl target
-RUN rustup target add x86_64-unknown-linux-musl
+# Add musl target for native architecture
+RUN rustup target add aarch64-unknown-linux-musl
 
 WORKDIR /build
 
@@ -23,15 +24,20 @@ COPY openapi.yml ./openapi.yml
 # Build for musl with static linking
 # This allows binaries to run on Alpine Linux
 ENV RUSTFLAGS="-C target-feature=+crt-static"
-RUN cargo build --release --target x86_64-unknown-linux-musl --bins
 
-# Move binaries to a standard location for easier copying
-RUN mkdir -p /build/target/release && \
-    cp /build/target/x86_64-unknown-linux-musl/release/sk /build/target/release/ && \
-    cp /build/target/x86_64-unknown-linux-musl/release/sk_server /build/target/release/ && \
-    cp /build/target/x86_64-unknown-linux-musl/release/sk_client /build/target/release/ && \
-    cp /build/target/x86_64-unknown-linux-musl/release/sk_http_server /build/target/release/ && \
-    cp /build/target/x86_64-unknown-linux-musl/release/sk_http_bench /build/target/release/
+# Build for ARM64 musl
+RUN cargo build --release --target aarch64-unknown-linux-musl --bins && \
+    mkdir -p /build/target/release && \
+    echo "Copying ARM64 binaries..." && \
+    ls -lh /build/target/aarch64-unknown-linux-musl/release/ && \
+    for binary in sk sk_server sk_client sk_http_server sk_http_bench; do \
+        if [ -f "/build/target/aarch64-unknown-linux-musl/release/$binary" ]; then \
+            cp "/build/target/aarch64-unknown-linux-musl/release/$binary" /build/target/release/; \
+            echo "✓ Copied $binary"; \
+        else \
+            echo "✗ Binary $binary not found"; \
+        fi; \
+    done
 
 # Create distribution stage with just the binaries
 FROM scratch AS binaries
