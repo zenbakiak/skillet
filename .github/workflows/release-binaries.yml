@@ -117,5 +117,7 @@ jobs:
             artifacts/**/*.tar.gz
             artifacts/**/*.zip
             artifacts/**/*.sha256
+          prerelease: false  # Mark as stable release, not prerelease
+          draft: false       # Publish immediately, not as draft
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
