@@ -5,6 +5,9 @@ on:
     tags:
       - 'crate-v*'
 
+permissions:
+  contents: read
+
 jobs:
   publish:
     name: Publish to crates.io
