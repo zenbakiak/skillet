@@ -51,6 +51,6 @@ spreadsheet cell references (`A1`).
 ## Open questions
 - Exact currency math (ADR-0003)? Native object values (ADR-0004 / BL-011)?
 - Canonical form when both a function and a method exist (`SUM(:a)` vs `:a.sum()`).
-- Evaluation budget (ADR-0011): may the variable-read charge be dropped once reads are O(1) (BL-030)?
+- ~~Evaluation budget: drop the variable-read charge?~~ Resolved: reads are not charged (ADR-0011 amendment, after BL-030).
   Should a server timeout map to HTTP 503/504 instead of 400 (wire-format change)? Is 256 MiB right
   for embedders, or should the default scale with input size?

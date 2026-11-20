@@ -1,6 +1,12 @@
 # 0011. Per-evaluation budget and server evaluation timeout
 
-- Status: Proposed
+> **Amendment at acceptance (maintainer, 2026-11-20):** BL-030 (lambdas share the parent scope, and
+> variable reads stop deep-cloning) lands **before** BL-027b. Variable reads are therefore **not
+> charged**: the "Variable read" row below is struck, A12 stays a passing formula (it moves to the
+> P rows), and the PRD-001 open question about dropping the read charge is closed. Everything else
+> is accepted as written, including A11 (quadratic `reduce(MERGE(:acc, [:x]), [])` fails above ~2,800 items).
+
+- Status: Accepted (2026-11-20, with amendment below)
 - Date: 2026-11-20
 - Deciders: Maintainer (accepts), Language Designer (author), Security Reviewer, Rust Engineer
 - Related: BL-027 (a/b/c), BL-017 / `src/limits.rs` (`MAX_NESTING_DEPTH`), BL-018 (QuickJS limits),
@@ -64,7 +70,7 @@ same variables always passes or always fails, whatever the machine, allocator or
 |---|---|
 | Results of array literals, function calls, method and safe-method calls, and casts (the sites that already call `check_value_depth`) | `cost(result)` |
 | Object literal result, and property / safe-property access result | `cost(result)` |
-| Variable read (`Expr::Variable`, which deep-clones today) | `cost(value)` |
+| ~~Variable read~~ | Not charged (amendment: reads are cheap after BL-030) |
 | Assignment `:a := v` (the stored clone) | `cost(v)` |
 | Each lambda iteration (`filter/map/find/reduce/SUMIF/AVGIF/COUNTIF`, function and method forms) | `cost(bound item)` |
 
@@ -225,7 +231,7 @@ array literal of n ones.
 | A9 | `JOIN([""×20000], 20000×"b")` and `.join` | ~400 MB in one call | fails before allocating |
 | A10 | `[1×1000].map([1×1000].map([1×1000].map(:x).length()).sum())` (1e9 iterations) | ~54 s of CPU | fails after ~8k inner literals (< 0.5 s) |
 | A11 | `:nums.reduce(MERGE(:acc, [:x]), []).length()` (nums = 0..9999) | `Number(10000.0)`, 228 ms, 3 GB alloc | **behaviour change**: fails (~3 GB charged); passes at ≤ 2,800 items |
-| A12 | `:rows.map(:x.price / :rows.length()).sum()` (10k rows) | Number, 3.5 s, 21 GB alloc | **behaviour change**: fails (~11 GB charged) |
+| A12 | `:rows.map(:x.price / :rows.length()).sum()` (10k rows) | Number, 3.5 s, 21 GB alloc | **amended**: must pass (same Number); after BL-030 it should also be fast |
 
 **Timeout (servers only, `Evaluation timed out (max 10 s)`, HTTP 400)**
 

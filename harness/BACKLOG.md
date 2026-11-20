@@ -446,7 +446,7 @@ Brief (orchestrator, 2026-11-20):
         it returns an Error instead. Servers additionally bound wall-clock time per request.
   Branch: bugfix/bl-027-evaluation-budget (stacked on bugfix/bl-017-nesting-depth-limit, PR #44;
         retarget to develop after #44 merges).
-  BL-027a · language-designer (Claude Opus 5.5) · `review`
+  BL-027a · language-designer (Claude Opus 5.5) · `done`
     Do: write ADR-0011 (Proposed) + PRD-001 NFR rows defining the evaluation budget:
       - what is counted (e.g. total Value cells created per evaluation incl. string bytes; and/or max
         single array length / string length; lambda iteration steps), with concrete default numbers;
@@ -461,7 +461,9 @@ Brief (orchestrator, 2026-11-20):
       Do NOT run inputs that would allocate more than ~500 MB on this machine.
       Output: example table (expression → expected Value or Error) for QA/Rust.
     Out of scope: src/ changes.
-  BL-027b · rust-engineer · `todo` (blocked by 027a + ADR-0011 accepted by maintainer)
+  Decision (maintainer, 2026-11-20): ADR-0011 accepted with amendment: BL-030 first, then 027b
+    without the variable-read charge (A12 must pass). A11 behaviour change accepted.
+  BL-027b · rust-engineer · `todo` (blocked by BL-030)
   BL-027c · security-reviewer · `todo` (re-attack after 027b)
 
 Handoff (language-designer, Claude Opus 5.5, 2026-11-20) — BL-027a:
@@ -509,7 +511,7 @@ down to 1 MB). Affects embedders spawning threads in debug and in-process tests.
 binary precedence levels into one precedence-climbing loop and shrinking `parse_atom`'s frame;
 measure stack per level before/after.
 
-### BL-030 · Lambdas clone the whole variable map per call (CPU/alloc DoS) · P1 · `todo` · rust-engineer (+ performance-engineer for numbers)
+### BL-030 · Lambdas clone the whole variable map per call (CPU/alloc DoS) · P1 · `in-progress` · rust-engineer (+ performance-engineer for numbers)
 Found in BL-027a. Every method/function call inside a lambda runs `context.clone_variables()` and the
 lambda helpers `base_vars.cloned()`, so cost is O(items × size of all vars). Measured (release):
 `:nums.map(:x.abs()).sum()` over 100k numbers (589 KB JSON) = 14.6 s and 305 GB allocated;
@@ -518,3 +520,23 @@ Fix: a layered scope (borrowed parent map + small local bindings for `:x`/`:acc`
 so lambda calls do not copy the parent environment. ADR-0011's server deadline covers this until fixed;
 the library/CLI have no protection. Acceptance: both formulas above within 2× of their no-inner-call
 equivalents; ./harness/check.sh green; no result changes.
+
+Brief (orchestrator, 2026-11-20):
+  Goal: evaluating inside lambdas (and method calls inside them) never copies the parent variable
+        environment; variable reads are cheap enough that ADR-0011 does not need to charge them.
+  Branch: bugfix/bl-030-shared-lambda-scope (stacked: develop ← #44 BL-017 ← bl-027 ADR commits ← this).
+  Scope: src/runtime/evaluator.rs, src/runtime/method_calls/*, src/runtime/function_dispatch.rs or
+        wherever `clone_variables` / `base_vars.cloned()` live. No public signature changes; no
+        `Value` enum changes (that would be an ADR).
+  Approach: Rust engineer's choice; simplest that meets the numbers (e.g. a layered scope: borrowed
+        parent `&HashMap` + small local map for `:x`/`:acc`/custom param names, looked up local-first).
+        Variable reads may still clone the *value* read; if `:rows.length()` per item stays slow
+        because of that, avoid the clone for method-call targets (evaluate by reference).
+  Acceptance:
+    - ./harness/check.sh (full) green; evaluator_parity + security_limits unchanged and green.
+    - Release, median of 5, same machine, before → after:
+        `:nums.map(:x.abs()).sum()` (100k nums) — 14.6 s → within 2× of `:nums.map(:x * 1).sum()`;
+        `:rows.map(:x.price.round(1)).sum()` (10k rows) — 1.7 s → within 2× of `:rows.map(:x.price).sum()`;
+        `:rows.map(:x.price / :rows.length()).sum()` (10k rows, ADR-0011 A12) — 3.5 s → report.
+      Put the harness that builds these inputs in benches/ (script or #[ignore] test) so BL-005 can reuse it.
+    - Peak/total allocation for the first case reported if easy (counting allocator in a scratch bin is fine).

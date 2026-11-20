@@ -16,7 +16,7 @@ ADRs 0001–0008 are **retroactive**: they record decisions already embodied in 
 | [0008](0008-servers-std-threads-unix-daemon.md) | Servers on `std::net` + thread pool; Unix-only daemon | Accepted (retroactive) |
 | [0009](0009-gitflow-branching-and-commits.md) | Gitflow branching, commit format, and git hooks | Accepted |
 | [0010](0010-remove-dead-public-modules-pre-1-0.md) | Remove dead public modules in 0.7.0 without deprecation | Accepted |
-| [0011](0011-evaluation-budget.md) | Per-evaluation budget and server evaluation timeout | Proposed |
+| [0011](0011-evaluation-budget.md) | Per-evaluation budget and server evaluation timeout | Accepted |
 
 ## Template
 
