@@ -24,11 +24,10 @@ Rust Engineer with your profile attached.
 | Suspect | Where | Hypothesis |
 |---|---|---|
 | JSON re-parse on property access | `Value::Json(String)`, ADR-0004 | Dominates for `:obj.a.b` chains |
-| Scope `HashMap` clone per lambda item | `runtime/evaluation/higher_order.rs` | O(n·vars) allocs in `filter`/`map` |
+| Scope `HashMap` clone per lambda item | `runtime/evaluator.rs` (higher-order builtins) | O(n·vars) allocs in `filter`/`map` |
 | String-set function dispatch | `runtime/function_dispatch.rs` | Hashing per call; a `match` or table is cheaper |
 | Re-parse per server request | servers, ADR-0002 | AST cache could help (BL-012) |
 | JS plugin load at CLI start | `sk` prints "Loaded N custom JavaScript function(s)" | QuickJS init on every CLI call |
-| Two evaluators | BL-001 | Unify first, then optimize once |
 
 ## First task
 BL-005: build the baseline set (10 representative expressions) and publish `benches/BASELINE.md`.

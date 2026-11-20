@@ -183,13 +183,13 @@ pub enum Value {
 Input String
     ↓
 ┌─────────────────┐
-│ Lexer           │  Tokenization with string interning
+│ Lexer           │  Tokenization
 ├─────────────────┤
 │ Token Stream    │
 └─────────────────┘
     ↓
 ┌─────────────────┐
-│ Parser          │  Builds AST with memory pooling
+│ Parser          │  Builds AST (recursive descent)
 ├─────────────────┤
 │ AST (Expr)      │
 └─────────────────┘
@@ -210,19 +210,13 @@ skillet/
 │   ├── types.rs                  # Value enum definition
 │   ├── error.rs                  # Error type with position tracking
 │   ├── ast.rs                    # Abstract syntax tree nodes
-│   ├── lexer.rs                  # Tokenizer with string interning
+│   ├── lexer.rs                  # Tokenizer
 │   ├── parser.rs                 # Recursive descent parser
-│   ├── memory_pool.rs            # Arena allocator for AST nodes
 │   ├── custom.rs                 # CustomFunction trait & registry
 │   ├── js_plugin.rs              # JavaScript plugin loader (rquickjs)
-│   ├── concurrent_registry.rs    # Thread-safe function registry
 │   │
 │   ├── runtime/
-│   │   ├── evaluator.rs          # Main evaluation engine
-│   │   ├── evaluation/
-│   │   │   ├── core.rs           # Core expression evaluation
-│   │   │   ├── higher_order.rs   # FILTER/MAP/REDUCE/FIND/SUMIF/AVGIF/COUNTIF
-│   │   │   └── assignments.rs    # Variable assignment logic
+│   │   ├── evaluator.rs          # The evaluator (expressions, lambdas, assignments)
 │   │   │
 │   │   ├── method_calls/
 │   │   │   ├── mod.rs            # Method dispatch hub
@@ -262,10 +256,9 @@ skillet/
 
 ### 5.1 Lexer (`src/lexer.rs`)
 
-**Purpose:** Tokenize input into a stream of tokens with string interning.
+**Purpose:** Tokenize input into a stream of tokens.
 
 **Key Features:**
-- **String Interning**: Reuse identical identifier strings to reduce allocations
 - **Position Tracking**: Track line/column for error reporting
 - **Operator Recognition**: Multi-character operators (`>=`, `<=`, `!=`, `::`, `&.`)
 
@@ -307,9 +300,8 @@ postfix       → primary ( method_call | array_access | property_access )*
 primary       → NUMBER | STRING | IDENT | LPAREN expression RPAREN | array | object
 ```
 
-**Memory Pooling:**
-- Uses `typed_arena::Arena` for AST node allocations
-- Reduces allocation overhead for large expressions
+**AST allocation:** nodes are ordinary heap allocations shared through `Rc<Expr>` (ADR-0002);
+there is no arena or pool.
 
 ### 5.3 Evaluator (`src/runtime/evaluator.rs`)
 
@@ -386,7 +378,7 @@ pub fn call_method(receiver: &Value, method_name: &str, args: Vec<Value>) -> Res
 }
 ```
 
-### 5.5 Higher-Order Functions (`src/runtime/evaluation/higher_order.rs`)
+### 5.5 Higher-Order Functions (`src/runtime/evaluator.rs`)
 
 **Purpose:** Implement FILTER, MAP, REDUCE, FIND, SUMIF, AVGIF, COUNTIF as standalone functions.
 
@@ -957,7 +949,7 @@ bash scripts/benchmark_server.sh 8080 10000 8
 |------|-----------------|
 | Add function | `runtime/arithmetic.rs`, `builtin_functions.rs`, `tests/*_tests.rs` |
 | Add method | `method_calls/mod.rs`, `method_calls/*_methods.rs`, tests |
-| Add operator | `lexer.rs`, `parser.rs`, `evaluation/core.rs`, tests |
+| Add operator | `lexer.rs`, `parser.rs`, `runtime/evaluator.rs`, tests |
 | Fix performance | Profile → identify hot path → optimize (see §7) |
 | Add JS plugin | Create `hooks/my_function.js` |
 

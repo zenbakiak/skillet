@@ -2,7 +2,6 @@ pub mod arithmetic;
 pub mod array;
 pub mod builtin_functions;
 pub mod datetime;
-pub mod evaluation;
 pub mod evaluator;
 pub mod financial;
 pub mod function_dispatch;

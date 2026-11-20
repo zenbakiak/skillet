@@ -105,11 +105,73 @@ Review (orchestrator, 2026-11-20): accepted. Full gate green, 12/12 parity tests
   -1199 lines. Method lambdas now gain JQ/DIG and the other D1-D5 fixes (intended). Perf unmeasured
   until BL-005. Pre-existing JQ single-match unwrap filed as BL-024.
 
-### BL-002 · Remove dead modules and unused dependencies · P1 · `todo` · rust-engineer
+### BL-002 · Remove dead modules and unused dependencies · P1 · `done` · rust-engineer
 `memory_pool.rs`, `traits.rs`, `concurrent_registry.rs` are `pub mod` but unused;
 `runtime/method_calls_old.rs` is not even compiled. Deps `string-interner`, `typed-arena`, `beef`,
 `dashmap` are only used by dead code. Since the modules are `pub`, removal is a semver-visible
 change → mark `#[deprecated]` in 0.7, remove in 0.8 (or ADR to remove now while pre-1.0).
+
+Brief (orchestrator, 2026-11-20): maintainer chose to remove now (ADR-0010, Accepted).
+  Goal: no dead modules, files, or dependencies left; gate green.
+  Role: rust-engineer · `done` · Branch: feature/bl-002-remove-dead-code
+  Part 1 (internal, no API impact):
+    - Cargo.toml: drop `string-interner`, `typed-arena`, `beef` (no users at all).
+    - Delete src/runtime/method_calls_old.rs (not compiled).
+    - src/bin/http_server/cache.rs, multipart.rs: delete the dead items BL-003 marked with
+      `#[allow(dead_code)]` + BL-002 notes (ResponsePool, get/return_pooled_response, unused
+      CachedResult fields, MultipartField.content_type, get_field) and remove those allows.
+      Bins are not public API. If deleting a field changes a JSON response shape, stop and report.
+  Part 2 (public API, ADR-0010):
+    - Delete src/memory_pool.rs, src/traits.rs, src/concurrent_registry.rs and their `pub mod` lines;
+      drop `dashmap`.
+    - Delete src/runtime/evaluation.rs and its `pub mod`.
+    - tests/evaluator_parity.rs: its second path is `runtime::evaluation::*`. Re-point that side at
+      the public API (`skillet::evaluate`, `evaluate_with`, `evaluate_with_custom` analogue via
+      `runtime::evaluator::eval_with_vars_and_custom`, `evaluate_with_assignments*`) so the corpus
+      still compares two entry layers; keep every expression; update the header comment.
+      This is the only test edit allowed.
+  Docs: fix AGENTS.md §4 map rows and the module tree in docs/DEVELOPMENT_GUIDE.md (remove the three
+        modules and the "string interning"/"memory pooling" claims about them).
+  Out of scope: version bump and CHANGELOG (release branch does that; note "Removed" items in the handoff).
+  Acceptance: ./harness/check.sh (full) green; `cargo tree -e normal --depth 1` no longer lists the 4 deps;
+        `rg -n 'memory_pool|concurrent_registry|runtime::evaluation|dashmap' src tests Cargo.toml` empty;
+        no `BL-002` allow comments remain; report lines deleted.
+
+Handoff (rust-engineer, claude-opus-5-5, 2026-11-20):
+  Did: - bd15562 Part 1: dropped string-interner, typed-arena, beef; deleted
+         runtime/method_calls_old.rs; removed ResponsePool + get/return_pooled_response,
+         CachedResult.{execution_time_ms,cache_hit}, MultipartField.content_type (and its parsing)
+         and MultipartData::get_field, with their BL-002 allows. None were serialized, so no HTTP
+         JSON shape changed (EvalResponse.execution_time_ms is a separate, still-used field).
+       - 22fa8a0 Part 2 (ADR-0010): deleted memory_pool.rs, traits.rs, concurrent_registry.rs,
+         runtime/evaluation.rs and their `pub mod` lines; dropped dashmap. evaluator_parity.rs now
+         compares runtime::evaluator (pre-parsed Expr) against the public API on the source string
+         (evaluate / evaluate_with / evaluate_with_custom / evaluate_with_assignments[_and_context]);
+         Custom mode uses evaluate_with_custom with TRIPLE/GREET registered once in the global
+         registry (own test binary, no race). Corpus unchanged, no new public API.
+       - docs commit: AGENTS.md §4 rows, DEVELOPMENT_GUIDE.md module tree, pipeline and lexer/parser
+         sections (no interning/arena claims; stale evaluation/ paths now point at evaluator.rs).
+  Evidence: ./harness/check.sh (full, strict) green: 234 tests pass (239 before: the 5 removed were
+         unit tests inside memory_pool.rs and concurrent_registry.rs, testing only that dead code).
+         evaluator_parity 12/12. `cargo tree -e normal --depth 1` lists none of the 4 deps;
+         `rg -n 'memory_pool|concurrent_registry|runtime::evaluation|dashmap|BL-002' src tests
+         Cargo.toml` is empty. Net -1935 lines excluding Cargo.lock (+78/-2013), -2039 with it.
+         Test edits besides evaluator_parity.rs: the http_server cache unit test (src/bin) now
+         checks hit/miss via cache stats instead of the deleted `cache_hit` field (same coverage).
+  Removed pub paths (for the 0.7.0 changelog "Removed"): skillet::memory_pool,
+         skillet::traits, skillet::concurrent_registry, skillet::runtime::evaluation.
+  Risks/Follow-ups: README.md:21 still claims "string interning and memory pooling" and
+         benches/benchmark_phase1.sh echoes the same; both outside this brief (docs/perf owners,
+         fits BL-006). harness/roles/performance-engineer.md:27 cites
+         runtime/evaluation/higher_order.rs (now evaluator.rs). DEVELOPMENT_GUIDE §7.2 still has a
+         generic "use string interning" tip; left as advice. Cargo.toml `include` still lists
+         deleted DAEMON_*.md files (BL-006).
+  ADR: none (implements ADR-0010)
+
+Review (orchestrator, 2026-11-20): accepted. 5 modules/files and 4 deps gone, ~1.9k lines removed,
+  strict gate green (234 tests; the 5 fewer are unit tests of deleted code). No HTTP response shape
+  changed. 0.7.0 changelog "Removed": skillet::{memory_pool, traits, concurrent_registry,
+  runtime::evaluation} (BL-021). Leftover false claims moved to BL-006.
 
 ### BL-003 · Format + clippy to zero, then make the gate strict · P1 · `done` · rust-engineer
 One commit `cargo fmt` (no other changes), then fix clippy (mostly `args.get(0)` → `first()`,
@@ -176,6 +238,8 @@ and record eval latency (lib, CLI, HTTP) in `benches/BASELINE.md`. All perf item
 - `docs/README.md` links `performance-optimization.prd.md` (missing).
 - `docs/DEVELOPMENT_GUIDE.md` claims lexer string interning and AST memory pooling — not true in code.
 - "100x+ speed increase" claim has no reproducible benchmark (re-measure after BL-005).
+- `README.md` and `benches/benchmark_phase1.sh` still claim string interning and memory pooling
+  (the code for them was deleted in BL-002).
 
 ### BL-007 · Rustdoc for the public API · P2 · `todo` · docs-engineer
 Every `pub fn` in `src/lib.rs` gets docs + runnable doctest; fix `parse` docstring ("arithmetic").

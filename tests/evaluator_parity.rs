@@ -1,21 +1,27 @@
-//! BL-001a: differential tests between the two evaluator implementations.
+//! Differential tests between two entry layers of the evaluator.
 //!
-//! `skillet::runtime::evaluator::*` is what the public API (`src/lib.rs`) calls.
-//! `skillet::runtime::evaluation::*` is what method/lambda calls use internally.
-//! Every expression below is parsed once and evaluated through both paths; they must agree
-//! (both `Ok` with the same `Value`, or both `Err`). Error messages are not compared, but a
-//! differing message is reported on stderr so it shows up with `--nocapture`.
+//! - runtime layer: the expression is parsed once with `skillet::parse` and evaluated with
+//!   `skillet::runtime::evaluator::*` directly.
+//! - public layer: the source string goes through the top-level API in `src/lib.rs`
+//!   (`evaluate`, `evaluate_with`, `evaluate_with_custom`, `evaluate_with_assignments`,
+//!   `evaluate_with_assignments_and_context`), which parses and dispatches on its own.
 //!
-//! Since BL-001b both paths share one implementation; the `divergence_*` tests at the bottom
-//! pin the cases (D1-D5) where the old duplicate evaluator disagreed, as regression tests.
+//! Both must agree for every expression (both `Ok` with the same `Value`, or both `Err`).
+//! Error messages are not compared, but a differing message is reported on stderr so it shows
+//! up with `--nocapture`.
+//!
+//! History: BL-001a wrote this file to compare `runtime::evaluator` with the duplicate
+//! `evaluation/` evaluator. BL-001b merged them and ADR-0010 deleted the old module path,
+//! so the second side is now the public API. The `divergence_*` tests at the bottom keep the
+//! cases (D1-D5) where the old duplicate disagreed, as regression tests.
 //!
 //! To extend the corpus, add a string to the relevant table.
 
-use skillet::runtime::{evaluation, evaluator};
+use skillet::runtime::evaluator;
 use skillet::{parse, CustomFunction, Error, FunctionRegistry, Value};
 use std::collections::HashMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Once, RwLock};
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -100,12 +106,23 @@ impl CustomFunction for Greet {
     }
 }
 
-/// A local registry (not the global one) so this file never races with other tests.
+/// Registry passed explicitly to the runtime layer.
 fn local_registry() -> Arc<RwLock<FunctionRegistry>> {
     let mut r = FunctionRegistry::new();
     r.register(Box::new(Triple)).unwrap();
     r.register(Box::new(Greet)).unwrap();
     Arc::new(RwLock::new(r))
+}
+
+/// The public layer (`skillet::evaluate_with_custom`) only reads the global registry, so the
+/// same two functions are registered there once. Each integration test file is its own binary
+/// and nothing else in this file touches the global registry, so this cannot race.
+fn ensure_global_registry() {
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        skillet::register_function(Box::new(Triple)).unwrap();
+        skillet::register_function(Box::new(Greet)).unwrap();
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -114,15 +131,17 @@ fn local_registry() -> Arc<RwLock<FunctionRegistry>> {
 
 #[derive(Clone, Copy, Debug)]
 enum Mode {
-    /// `eval(expr)` — no variables.
+    /// `eval(expr)` vs `evaluate(src)` — no variables.
     Eval,
-    /// `eval_with_vars(expr, fixture)`.
+    /// `eval_with_vars(expr, fixture)` vs `evaluate_with(src, fixture)`.
     Vars,
-    /// `eval_with_vars_and_custom(expr, fixture, local registry)`.
+    /// `eval_with_vars_and_custom(expr, fixture, local registry)` vs
+    /// `evaluate_with_custom(src, fixture)` (global registry with the same functions).
     Custom,
-    /// `eval_with_assignments(expr, fixture)`.
+    /// `eval_with_assignments(expr, fixture)` vs `evaluate_with_assignments(src, fixture)`.
     Assign,
-    /// `eval_with_assignments_and_context(expr, fixture)` — compares value and final vars.
+    /// `eval_with_assignments_and_context` vs `evaluate_with_assignments_and_context` —
+    /// compares value and final vars.
     Context,
 }
 
@@ -168,7 +187,7 @@ fn run(f: impl FnOnce() -> Result<String, Error>) -> Outcome {
     }
 }
 
-/// Evaluates `src` through both implementations. Returns `None` when they agree, otherwise a
+/// Evaluates `src` through both layers. Returns `None` when they agree, otherwise a
 /// one-line description of the divergence.
 fn diverges(src: &str, mode: Mode) -> Option<String> {
     let expr = match parse(src) {
@@ -177,27 +196,25 @@ fn diverges(src: &str, mode: Mode) -> Option<String> {
     };
     let vars = fixture_vars();
     let reg = local_registry();
-    let (old, new) = match mode {
+    ensure_global_registry();
+    let (runtime, public) = match mode {
         Mode::Eval => (
             run(|| evaluator::eval(&expr).map(|v| format!("{:?}", v))),
-            run(|| evaluation::eval(&expr).map(|v| format!("{:?}", v))),
+            run(|| skillet::evaluate(src).map(|v| format!("{:?}", v))),
         ),
         Mode::Vars => (
             run(|| evaluator::eval_with_vars(&expr, &vars).map(|v| format!("{:?}", v))),
-            run(|| evaluation::eval_with_vars(&expr, &vars).map(|v| format!("{:?}", v))),
+            run(|| skillet::evaluate_with(src, &vars).map(|v| format!("{:?}", v))),
         ),
         Mode::Custom => (
             run(|| {
                 evaluator::eval_with_vars_and_custom(&expr, &vars, &reg).map(|v| format!("{:?}", v))
             }),
-            run(|| {
-                evaluation::eval_with_vars_and_custom(&expr, &vars, &reg)
-                    .map(|v| format!("{:?}", v))
-            }),
+            run(|| skillet::evaluate_with_custom(src, &vars).map(|v| format!("{:?}", v))),
         ),
         Mode::Assign => (
             run(|| evaluator::eval_with_assignments(&expr, &vars).map(|v| format!("{:?}", v))),
-            run(|| evaluation::eval_with_assignments(&expr, &vars).map(|v| format!("{:?}", v))),
+            run(|| skillet::evaluate_with_assignments(src, &vars).map(|v| format!("{:?}", v))),
         ),
         Mode::Context => (
             run(|| {
@@ -205,22 +222,22 @@ fn diverges(src: &str, mode: Mode) -> Option<String> {
                     .map(|(v, ctx)| format!("{:?} | {}", v, sorted_vars(&ctx)))
             }),
             run(|| {
-                evaluation::eval_with_assignments_and_context(&expr, &vars)
+                skillet::evaluate_with_assignments_and_context(src, &vars)
                     .map(|(v, ctx)| format!("{:?} | {}", v, sorted_vars(&ctx)))
             }),
         ),
     };
-    if let (Outcome::Err(a), Outcome::Err(b)) = (&old, &new) {
+    if let (Outcome::Err(a), Outcome::Err(b)) = (&runtime, &public) {
         if a != b {
-            eprintln!("[parity] {:?} {:?}: same outcome, different error messages: evaluator={:?} evaluation={:?}", mode, src, a, b);
+            eprintln!("[parity] {:?} {:?}: same outcome, different error messages: runtime={:?} public={:?}", mode, src, a, b);
         }
     }
-    if old.agrees(&new) {
+    if runtime.agrees(&public) {
         None
     } else {
         Some(format!(
-            "{:?} {:?}\n    evaluator.rs : {:?}\n    evaluation/  : {:?}",
-            mode, src, old, new
+            "{:?} {:?}\n    runtime::evaluator : {:?}\n    public API         : {:?}",
+            mode, src, runtime, public
         ))
     }
 }
@@ -252,7 +269,7 @@ fn assert_parity(table: &[&str], modes: &[Mode]) {
     );
 }
 
-/// For divergence tables: asserts that the two paths now agree. Expected to FAIL until BL-001b.
+/// For divergence tables: asserts that the two layers agree on each listed (expression, mode).
 fn assert_parity_each(table: &[(&str, Mode)]) {
     let failures: Vec<String> = table
         .iter()
@@ -669,35 +686,32 @@ fn parity_harness_is_not_vacuous() {
             "{}",
             src
         );
-        assert_eq!(
-            evaluation::eval_with_vars(&expr, &vars).unwrap(),
-            want,
-            "{}",
-            src
-        );
+        assert_eq!(skillet::evaluate_with(src, &vars).unwrap(), want, "{}", src);
     }
     let reg = local_registry();
+    ensure_global_registry();
     let expr = parse("TRIPLE(4)").unwrap();
     assert_eq!(
         evaluator::eval_with_vars_and_custom(&expr, &vars, &reg).unwrap(),
         n(12.0)
     );
     assert_eq!(
-        evaluation::eval_with_vars_and_custom(&expr, &vars, &reg).unwrap(),
+        skillet::evaluate_with_custom("TRIPLE(4)", &vars).unwrap(),
         n(12.0)
     );
     let expr = parse("UNKNOWNFN(1)").unwrap();
     assert!(evaluator::eval(&expr).is_err());
-    assert!(evaluation::eval(&expr).is_err());
+    assert!(skillet::evaluate("UNKNOWNFN(1)").is_err());
 }
 
 // ---------------------------------------------------------------------------
-// Known divergences (BL-001). Each table is one root cause. These pairs are skipped by the
-// parity tests above and replayed here; the tests FAIL today and must pass after BL-001b.
-// Contract (BL-001 brief): the evaluator.rs (public API) result wins.
+// Former divergences (BL-001). Each table is one root cause in the removed duplicate
+// evaluator (`evaluation/`, deleted per ADR-0010). BL-001b fixed them by keeping the
+// evaluator.rs result; the tables are replayed here as regression tests. `KNOWN_DIVERGENCES`
+// (pairs skipped by the parity tests above) is empty.
 // ---------------------------------------------------------------------------
 
-/// D1: `JQ` and `DIG` are not implemented in `evaluation/`: "Unknown function: JQ" / "DIG".
+/// D1: `JQ` and `DIG` were not implemented in `evaluation/`: "Unknown function: JQ" / "DIG".
 const DIV_JQ_DIG: &[(&str, Mode)] = &[
     ("JQ(:arguments, '$.accounts[*].amount')", Mode::Vars),
     ("JQ(:arguments, '$.accounts[*].amount')", Mode::Custom),
@@ -735,7 +749,7 @@ const DIV_JQ_DIG: &[(&str, Mode)] = &[
     (":obj2 := {\"user\": {\"posts\": [{\"title\": \"t0\"}, {\"title\": \"t1\"}]}}; DIG(:obj2, ['user', 'posts', 1, 'title'])", Mode::Context),
 ];
 
-/// D2: `evaluation::eval` (no vars) rejects higher-order builtins with
+/// D2: the old `evaluation::eval` (no vars) rejected higher-order builtins with
 /// "<NAME> requires variable context"; `evaluator::eval` evaluates them.
 const DIV_HOF_WITHOUT_VARS: &[(&str, Mode)] = &[
     ("FILTER([1, 2, 3, 4], :x % 2 == 0)", Mode::Eval),
@@ -754,9 +768,9 @@ const DIV_HOF_WITHOUT_VARS: &[(&str, Mode)] = &[
     ("FIND([1, 5, 10], :n > 3, 'n')", Mode::Eval),
 ];
 
-/// D3: `REDUCE` without explicit param names in `evaluation/` (non-custom path) fails with
-/// "Missing variable: :acc": `get_param_name(None)` returns "x" for the accumulator too, so the
-/// accumulator is bound to `:x` and `:acc` is never set. The custom-registry path is fine.
+/// D3: `REDUCE` without explicit param names in `evaluation/` (non-custom path) failed with
+/// "Missing variable: :acc": `get_param_name(None)` returned "x" for the accumulator too, so the
+/// accumulator was bound to `:x` and `:acc` was never set. The custom-registry path was fine.
 const DIV_REDUCE_DEFAULT_ACC: &[(&str, Mode)] = &[
     ("REDUCE([1, 2, 3], :acc + :x, 0)", Mode::Vars),
     ("REDUCE([1, 2, 3], :acc + :x, 0)", Mode::Assign),
@@ -766,8 +780,8 @@ const DIV_REDUCE_DEFAULT_ACC: &[(&str, Mode)] = &[
     ("REDUCE(:arr, :acc * :x, 1)", Mode::Context),
 ];
 
-/// D4: the custom-registry higher-order builtins in `evaluation/` ignore the optional parameter
-/// name arguments and always bind `:x` / `:acc`: "Undefined variable: v" etc.
+/// D4: the custom-registry higher-order builtins in `evaluation/` ignored the optional parameter
+/// name arguments and always bound `:x` / `:acc`: "Undefined variable: v" etc.
 const DIV_HOF_CUSTOM_PARAM_NAMES: &[(&str, Mode)] = &[
     ("FILTER([1, 2, 3, 4], :v > 2, 'v')", Mode::Custom),
     ("MAP([1, 2, 3], :item + 1, 'item')", Mode::Custom),
@@ -778,9 +792,9 @@ const DIV_HOF_CUSTOM_PARAM_NAMES: &[(&str, Mode)] = &[
     ("FIND([1, 5, 10], :n > 3, 'n')", Mode::Custom),
 ];
 
-/// D5: `evaluation::eval` (no-vars entry point) is a reduced evaluator: string/null equality
-/// fails with "Comparison on non-number", and property access, `&.` (property and method) and
-/// `;` sequences fail with "Use eval_with_vars for ...". Note evaluator.rs returns
+/// D5: the old `evaluation::eval` (no-vars entry point) was a reduced evaluator: string/null
+/// equality failed with "Comparison on non-number", and property access, `&.` (property and
+/// method) and `;` sequences failed with "Use eval_with_vars for ...". Note evaluator.rs returns
 /// `NULL == NULL` -> false, which is pinned here as-is.
 const DIV_EVAL_NO_VARS: &[(&str, Mode)] = &[
     ("'a' == 'a'", Mode::Eval),
