@@ -105,11 +105,37 @@ Review (orchestrator, 2026-11-20): accepted. Full gate green, 12/12 parity tests
   -1199 lines. Method lambdas now gain JQ/DIG and the other D1-D5 fixes (intended). Perf unmeasured
   until BL-005. Pre-existing JQ single-match unwrap filed as BL-024.
 
-### BL-002 · Remove dead modules and unused dependencies · P1 · `todo` · rust-engineer
+### BL-002 · Remove dead modules and unused dependencies · P1 · `in-progress` · rust-engineer
 `memory_pool.rs`, `traits.rs`, `concurrent_registry.rs` are `pub mod` but unused;
 `runtime/method_calls_old.rs` is not even compiled. Deps `string-interner`, `typed-arena`, `beef`,
 `dashmap` are only used by dead code. Since the modules are `pub`, removal is a semver-visible
 change → mark `#[deprecated]` in 0.7, remove in 0.8 (or ADR to remove now while pre-1.0).
+
+Brief (orchestrator, 2026-11-20): maintainer chose to remove now (ADR-0010, Accepted).
+  Goal: no dead modules, files, or dependencies left; gate green.
+  Role: rust-engineer · `in-progress` · Branch: feature/bl-002-remove-dead-code
+  Part 1 (internal, no API impact):
+    - Cargo.toml: drop `string-interner`, `typed-arena`, `beef` (no users at all).
+    - Delete src/runtime/method_calls_old.rs (not compiled).
+    - src/bin/http_server/cache.rs, multipart.rs: delete the dead items BL-003 marked with
+      `#[allow(dead_code)]` + BL-002 notes (ResponsePool, get/return_pooled_response, unused
+      CachedResult fields, MultipartField.content_type, get_field) and remove those allows.
+      Bins are not public API. If deleting a field changes a JSON response shape, stop and report.
+  Part 2 (public API, ADR-0010):
+    - Delete src/memory_pool.rs, src/traits.rs, src/concurrent_registry.rs and their `pub mod` lines;
+      drop `dashmap`.
+    - Delete src/runtime/evaluation.rs and its `pub mod`.
+    - tests/evaluator_parity.rs: its second path is `runtime::evaluation::*`. Re-point that side at
+      the public API (`skillet::evaluate`, `evaluate_with`, `evaluate_with_custom` analogue via
+      `runtime::evaluator::eval_with_vars_and_custom`, `evaluate_with_assignments*`) so the corpus
+      still compares two entry layers; keep every expression; update the header comment.
+      This is the only test edit allowed.
+  Docs: fix AGENTS.md §4 map rows and the module tree in docs/DEVELOPMENT_GUIDE.md (remove the three
+        modules and the "string interning"/"memory pooling" claims about them).
+  Out of scope: version bump and CHANGELOG (release branch does that; note "Removed" items in the handoff).
+  Acceptance: ./harness/check.sh (full) green; `cargo tree -e normal --depth 1` no longer lists the 4 deps;
+        `rg -n 'memory_pool|concurrent_registry|runtime::evaluation|dashmap' src tests Cargo.toml` empty;
+        no `BL-002` allow comments remain; report lines deleted.
 
 ### BL-003 · Format + clippy to zero, then make the gate strict · P1 · `done` · rust-engineer
 One commit `cargo fmt` (no other changes), then fix clippy (mostly `args.get(0)` → `first()`,
