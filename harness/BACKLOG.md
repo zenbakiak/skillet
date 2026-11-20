@@ -279,7 +279,7 @@ Remove or relocate `test_js_upload.py`, `test_large_request.py`, `performance_re
 `Error` is `{message, position}` only; callers can't match on error type. Propose an `ErrorKind`
 enum without breaking `Error::new`.
 
-### BL-017 · Stack overflow on deeply nested input (DoS) · P1 · `review` · security-reviewer → rust-engineer
+### BL-017 · Stack overflow on deeply nested input (DoS) · P1 · `done` · security-reviewer → rust-engineer
 `sk "((((…20000×…1"` aborts with `fatal runtime error: stack overflow` (reproduced 2026-11-20).
 It's an abort, not a panic, so one HTTP request kills `sk_http_server` for everyone. Add a nesting
 depth limit in `parser.rs` (and in evaluator recursion) that returns `Error`. QA adds
@@ -317,7 +317,7 @@ Brief (orchestrator, 2026-11-20):
       parser: enforce the same 128 depth when the evaluator constructs an Array value from evaluated
       elements, returning the same error. Keep it O(1) per construction (e.g. track depth, don't
       re-walk), and report the overhead on one array-heavy expression.
-  BL-017b · rust-engineer (Claude Opus 5.5) · `review`
+  BL-017b · rust-engineer (Claude Opus 5.5) · `done`
     Do: enforce the limit at parse time (depth counter in recursive descent AND in the iterative
         binary/postfix loops so left-deep trees are bounded too). If 017a shows the evaluator or
         `Drop` can still overflow at depth 256 on a 2 MB thread, fix that too. Un-ignore 017a tests.
@@ -389,6 +389,11 @@ Handoff (rust-engineer, Claude Opus 5.5, 2026-11-20) — BL-017b:
        - BL-028 (docs) filed for the new limit/error.
   ADR: none (limit value decided by orchestrator in the revised plan; new pub const is additive).
 
+Review (orchestrator, 2026-11-20): accepted. Verified in release: 20k parens, 50k unary minus and
+  30k-term `1+1+…` all return the depth error; precedence spot checks unchanged; only
+  tests/security_limits.rs edited; strict clippy clean (both feature sets). Parser refactor is
+  bigger than briefed but covered by parity + full suite. Known gap → BL-029.
+
 ### BL-018 · QuickJS resource limits + constant-time token compare · P1 · `todo` · security-reviewer → rust-engineer
 `src/js_plugin.rs` sets no memory limit or interrupt handler (an uploaded `while(true){}` pins a
 worker forever). `src/bin/http_server/auth.rs` compares tokens with `!=`. Write the threat model
@@ -440,3 +445,9 @@ BL-017b added `MAX_NESTING_DEPTH = 128` (`skillet::MAX_NESTING_DEPTH`) and the e
 "Expression nested too deeply (max 128)". It applies to expression nesting (parens, brackets,
 calls, unary/ternary, operator and `.`/`[]` chains) and to arrays built at runtime. Add it to
 `DOCUMENTATION.md` / `API_REFERENCE.md` (limits section) and the HTTP error docs.
+
+### BL-029 · Debug-build parser stack use (~20 KB per nesting level) · P3 · `todo` · performance-engineer → rust-engineer
+After BL-017, depth 128 still overflows a default 2 MB thread in **debug** builds (release is fine
+down to 1 MB). Affects embedders spawning threads in debug and in-process tests. Fix by folding the
+binary precedence levels into one precedence-climbing loop and shrinking `parse_atom`'s frame;
+measure stack per level before/after.
