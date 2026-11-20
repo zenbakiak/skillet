@@ -4,8 +4,6 @@ use std::collections::HashMap;
 pub struct MultipartField {
     pub name: String,
     pub filename: Option<String>,
-    #[allow(dead_code)] // BL-002: pub field parsed but never read
-    pub content_type: Option<String>,
     pub content: Vec<u8>,
 }
 
@@ -15,11 +13,6 @@ pub struct MultipartData {
 }
 
 impl MultipartData {
-    #[allow(dead_code)] // BL-002: unused pub method, removal tracked there
-    pub fn get_field(&self, name: &str) -> Option<&MultipartField> {
-        self.fields.get(name)
-    }
-
     pub fn get_text_field(&self, name: &str) -> Option<String> {
         self.fields
             .get(name)
@@ -69,7 +62,6 @@ fn parse_multipart_field(
 ) -> Result<MultipartField, String> {
     let mut name = String::new();
     let mut filename = None;
-    let mut content_type = None;
 
     // Parse headers
     for line in headers_section.lines() {
@@ -85,15 +77,6 @@ fn parse_multipart_field(
             }
 
             filename = params.get("filename").cloned();
-        } else if line.to_lowercase().starts_with("content-type:") {
-            // Parse Content-Type header
-            content_type = Some(
-                line.split(':')
-                    .nth(1)
-                    .unwrap_or("application/octet-stream")
-                    .trim()
-                    .to_string(),
-            );
         }
     }
 
@@ -111,7 +94,6 @@ fn parse_multipart_field(
     Ok(MultipartField {
         name,
         filename,
-        content_type,
         content,
     })
 }

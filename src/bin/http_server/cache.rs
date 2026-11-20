@@ -11,10 +11,6 @@ use skillet::{evaluate_with_assignments, evaluate_with_assignments_and_context, 
 pub struct CachedResult {
     pub result: Result<Value, String>,
     pub variable_context: Option<HashMap<String, Value>>,
-    #[allow(dead_code)] // BL-002: pub field never read outside tests
-    pub execution_time_ms: f64,
-    #[allow(dead_code)] // BL-002: pub field read only in unit tests
-    pub cache_hit: bool,
 }
 
 /// Expression cache entry
@@ -125,8 +121,6 @@ pub fn evaluate_cached(
             return CachedResult {
                 result: Ok(entry.result.clone()),
                 variable_context: entry.variable_context.clone(),
-                execution_time_ms: entry.execution_time_ms,
-                cache_hit: true,
             };
         }
     }
@@ -167,8 +161,6 @@ pub fn evaluate_cached(
     CachedResult {
         result: result.map_err(|e| e.to_string()),
         variable_context,
-        execution_time_ms,
-        cache_hit: false,
     }
 }
 
@@ -238,52 +230,6 @@ pub fn return_pooled_buffer(buffer: Vec<u8>) {
     HTTP_BUFFER_POOL.with(|pool| pool.borrow_mut().return_buffer(buffer));
 }
 
-/// Response object pool for JSON serialization
-#[allow(dead_code)] // BL-002: unused pub pool, removal tracked there
-pub struct ResponsePool<T> {
-    pool: Vec<T>,
-    capacity: usize,
-}
-
-#[allow(dead_code)] // BL-002: unused pub pool, removal tracked there
-impl<T> ResponsePool<T> {
-    fn new(capacity: usize) -> Self {
-        Self {
-            pool: Vec::with_capacity(capacity),
-            capacity,
-        }
-    }
-
-    fn get(&mut self) -> Option<T> {
-        self.pool.pop()
-    }
-
-    fn return_item(&mut self, item: T) {
-        if self.pool.len() < self.capacity {
-            self.pool.push(item);
-        }
-        // Drop item if pool is full
-    }
-}
-
-// Response pooling for EvalResponse objects
-thread_local! {
-    static RESPONSE_POOL: std::cell::RefCell<ResponsePool<super::types::EvalResponse>> =
-        std::cell::RefCell::new(ResponsePool::new(8));
-}
-
-/// Get a pooled response object (if available)
-#[allow(dead_code)] // BL-002: unused pub fn, removal tracked there
-pub fn get_pooled_response() -> Option<super::types::EvalResponse> {
-    RESPONSE_POOL.with(|pool| pool.borrow_mut().get())
-}
-
-/// Return a response object to the pool
-#[allow(dead_code)] // BL-002: unused pub fn, removal tracked there
-pub fn return_pooled_response(response: super::types::EvalResponse) {
-    RESPONSE_POOL.with(|pool| pool.borrow_mut().return_item(response));
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -296,12 +242,12 @@ mod tests {
 
         // First evaluation should be a cache miss
         let result1 = evaluate_cached("2+2", &vars, false);
-        assert!(!result1.cache_hit);
         assert!(result1.result.is_ok());
+        let stats = get_cache_stats();
+        assert_eq!((stats.hits, stats.misses), (0, 1));
 
         // Second evaluation should be a cache hit
         let result2 = evaluate_cached("2+2", &vars, false);
-        assert!(result2.cache_hit);
         assert!(result2.result.is_ok());
 
         let stats = get_cache_stats();
