@@ -111,9 +111,53 @@ Review (orchestrator, 2026-11-20): accepted. Full gate green, 12/12 parity tests
 `dashmap` are only used by dead code. Since the modules are `pub`, removal is a semver-visible
 change → mark `#[deprecated]` in 0.7, remove in 0.8 (or ADR to remove now while pre-1.0).
 
-### BL-003 · Format + clippy to zero, then make the gate strict · P1 · `todo` · rust-engineer
+### BL-003 · Format + clippy to zero, then make the gate strict · P1 · `review` · rust-engineer
 One commit `cargo fmt` (no other changes), then fix clippy (mostly `args.get(0)` → `first()`,
 empty `println!("")`). Finish by setting `STRICT=1` default in `harness/check.sh`.
+
+Brief (orchestrator, 2026-11-20):
+  Goal: `cargo fmt --check` and `cargo clippy --all-targets -- -D warnings` pass (default and
+        --no-default-features); the gate enforces it by default.
+  Role: rust-engineer · `in-progress` · Branch: feature/bl-003-fmt-clippy
+  Scope: whole crate (src/, tests/, hook_examples/ if compiled), harness/check.sh.
+  Commits, in order:
+    1. style: `cargo fmt` only. Nothing else in that commit, so reviewers can skip it.
+    2. fix(lint): mechanical clippy/rustc fixes with no behavior change.
+    3. Dead code: delete only if private and unused; unused `pub` items get `#[allow(dead_code)]`
+       with a `// BL-002` comment instead (removal is BL-002's job, needs deprecation).
+    4. ci(harness): STRICT=1 default in check.sh (clippy -D warnings + fmt --check), keep STRICT=0
+       as an opt-out, drop the warning-count baseline text.
+  Out of scope: semantic changes, renames of pub items, new deps, clippy.toml/rustfmt.toml
+        (defaults are fine), files in src/runtime/method_calls_old.rs (not compiled; BL-002).
+  Rule: if a lint fix would change a result or a pub signature, `#[allow(...)]` it locally with a
+        one-line reason and list it in the handoff instead.
+  Acceptance: `./harness/check.sh` (full) green with STRICT=1 default; no test file expectations
+        changed; list of every `#[allow]` added.
+  Refs: PRD-003 FR-3.
+
+Handoff (rust-engineer, claude-opus-5-5, 2026-11-20):
+  Did: - 7c4646c `cargo fmt` only (65 files). bd24d2a mechanical clippy/rustc fixes.
+         a27532f dead code: deleted private unused fields `duration`, `total_time` in
+         sk_http_bench.rs; unused pub items in http_server got `#[allow(dead_code)] // BL-002`.
+         93ed863 check.sh: STRICT=1 default (clippy -D warnings for all targets and for
+         `--lib --no-default-features`, plus fmt --check); STRICT=0 opt-out reports only.
+  Evidence: `./harness/check.sh` (full) green with strict default. clippy warnings 92 -> 0;
+         rustc build warnings 0. No test expected value changed (test edits are fmt, clippy
+         `assert_eq!(x, true)` -> `assert!(x)`, range `contains`, unused import, allow attrs).
+  Allows added:
+         - tests/{arithmetic,prd_cases,prd_comprehensive}.rs:2 `#![allow(clippy::approx_constant)]`:
+           3.14/3.14159 are ROUND() inputs/expectations, not PI (deny-by-default lint).
+         - src/runtime/statistical.rs:156 `allow(clippy::manual_range_contains)` (PERCENTILE):
+           `!(0.0..=1.0).contains(&p)` would reject NaN, which the `<`/`>` form lets through.
+         - src/bin/http_server/cache.rs:14,16 (CachedResult.execution_time_ms, cache_hit),
+           :242,:248 (ResponsePool + impl), :276,:282 (get/return_pooled_response);
+           src/bin/http_server/multipart.rs:7 (content_type), :18 (get_field). All `dead_code`, BL-002.
+  Risks/Follow-ups: binaries do not build with `--no-default-features` (they import
+         JSPluginLoader/js_plugin unconditionally); pre-existing, gate only checks `--lib` there.
+         Suggest a small item to `#[cfg(feature = "plugins")]` those imports or set
+         `required-features` on the bins. PERCENTILE accepting NaN is likely a bug; route to
+         language-designer if anyone cares.
+  ADR: none
 
 ### BL-004 · CI parity with the harness gate · P1 · `todo` · release-engineer (QA defines checks)
 `.github/workflows/rust.yml` only runs build/test on `main`. Run `./harness/check.sh` on push/PR
