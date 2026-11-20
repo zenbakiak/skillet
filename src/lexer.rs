@@ -118,7 +118,7 @@ impl<'a> Lexer<'a> {
                     // Only consume the dot if it's followed by a digit (for decimals like 1.23)
                     // Don't consume it if it's followed by a letter (for method calls like 1.abs)
                     if let Some(&next) = self.input.get(self.pos + 1) {
-                        if matches!(next, b'0'..=b'9') {
+                        if next.is_ascii_digit() {
                             has_dot = true;
                             end += 1;
                             self.pos += 1;
@@ -170,11 +170,11 @@ impl<'a> Lexer<'a> {
         }
         self.last_start = start;
         self.last_end = end;
-        
+
         // Fast path for common keywords - avoid string allocation
         let len = end - start;
         let bytes = &self.input[start..end];
-        
+
         // Check common keywords by length first, then bytes
         let token = match len {
             4 => {
@@ -208,7 +208,7 @@ impl<'a> Lexer<'a> {
                 Token::Identifier(s)
             }
         };
-        
+
         Ok(token)
     }
 

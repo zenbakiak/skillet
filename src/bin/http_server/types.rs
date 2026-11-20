@@ -44,15 +44,9 @@ impl<'de> Deserialize<'de> for IncludeVariables {
                     .split(',')
                     .map(|s| s.trim())
                     .filter(|s| !s.is_empty())
-                    .map(|s| {
-                        if s.starts_with(':') {
-                            s[1..].to_string()
-                        } else {
-                            s.to_string()
-                        }
-                    })
+                    .map(|s| s.strip_prefix(':').unwrap_or(s).to_string())
                     .collect();
-                
+
                 if vars.is_empty() {
                     Ok(IncludeVariables::None)
                 } else {

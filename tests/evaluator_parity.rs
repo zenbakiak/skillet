@@ -21,9 +21,15 @@ use std::sync::{Arc, RwLock};
 // Fixtures
 // ---------------------------------------------------------------------------
 
-fn n(x: f64) -> Value { Value::Number(x) }
-fn st(x: &str) -> Value { Value::String(x.to_string()) }
-fn arr(xs: &[f64]) -> Value { Value::Array(xs.iter().map(|x| n(*x)).collect()) }
+fn n(x: f64) -> Value {
+    Value::Number(x)
+}
+fn st(x: &str) -> Value {
+    Value::String(x.to_string())
+}
+fn arr(xs: &[f64]) -> Value {
+    Value::Array(xs.iter().map(|x| n(*x)).collect())
+}
 
 fn fixture_vars() -> HashMap<String, Value> {
     let mut v = HashMap::new();
@@ -35,7 +41,10 @@ fn fixture_vars() -> HashMap<String, Value> {
     v.insert("num_text".into(), st("42"));
     v.insert("arr".into(), arr(&[1.0, 2.0, 3.0, 4.0, 5.0]));
     v.insert("empty".into(), Value::Array(vec![]));
-    v.insert("words".into(), Value::Array(vec![st("b"), st("a"), st("c")]));
+    v.insert(
+        "words".into(),
+        Value::Array(vec![st("b"), st("a"), st("c")]),
+    );
     v.insert("nil".into(), Value::Null);
     v.insert("flag".into(), Value::Boolean(true));
     v.insert("money".into(), Value::Currency(19.99));
@@ -54,20 +63,34 @@ fn fixture_vars() -> HashMap<String, Value> {
 
 struct Triple;
 impl CustomFunction for Triple {
-    fn name(&self) -> &str { "TRIPLE" }
-    fn min_args(&self) -> usize { 1 }
-    fn max_args(&self) -> Option<usize> { Some(1) }
+    fn name(&self) -> &str {
+        "TRIPLE"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn max_args(&self) -> Option<usize> {
+        Some(1)
+    }
     fn execute(&self, args: Vec<Value>) -> Result<Value, Error> {
-        let x = args[0].as_number().ok_or_else(|| Error::new("TRIPLE expects a number", None))?;
+        let x = args[0]
+            .as_number()
+            .ok_or_else(|| Error::new("TRIPLE expects a number", None))?;
         Ok(Value::Number(x * 3.0))
     }
 }
 
 struct Greet;
 impl CustomFunction for Greet {
-    fn name(&self) -> &str { "GREET" }
-    fn min_args(&self) -> usize { 0 }
-    fn max_args(&self) -> Option<usize> { Some(1) }
+    fn name(&self) -> &str {
+        "GREET"
+    }
+    fn min_args(&self) -> usize {
+        0
+    }
+    fn max_args(&self) -> Option<usize> {
+        Some(1)
+    }
     fn execute(&self, args: Vec<Value>) -> Result<Value, Error> {
         match args.first() {
             Some(Value::String(s)) => Ok(Value::String(format!("hi {}", s))),
@@ -164,8 +187,13 @@ fn diverges(src: &str, mode: Mode) -> Option<String> {
             run(|| evaluation::eval_with_vars(&expr, &vars).map(|v| format!("{:?}", v))),
         ),
         Mode::Custom => (
-            run(|| evaluator::eval_with_vars_and_custom(&expr, &vars, &reg).map(|v| format!("{:?}", v))),
-            run(|| evaluation::eval_with_vars_and_custom(&expr, &vars, &reg).map(|v| format!("{:?}", v))),
+            run(|| {
+                evaluator::eval_with_vars_and_custom(&expr, &vars, &reg).map(|v| format!("{:?}", v))
+            }),
+            run(|| {
+                evaluation::eval_with_vars_and_custom(&expr, &vars, &reg)
+                    .map(|v| format!("{:?}", v))
+            }),
         ),
         Mode::Assign => (
             run(|| evaluator::eval_with_assignments(&expr, &vars).map(|v| format!("{:?}", v))),
@@ -190,7 +218,10 @@ fn diverges(src: &str, mode: Mode) -> Option<String> {
     if old.agrees(&new) {
         None
     } else {
-        Some(format!("{:?} {:?}\n    evaluator.rs : {:?}\n    evaluation/  : {:?}", mode, src, old, new))
+        Some(format!(
+            "{:?} {:?}\n    evaluator.rs : {:?}\n    evaluation/  : {:?}",
+            mode, src, old, new
+        ))
     }
 }
 
@@ -213,17 +244,36 @@ fn assert_parity(table: &[&str], modes: &[Mode]) {
                 .filter_map(move |m| diverges(src, *m))
         })
         .collect();
-    assert!(failures.is_empty(), "{} evaluator divergence(s):\n{}", failures.len(), failures.join("\n"));
+    assert!(
+        failures.is_empty(),
+        "{} evaluator divergence(s):\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
 }
 
 /// For divergence tables: asserts that the two paths now agree. Expected to FAIL until BL-001b.
 fn assert_parity_each(table: &[(&str, Mode)]) {
-    let failures: Vec<String> = table.iter().filter_map(|(src, m)| diverges(src, *m)).collect();
-    assert!(failures.is_empty(), "{} evaluator divergence(s):\n{}", failures.len(), failures.join("\n"));
+    let failures: Vec<String> = table
+        .iter()
+        .filter_map(|(src, m)| diverges(src, *m))
+        .collect();
+    assert!(
+        failures.is_empty(),
+        "{} evaluator divergence(s):\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
 }
 
 const ALL_VAR_MODES: &[Mode] = &[Mode::Vars, Mode::Custom, Mode::Assign, Mode::Context];
-const ALL_MODES: &[Mode] = &[Mode::Eval, Mode::Vars, Mode::Custom, Mode::Assign, Mode::Context];
+const ALL_MODES: &[Mode] = &[
+    Mode::Eval,
+    Mode::Vars,
+    Mode::Custom,
+    Mode::Assign,
+    Mode::Context,
+];
 
 // ---------------------------------------------------------------------------
 // Corpus: Expr variants (no variables needed)
@@ -613,13 +663,29 @@ fn parity_harness_is_not_vacuous() {
         ("COUNTIF(:arr, :x >= 3)", n(3.0)),
     ] {
         let expr = parse(src).unwrap();
-        assert_eq!(evaluator::eval_with_vars(&expr, &vars).unwrap(), want, "{}", src);
-        assert_eq!(evaluation::eval_with_vars(&expr, &vars).unwrap(), want, "{}", src);
+        assert_eq!(
+            evaluator::eval_with_vars(&expr, &vars).unwrap(),
+            want,
+            "{}",
+            src
+        );
+        assert_eq!(
+            evaluation::eval_with_vars(&expr, &vars).unwrap(),
+            want,
+            "{}",
+            src
+        );
     }
     let reg = local_registry();
     let expr = parse("TRIPLE(4)").unwrap();
-    assert_eq!(evaluator::eval_with_vars_and_custom(&expr, &vars, &reg).unwrap(), n(12.0));
-    assert_eq!(evaluation::eval_with_vars_and_custom(&expr, &vars, &reg).unwrap(), n(12.0));
+    assert_eq!(
+        evaluator::eval_with_vars_and_custom(&expr, &vars, &reg).unwrap(),
+        n(12.0)
+    );
+    assert_eq!(
+        evaluation::eval_with_vars_and_custom(&expr, &vars, &reg).unwrap(),
+        n(12.0)
+    );
     let expr = parse("UNKNOWNFN(1)").unwrap();
     assert!(evaluator::eval(&expr).is_err());
     assert!(evaluation::eval(&expr).is_err());
@@ -681,7 +747,10 @@ const DIV_HOF_WITHOUT_VARS: &[(&str, Mode)] = &[
     ("COUNTIF([1, 2, 3, 4], :x % 2 == 0)", Mode::Eval),
     ("FILTER([1, 2, 3, 4], :v > 2, 'v')", Mode::Eval),
     ("MAP([1, 2, 3], :item + 1, 'item')", Mode::Eval),
-    ("REDUCE([1, 2, 3], :total + :x, 10, 'x', 'total')", Mode::Eval),
+    (
+        "REDUCE([1, 2, 3], :total + :x, 10, 'x', 'total')",
+        Mode::Eval,
+    ),
     ("FIND([1, 5, 10], :n > 3, 'n')", Mode::Eval),
 ];
 
@@ -702,7 +771,10 @@ const DIV_REDUCE_DEFAULT_ACC: &[(&str, Mode)] = &[
 const DIV_HOF_CUSTOM_PARAM_NAMES: &[(&str, Mode)] = &[
     ("FILTER([1, 2, 3, 4], :v > 2, 'v')", Mode::Custom),
     ("MAP([1, 2, 3], :item + 1, 'item')", Mode::Custom),
-    ("REDUCE([1, 2, 3], :total + :x, 10, 'x', 'total')", Mode::Custom),
+    (
+        "REDUCE([1, 2, 3], :total + :x, 10, 'x', 'total')",
+        Mode::Custom,
+    ),
     ("FIND([1, 5, 10], :n > 3, 'n')", Mode::Custom),
 ];
 

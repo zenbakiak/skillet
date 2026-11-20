@@ -32,12 +32,12 @@ fn test_prd_example() {
     let vars = HashMap::new();
     let input = ":sum_group_1 := SUM([1,2,3,4,5,6])/LENGTH([1,2,3,4,5,6]); :sum_group_2 := SUM([23,4,5,6,7,8])/LENGTH([23,4,5,6,7,8]); (:sum_group_1 + :sum_group_2) * 100 / 50";
     let result = evaluate_with_assignments(input, &vars).unwrap();
-    
+
     // Calculate expected result:
     // sum_group_1 = (1+2+3+4+5+6)/6 = 21/6 = 3.5
     // sum_group_2 = (23+4+5+6+7+8)/6 = 53/6 = 8.833...
     // result = (3.5 + 8.833...) * 100 / 50 = 12.333... * 2 = 24.666...
-    let expected = (21.0/6.0 + 53.0/6.0) * 100.0 / 50.0;
+    let expected = (21.0 / 6.0 + 53.0 / 6.0) * 100.0 / 50.0;
     assert!(approx(result, expected));
 }
 
@@ -69,7 +69,7 @@ fn test_no_assignments() {
 fn test_assignment_with_initial_vars() {
     let mut vars = HashMap::new();
     vars.insert("base".to_string(), Value::Number(100.0));
-    
+
     let result = evaluate_with_assignments(":multiplier := 2; :base * :multiplier", &vars).unwrap();
     assert!(matches!(result, Value::Number(200.0)));
 }
@@ -95,8 +95,12 @@ fn test_new_financial_functions_in_assignment() {
 fn test_variable_scoping() {
     let mut vars = HashMap::new();
     vars.insert("global_var".to_string(), Value::Number(1.0));
-    
-    let result = evaluate_with_assignments(":local_var := :global_var + 10; :another := :local_var * 2; :another", &vars).unwrap();
+
+    let result = evaluate_with_assignments(
+        ":local_var := :global_var + 10; :another := :local_var * 2; :another",
+        &vars,
+    )
+    .unwrap();
     assert!(matches!(result, Value::Number(22.0)));
 }
 

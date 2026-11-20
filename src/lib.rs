@@ -15,10 +15,10 @@ pub use ast::Expr;
 pub use custom::{CustomFunction, FunctionRegistry};
 pub use error::Error;
 #[cfg(feature = "plugins")]
-pub use js_plugin::{JavaScriptFunction, JSPluginLoader};
-pub use types::Value;
+pub use js_plugin::{JSPluginLoader, JavaScriptFunction};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
+pub use types::Value;
 
 /// Sanitize JSON keys by replacing special characters with underscores
 fn sanitize_json_key(key: &str) -> String {
@@ -42,7 +42,11 @@ lazy_static::lazy_static! {
 pub fn parse(input: &str) -> Result<Expr, Error> {
     // Allow optional leading '=' after whitespace
     let trimmed = input.trim_start();
-    let input2: std::borrow::Cow<'_, str> = if let Some(rest) = trimmed.strip_prefix('=') { std::borrow::Cow::from(rest) } else { std::borrow::Cow::from(input) };
+    let input2: std::borrow::Cow<'_, str> = if let Some(rest) = trimmed.strip_prefix('=') {
+        std::borrow::Cow::from(rest)
+    } else {
+        std::borrow::Cow::from(input)
+    };
     let mut parser = parser::Parser::new(&input2);
     parser.parse()
 }
@@ -81,7 +85,12 @@ pub fn evaluate_with_json(input: &str, json_vars: &str) -> Result<Value, Error> 
             }
             result
         }
-        _ => return Err(Error::new("JSON must be an object with key-value pairs", None)),
+        _ => {
+            return Err(Error::new(
+                "JSON must be an object with key-value pairs",
+                None,
+            ))
+        }
     };
 
     evaluate_with(input, &vars)
@@ -120,7 +129,8 @@ pub fn json_to_value(json: serde_json::Value) -> Result<Value, Error> {
 
 /// Register a custom function globally
 pub fn register_function(function: Box<dyn CustomFunction>) -> Result<(), Error> {
-    let mut registry = GLOBAL_REGISTRY.write()
+    let mut registry = GLOBAL_REGISTRY
+        .write()
         .map_err(|_| Error::new("Failed to acquire registry lock", None))?;
     registry.register(function)
 }
@@ -137,7 +147,11 @@ pub fn unregister_function(name: &str) -> bool {
 /// List all registered custom functions
 pub fn list_custom_functions() -> Vec<String> {
     if let Ok(registry) = GLOBAL_REGISTRY.read() {
-        registry.list_functions().iter().map(|s| s.to_string()).collect()
+        registry
+            .list_functions()
+            .iter()
+            .map(|s| s.to_string())
+            .collect()
     } else {
         Vec::new()
     }
@@ -178,21 +192,31 @@ pub fn evaluate_with_json_custom(input: &str, json_vars: &str) -> Result<Value, 
             }
             result
         }
-        _ => return Err(Error::new("JSON must be an object with key-value pairs", None)),
+        _ => {
+            return Err(Error::new(
+                "JSON must be an object with key-value pairs",
+                None,
+            ))
+        }
     };
 
     evaluate_with_custom(input, &vars)
 }
 
-
 /// Evaluate with assignments and sequences - handles complex expressions with variable assignments
-pub fn evaluate_with_assignments(input: &str, vars: &HashMap<String, Value>) -> Result<Value, Error> {
+pub fn evaluate_with_assignments(
+    input: &str,
+    vars: &HashMap<String, Value>,
+) -> Result<Value, Error> {
     let expr = parse(input)?;
     runtime::evaluator::eval_with_assignments(&expr, vars)
 }
 
 /// Evaluate with assignments and sequences, returning both result and variable context
-pub fn evaluate_with_assignments_and_context(input: &str, vars: &HashMap<String, Value>) -> Result<(Value, HashMap<String, Value>), Error> {
+pub fn evaluate_with_assignments_and_context(
+    input: &str,
+    vars: &HashMap<String, Value>,
+) -> Result<(Value, HashMap<String, Value>), Error> {
     let expr = parse(input)?;
     runtime::evaluator::eval_with_assignments_and_context(&expr, vars)
 }
@@ -201,7 +225,9 @@ pub fn evaluate_with_assignments_and_context(input: &str, vars: &HashMap<String,
 mod tests {
     use super::*;
 
-    fn approxv(v: Value, b: f64) -> bool { matches!(v, Value::Number(a) if (a - b).abs() < 1e-9) }
+    fn approxv(v: Value, b: f64) -> bool {
+        matches!(v, Value::Number(a) if (a - b).abs() < 1e-9)
+    }
 
     #[test]
     fn test_basic_arithmetic() {

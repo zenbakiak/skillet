@@ -176,7 +176,10 @@ pub fn exec_array_method(
                     Value::String(s) => Ok(s.clone()),
                     Value::Number(n) => Ok(n.to_string()),
                     Value::Boolean(b) => Ok(b.to_string()),
-                    _ => Err(Error::new("join method cannot convert value to string", None)),
+                    _ => Err(Error::new(
+                        "join method cannot convert value to string",
+                        None,
+                    )),
                 })
                 .collect();
 
@@ -193,7 +196,7 @@ pub fn exec_array_method(
                 eval(&args_expr[0])?
             };
 
-            let found = recv_array.iter().any(|v| *v == search_val);
+            let found = recv_array.contains(&search_val);
             Ok(Value::Boolean(found))
         }
 
@@ -254,9 +257,6 @@ pub fn exec_array_method(
             Ok(Value::Array(result))
         }
 
-        _ => Err(Error::new(
-            format!("Unknown array method: {}", name),
-            None,
-        )),
+        _ => Err(Error::new(format!("Unknown array method: {}", name), None)),
     }
 }

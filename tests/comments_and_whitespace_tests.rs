@@ -15,7 +15,11 @@ fn test_slash_slash_comment() {
 
 #[test]
 fn test_multiple_comments() {
-    let result = evaluate_with_assignments("# First comment\n:x := 10;\n// Second comment\n:y := 20;\n# Third comment\n:x + :y", &HashMap::new()).unwrap();
+    let result = evaluate_with_assignments(
+        "# First comment\n:x := 10;\n// Second comment\n:y := 20;\n# Third comment\n:x + :y",
+        &HashMap::new(),
+    )
+    .unwrap();
     assert_eq!(result, Value::Number(30.0));
 }
 
@@ -30,13 +34,17 @@ fn test_comment_after_code() {
 #[test]
 fn test_indented_expression() {
     // Whitespace at start of lines should be handled
-    let result = evaluate_with_assignments("  :x := 10;\n   :y := 20;\n      :x + :y", &HashMap::new()).unwrap();
+    let result =
+        evaluate_with_assignments("  :x := 10;\n   :y := 20;\n      :x + :y", &HashMap::new())
+            .unwrap();
     assert_eq!(result, Value::Number(30.0));
 }
 
 #[test]
 fn test_mixed_whitespace() {
-    let result = evaluate_with_assignments("\t:x := 10;\n\t\t:y := 20;\n\t:x + :y", &HashMap::new()).unwrap();
+    let result =
+        evaluate_with_assignments("\t:x := 10;\n\t\t:y := 20;\n\t:x + :y", &HashMap::new())
+            .unwrap();
     assert_eq!(result, Value::Number(30.0));
 }
 
@@ -69,10 +77,14 @@ fn test_ifs_with_indentation() {
 
 #[test]
 fn test_object_literal_with_indentation() {
-    let result = evaluate_with_assignments(":result := {\n  name: 'John',\n  age: 30,\n  active: true\n};\n:result", &HashMap::new()).unwrap();
+    let result = evaluate_with_assignments(
+        ":result := {\n  name: 'John',\n  age: 30,\n  active: true\n};\n:result",
+        &HashMap::new(),
+    )
+    .unwrap();
 
     match result {
-        Value::Json(_) => {}, // Success
+        Value::Json(_) => {} // Success
         _ => panic!("Expected JSON object"),
     }
 }
@@ -80,22 +92,26 @@ fn test_object_literal_with_indentation() {
 #[test]
 fn test_map_with_indentation() {
     let mut vars = HashMap::new();
-    vars.insert("items".to_string(), Value::Array(vec![
-        Value::Number(10.0),
-        Value::Number(20.0),
-        Value::Number(30.0),
-    ]));
+    vars.insert(
+        "items".to_string(),
+        Value::Array(vec![
+            Value::Number(10.0),
+            Value::Number(20.0),
+            Value::Number(30.0),
+        ]),
+    );
 
-    let result = evaluate_with_assignments(
-        ":result := :items.map(\n  :x * 2\n);\n:result",
-        &vars
-    ).unwrap();
+    let result =
+        evaluate_with_assignments(":result := :items.map(\n  :x * 2\n);\n:result", &vars).unwrap();
 
-    assert_eq!(result, Value::Array(vec![
-        Value::Number(20.0),
-        Value::Number(40.0),
-        Value::Number(60.0),
-    ]));
+    assert_eq!(
+        result,
+        Value::Array(vec![
+            Value::Number(20.0),
+            Value::Number(40.0),
+            Value::Number(60.0),
+        ])
+    );
 }
 
 #[test]
@@ -114,7 +130,11 @@ fn test_complex_indented_expression() {
 
 #[test]
 fn test_empty_lines_and_comments() {
-    let result = evaluate_with_assignments("# Start\n\n:x := 10;\n\n// Middle comment\n\n:y := 20;\n\n# End\n\n:x + :y", &HashMap::new()).unwrap();
+    let result = evaluate_with_assignments(
+        "# Start\n\n:x := 10;\n\n// Middle comment\n\n:y := 20;\n\n# End\n\n:x + :y",
+        &HashMap::new(),
+    )
+    .unwrap();
 
     assert_eq!(result, Value::Number(30.0));
 }
@@ -127,7 +147,9 @@ fn test_block_comment() {
 
 #[test]
 fn test_inline_block_comment() {
-    let result = evaluate_with_assignments(":x := 10 /* inline comment */ * 2; :x", &HashMap::new()).unwrap();
+    let result =
+        evaluate_with_assignments(":x := 10 /* inline comment */ * 2; :x", &HashMap::new())
+            .unwrap();
     assert_eq!(result, Value::Number(20.0));
 }
 
@@ -135,8 +157,9 @@ fn test_inline_block_comment() {
 fn test_multiline_block_comment() {
     let result = evaluate_with_assignments(
         "/* This is a\n   multi-line\n   block comment */\n:x := 10;\n:y := 20;\n:x + :y",
-        &HashMap::new()
-    ).unwrap();
+        &HashMap::new(),
+    )
+    .unwrap();
     assert_eq!(result, Value::Number(30.0));
 }
 
@@ -166,5 +189,8 @@ fn test_nested_expression_with_block_comment() {
 fn test_unterminated_block_comment() {
     // An unterminated block comment should produce an error
     let result = evaluate("/* This is unterminated\n2 + 3");
-    assert!(result.is_err(), "Expected error for unterminated block comment");
+    assert!(
+        result.is_err(),
+        "Expected error for unterminated block comment"
+    );
 }

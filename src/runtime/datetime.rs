@@ -1,9 +1,12 @@
-use crate::types::Value;
 use crate::error::Error;
-use chrono::{DateTime, Local, NaiveDate, Utc, Datelike, Timelike};
+use crate::types::Value;
+use chrono::{DateTime, Datelike, Local, NaiveDate, Timelike, Utc};
 
 pub fn is_datetime_function(name: &str) -> bool {
-    matches!(name, "NOW" | "DATE" | "TIME" | "YEAR" | "MONTH" | "DAY" | "DATEADD" | "DATEDIFF")
+    matches!(
+        name,
+        "NOW" | "DATE" | "TIME" | "YEAR" | "MONTH" | "DAY" | "DATEADD" | "DATEDIFF"
+    )
 }
 
 pub fn exec_datetime(name: &str, args: &[Value]) -> Result<Value, Error> {
@@ -20,7 +23,7 @@ pub fn exec_datetime(name: &str, args: &[Value]) -> Result<Value, Error> {
                 Ok(Value::DateTime(timestamp))
             } else if args.len() == 3 {
                 // Three arguments - year, month, day
-                let year = match args.get(0) {
+                let year = match args.first() {
                     Some(Value::Number(n)) => *n as i32,
                     _ => return Err(Error::new("DATE expects year as number", None)),
                 };
@@ -32,14 +35,17 @@ pub fn exec_datetime(name: &str, args: &[Value]) -> Result<Value, Error> {
                     Some(Value::Number(n)) => *n as u32,
                     _ => return Err(Error::new("DATE expects day as number", None)),
                 };
-                
+
                 // Validate and create the date
                 let date = NaiveDate::from_ymd_opt(year, month, day)
                     .ok_or_else(|| Error::new("Invalid date", None))?;
                 let timestamp = date.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
                 Ok(Value::DateTime(timestamp))
             } else {
-                Err(Error::new("DATE expects either no arguments or three arguments (year, month, day)", None))
+                Err(Error::new(
+                    "DATE expects either no arguments or three arguments (year, month, day)",
+                    None,
+                ))
             }
         }
         "TIME" => {
@@ -48,7 +54,7 @@ pub fn exec_datetime(name: &str, args: &[Value]) -> Result<Value, Error> {
             Ok(Value::Number(seconds_since_midnight))
         }
         "YEAR" => {
-            if let Some(Value::DateTime(timestamp)) = args.get(0) {
+            if let Some(Value::DateTime(timestamp)) = args.first() {
                 let dt = DateTime::from_timestamp(*timestamp, 0)
                     .ok_or_else(|| Error::new("Invalid timestamp", None))?;
                 Ok(Value::Number(dt.year() as f64))
@@ -57,7 +63,7 @@ pub fn exec_datetime(name: &str, args: &[Value]) -> Result<Value, Error> {
             }
         }
         "MONTH" => {
-            if let Some(Value::DateTime(timestamp)) = args.get(0) {
+            if let Some(Value::DateTime(timestamp)) = args.first() {
                 let dt = DateTime::from_timestamp(*timestamp, 0)
                     .ok_or_else(|| Error::new("Invalid timestamp", None))?;
                 Ok(Value::Number(dt.month() as f64))
@@ -66,7 +72,7 @@ pub fn exec_datetime(name: &str, args: &[Value]) -> Result<Value, Error> {
             }
         }
         "DAY" => {
-            if let Some(Value::DateTime(timestamp)) = args.get(0) {
+            if let Some(Value::DateTime(timestamp)) = args.first() {
                 let dt = DateTime::from_timestamp(*timestamp, 0)
                     .ok_or_else(|| Error::new("Invalid timestamp", None))?;
                 Ok(Value::Number(dt.day() as f64))
@@ -78,22 +84,37 @@ pub fn exec_datetime(name: &str, args: &[Value]) -> Result<Value, Error> {
             if args.len() < 3 {
                 return Err(Error::new("DATEADD expects date, interval, unit", None));
             }
-            let timestamp = match args.get(0) {
+            let timestamp = match args.first() {
                 Some(Value::DateTime(ts)) => *ts,
-                _ => return Err(Error::new("DATEADD expects datetime as first argument", None)),
+                _ => {
+                    return Err(Error::new(
+                        "DATEADD expects datetime as first argument",
+                        None,
+                    ))
+                }
             };
             let interval = match args.get(1) {
                 Some(Value::Number(n)) => *n as i64,
-                _ => return Err(Error::new("DATEADD expects number as second argument", None)),
+                _ => {
+                    return Err(Error::new(
+                        "DATEADD expects number as second argument",
+                        None,
+                    ))
+                }
             };
             let unit = match args.get(2) {
                 Some(Value::String(s)) => s.to_lowercase(),
-                _ => return Err(Error::new("DATEADD expects string unit as third argument", None)),
+                _ => {
+                    return Err(Error::new(
+                        "DATEADD expects string unit as third argument",
+                        None,
+                    ))
+                }
             };
-            
+
             let dt = DateTime::from_timestamp(timestamp, 0)
                 .ok_or_else(|| Error::new("Invalid timestamp", None))?;
-            
+
             let new_dt = match unit.as_str() {
                 "days" | "day" | "d" => dt + chrono::Duration::days(interval),
                 "hours" | "hour" | "h" => dt + chrono::Duration::hours(interval),
@@ -124,33 +145,48 @@ pub fn exec_datetime(name: &str, args: &[Value]) -> Result<Value, Error> {
                 }
                 _ => return Err(Error::new("DATEADD unit must be one of: days, hours, minutes, seconds, weeks, months, years", None)),
             };
-            
+
             Ok(Value::DateTime(new_dt.timestamp()))
         }
         "DATEDIFF" => {
             if args.len() < 3 {
                 return Err(Error::new("DATEDIFF expects date1, date2, unit", None));
             }
-            let timestamp1 = match args.get(0) {
+            let timestamp1 = match args.first() {
                 Some(Value::DateTime(ts)) => *ts,
-                _ => return Err(Error::new("DATEDIFF expects datetime as first argument", None)),
+                _ => {
+                    return Err(Error::new(
+                        "DATEDIFF expects datetime as first argument",
+                        None,
+                    ))
+                }
             };
             let timestamp2 = match args.get(1) {
                 Some(Value::DateTime(ts)) => *ts,
-                _ => return Err(Error::new("DATEDIFF expects datetime as second argument", None)),
+                _ => {
+                    return Err(Error::new(
+                        "DATEDIFF expects datetime as second argument",
+                        None,
+                    ))
+                }
             };
             let unit = match args.get(2) {
                 Some(Value::String(s)) => s.to_lowercase(),
-                _ => return Err(Error::new("DATEDIFF expects string unit as third argument", None)),
+                _ => {
+                    return Err(Error::new(
+                        "DATEDIFF expects string unit as third argument",
+                        None,
+                    ))
+                }
             };
-            
+
             let dt1 = DateTime::from_timestamp(timestamp1, 0)
                 .ok_or_else(|| Error::new("Invalid timestamp1", None))?;
             let dt2 = DateTime::from_timestamp(timestamp2, 0)
                 .ok_or_else(|| Error::new("Invalid timestamp2", None))?;
-            
+
             let duration = dt2.signed_duration_since(dt1);
-            
+
             let diff = match unit.as_str() {
                 "days" | "day" | "d" => duration.num_days() as f64,
                 "hours" | "hour" | "h" => duration.num_hours() as f64,
@@ -165,9 +201,12 @@ pub fn exec_datetime(name: &str, args: &[Value]) -> Result<Value, Error> {
                 "years" | "year" | "y" => (dt2.year() - dt1.year()) as f64,
                 _ => return Err(Error::new("DATEDIFF unit must be one of: days, hours, minutes, seconds, weeks, months, years", None)),
             };
-            
+
             Ok(Value::Number(diff))
         }
-        _ => Err(Error::new(format!("Unknown datetime function: {}", name), None)),
+        _ => Err(Error::new(
+            format!("Unknown datetime function: {}", name),
+            None,
+        )),
     }
 }

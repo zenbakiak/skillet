@@ -4,7 +4,7 @@ use crate::types::Value;
 /// Handle conversion method calls for all types (Ruby-style)
 pub fn exec_conversion_method(name: &str, recv: &Value) -> Result<Value, Error> {
     let lname = name.to_lowercase();
-    
+
     match lname.as_str() {
         "to_s" | "to_string" => to_string(recv),
         "to_i" | "to_int" => to_int(recv),
@@ -12,7 +12,10 @@ pub fn exec_conversion_method(name: &str, recv: &Value) -> Result<Value, Error> 
         "to_a" | "to_array" => to_array(recv),
         "to_json" => to_json(recv),
         "to_bool" | "to_boolean" => to_boolean(recv),
-        _ => Err(Error::new(format!("Unknown conversion method: {}", name), None)),
+        _ => Err(Error::new(
+            format!("Unknown conversion method: {}", name),
+            None,
+        )),
     }
 }
 
@@ -52,12 +55,16 @@ fn to_int(value: &Value) -> Result<Value, Error> {
         Value::Null => 0.0,
         Value::Number(n) => n.trunc(),
         Value::Currency(c) => c.trunc(),
-        Value::Boolean(b) => if *b { 1.0 } else { 0.0 },
-        Value::String(s) => {
-            s.trim().parse::<f64>().unwrap_or(0.0).trunc()
+        Value::Boolean(b) => {
+            if *b {
+                1.0
+            } else {
+                0.0
+            }
         }
+        Value::String(s) => s.trim().parse::<f64>().unwrap_or(0.0).trunc(),
         Value::Array(arr) => arr.len() as f64,
-        Value::Json(_) => 1.0, // JSON objects are truthy
+        Value::Json(_) => 1.0,     // JSON objects are truthy
         Value::DateTime(_) => 1.0, // DateTime values are truthy
     };
     Ok(Value::Number(result))
@@ -69,10 +76,14 @@ fn to_float(value: &Value) -> Result<Value, Error> {
         Value::Null => 0.0,
         Value::Number(n) => *n,
         Value::Currency(c) => *c,
-        Value::Boolean(b) => if *b { 1.0 } else { 0.0 },
-        Value::String(s) => {
-            s.trim().parse::<f64>().unwrap_or(0.0)
+        Value::Boolean(b) => {
+            if *b {
+                1.0
+            } else {
+                0.0
+            }
         }
+        Value::String(s) => s.trim().parse::<f64>().unwrap_or(0.0),
         Value::Array(arr) => arr.len() as f64,
         Value::Json(_) => 1.0,
         Value::DateTime(_) => 1.0,
@@ -107,7 +118,7 @@ fn to_json(value: &Value) -> Result<Value, Error> {
         Value::Number(n) => {
             let json_val = serde_json::Value::Number(
                 serde_json::Number::from_f64(*n)
-                    .ok_or_else(|| Error::new("Invalid number for JSON", None))?
+                    .ok_or_else(|| Error::new("Invalid number for JSON", None))?,
             );
             serde_json::to_string(&json_val)
                 .map_err(|e| Error::new(format!("Failed to convert to JSON: {}", e), None))?
@@ -118,10 +129,8 @@ fn to_json(value: &Value) -> Result<Value, Error> {
                 .map_err(|e| Error::new(format!("Failed to convert to JSON: {}", e), None))?
         }
         Value::Array(arr) => {
-            let json_array: Result<Vec<serde_json::Value>, Error> = arr
-                .iter()
-                .map(|v| value_to_json_value(v))
-                .collect();
+            let json_array: Result<Vec<serde_json::Value>, Error> =
+                arr.iter().map(value_to_json_value).collect();
             let json_val = serde_json::Value::Array(json_array?);
             serde_json::to_string(&json_val)
                 .map_err(|e| Error::new(format!("Failed to convert to JSON: {}", e), None))?
@@ -129,7 +138,7 @@ fn to_json(value: &Value) -> Result<Value, Error> {
         Value::Currency(c) => {
             let json_val = serde_json::Value::Number(
                 serde_json::Number::from_f64(*c)
-                    .ok_or_else(|| Error::new("Invalid currency for JSON", None))?
+                    .ok_or_else(|| Error::new("Invalid currency for JSON", None))?,
             );
             serde_json::to_string(&json_val)
                 .map_err(|e| Error::new(format!("Failed to convert to JSON: {}", e), None))?
@@ -163,27 +172,20 @@ fn value_to_json_value(value: &Value) -> Result<serde_json::Value, Error> {
     match value {
         Value::Null => Ok(serde_json::Value::Null),
         Value::String(s) => Ok(serde_json::Value::String(s.clone())),
-        Value::Number(n) => {
-            serde_json::Number::from_f64(*n)
-                .map(serde_json::Value::Number)
-                .ok_or_else(|| Error::new("Invalid number for JSON", None))
-        }
+        Value::Number(n) => serde_json::Number::from_f64(*n)
+            .map(serde_json::Value::Number)
+            .ok_or_else(|| Error::new("Invalid number for JSON", None)),
         Value::Boolean(b) => Ok(serde_json::Value::Bool(*b)),
-        Value::Currency(c) => {
-            serde_json::Number::from_f64(*c)
-                .map(serde_json::Value::Number)
-                .ok_or_else(|| Error::new("Invalid currency for JSON", None))
-        }
+        Value::Currency(c) => serde_json::Number::from_f64(*c)
+            .map(serde_json::Value::Number)
+            .ok_or_else(|| Error::new("Invalid currency for JSON", None)),
         Value::Array(arr) => {
-            let json_array: Result<Vec<serde_json::Value>, Error> = arr
-                .iter()
-                .map(value_to_json_value)
-                .collect();
+            let json_array: Result<Vec<serde_json::Value>, Error> =
+                arr.iter().map(value_to_json_value).collect();
             Ok(serde_json::Value::Array(json_array?))
         }
         Value::Json(s) => {
-            serde_json::from_str(s)
-                .map_err(|e| Error::new(format!("Invalid JSON: {}", e), None))
+            serde_json::from_str(s).map_err(|e| Error::new(format!("Invalid JSON: {}", e), None))
         }
         Value::DateTime(dt) => Ok(serde_json::Value::String(dt.to_string())),
     }

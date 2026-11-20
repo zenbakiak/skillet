@@ -141,8 +141,8 @@ pub fn exec_statistical(name: &str, args: &[Value]) -> Result<Value, Error> {
                     _ => {}
                 }
             }
-            for i in 0..args.len() - 1 {
-                collect_nums(&args[i], &mut nums);
+            for arg in &args[..args.len() - 1] {
+                collect_nums(arg, &mut nums);
             }
             let percentile = match args.last() {
                 Some(Value::Number(p)) => *p,
@@ -152,6 +152,8 @@ pub fn exec_statistical(name: &str, args: &[Value]) -> Result<Value, Error> {
             if nums.is_empty() {
                 return Ok(Value::Number(0.0));
             }
+            // NaN must pass through as before; `!contains` would reject it.
+            #[allow(clippy::manual_range_contains)]
             if percentile < 0.0 || percentile > 1.0 {
                 return Err(Error::new("Percentile must be between 0 and 1", None));
             }
@@ -188,8 +190,8 @@ pub fn exec_statistical(name: &str, args: &[Value]) -> Result<Value, Error> {
                     _ => {}
                 }
             }
-            for i in 0..args.len() - 1 {
-                collect_nums(&args[i], &mut nums);
+            for arg in &args[..args.len() - 1] {
+                collect_nums(arg, &mut nums);
             }
             let quartile = match args.last() {
                 Some(Value::Number(q)) => *q as i32,
@@ -199,7 +201,7 @@ pub fn exec_statistical(name: &str, args: &[Value]) -> Result<Value, Error> {
             if nums.is_empty() {
                 return Ok(Value::Number(0.0));
             }
-            if quartile < 0 || quartile > 4 {
+            if !(0..=4).contains(&quartile) {
                 return Err(Error::new("Quartile must be 0-4", None));
             }
 

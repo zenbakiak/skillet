@@ -1,10 +1,10 @@
 //! Method calls module - refactored into smaller, focused sub-modules
 
+pub mod array_methods;
+pub mod conversion_methods;
+pub mod lambda_methods;
 pub mod predicates;
 pub mod string_methods;
-pub mod array_methods;
-pub mod lambda_methods;
-pub mod conversion_methods;
 
 use crate::ast::Expr;
 use crate::custom::FunctionRegistry;
@@ -13,11 +13,11 @@ use crate::types::Value;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
+pub use array_methods::exec_array_method;
+pub use conversion_methods::exec_conversion_method;
+pub use lambda_methods::{exec_filter, exec_find, exec_map, exec_reduce};
 pub use predicates::exec_predicate;
 pub use string_methods::exec_string_method;
-pub use array_methods::exec_array_method;
-pub use lambda_methods::{exec_filter, exec_map, exec_find, exec_reduce};
-pub use conversion_methods::exec_conversion_method;
 
 /// Main method dispatch function with improved architecture
 pub fn exec_method(
@@ -36,8 +36,8 @@ pub fn exec_method(
 
     // Check for conversion methods first (available on all types)
     match lname.as_str() {
-        "to_s" | "to_string" | "to_i" | "to_int" | "to_f" | "to_float" |
-        "to_a" | "to_array" | "to_json" | "to_bool" | "to_boolean" => {
+        "to_s" | "to_string" | "to_i" | "to_int" | "to_f" | "to_float" | "to_a" | "to_array"
+        | "to_json" | "to_bool" | "to_boolean" => {
             return exec_conversion_method(name, recv);
         }
         _ => {}
@@ -83,8 +83,8 @@ pub fn exec_method_with_custom(
 
     // Check for conversion methods first (available on all types)
     match lname.as_str() {
-        "to_s" | "to_string" | "to_i" | "to_int" | "to_f" | "to_float" |
-        "to_a" | "to_array" | "to_json" | "to_bool" | "to_boolean" => {
+        "to_s" | "to_string" | "to_i" | "to_int" | "to_f" | "to_float" | "to_a" | "to_array"
+        | "to_json" | "to_bool" | "to_boolean" => {
             return exec_conversion_method(name, recv);
         }
         _ => {}
@@ -96,10 +96,30 @@ pub fn exec_method_with_custom(
         Value::Array(_) => {
             // Check for higher-order functions first
             match lname.as_str() {
-                "filter" => lambda_methods::exec_filter_with_custom(recv, args_expr, base_vars, custom_registry),
-                "map" => lambda_methods::exec_map_with_custom(recv, args_expr, base_vars, custom_registry),
-                "find" => lambda_methods::exec_find_with_custom(recv, args_expr, base_vars, custom_registry),
-                "reduce" => lambda_methods::exec_reduce_with_custom(recv, args_expr, base_vars, custom_registry),
+                "filter" => lambda_methods::exec_filter_with_custom(
+                    recv,
+                    args_expr,
+                    base_vars,
+                    custom_registry,
+                ),
+                "map" => lambda_methods::exec_map_with_custom(
+                    recv,
+                    args_expr,
+                    base_vars,
+                    custom_registry,
+                ),
+                "find" => lambda_methods::exec_find_with_custom(
+                    recv,
+                    args_expr,
+                    base_vars,
+                    custom_registry,
+                ),
+                "reduce" => lambda_methods::exec_reduce_with_custom(
+                    recv,
+                    args_expr,
+                    base_vars,
+                    custom_registry,
+                ),
                 _ => exec_array_method(name, recv, args_expr, base_vars),
             }
         }
@@ -124,9 +144,9 @@ fn exec_number_method(
         Value::Currency(c) => *c,
         _ => return Err(Error::new("Method called on non-number", None)),
     };
-    
+
     let lname = name.to_lowercase();
-    
+
     match lname.as_str() {
         "abs" => Ok(Value::Number(num.abs())),
         "ceil" | "ceiling" => Ok(Value::Number(num.ceil())),
@@ -145,7 +165,7 @@ fn exec_number_method(
                     Value::Number(p) => p as i32,
                     _ => return Err(Error::new("round precision must be number", None)),
                 };
-                
+
                 if precision == 0 {
                     Ok(Value::Number(num.round()))
                 } else {
@@ -156,7 +176,10 @@ fn exec_number_method(
         }
         "sqrt" => {
             if num < 0.0 {
-                Err(Error::new("Cannot take square root of negative number", None))
+                Err(Error::new(
+                    "Cannot take square root of negative number",
+                    None,
+                ))
             } else {
                 Ok(Value::Number(num.sqrt()))
             }
@@ -169,7 +192,7 @@ fn exec_number_method(
             if args_expr.len() != 2 {
                 return Err(Error::new("between expects 2 arguments: min, max", None));
             }
-            
+
             use crate::runtime::evaluator::{eval, eval_with_vars};
             let min_val = if let Some(vars) = base_vars {
                 eval_with_vars(&args_expr[0], vars)?
@@ -181,7 +204,7 @@ fn exec_number_method(
             } else {
                 eval(&args_expr[1])?
             };
-            
+
             let min = match min_val {
                 Value::Number(n) => n,
                 Value::Currency(c) => c,
@@ -192,13 +215,10 @@ fn exec_number_method(
                 Value::Currency(c) => c,
                 _ => return Err(Error::new("between max must be a number", None)),
             };
-            
+
             Ok(Value::Boolean(num >= min && num <= max))
         }
-        _ => Err(Error::new(
-            format!("Unknown number method: {}", name),
-            None,
-        )),
+        _ => Err(Error::new(format!("Unknown number method: {}", name), None)),
     }
 }
 
@@ -213,30 +233,29 @@ fn exec_json_method(
         Value::Json(s) => s,
         _ => return Err(Error::new("Method called on non-JSON", None)),
     };
-    
+
     let lname = name.to_lowercase();
-    
+
     match lname.as_str() {
         "keys" => {
             let parsed: serde_json::Value = serde_json::from_str(json_str)
                 .map_err(|e| Error::new(format!("Invalid JSON: {}", e), None))?;
-            
+
             if let serde_json::Value::Object(obj) = parsed {
-                let keys: Vec<Value> = obj.keys()
-                    .map(|k| Value::String(k.clone()))
-                    .collect();
+                let keys: Vec<Value> = obj.keys().map(|k| Value::String(k.clone())).collect();
                 Ok(Value::Array(keys))
             } else {
                 Err(Error::new("keys() method requires JSON object", None))
             }
         }
-        
+
         "values" => {
             let parsed: serde_json::Value = serde_json::from_str(json_str)
                 .map_err(|e| Error::new(format!("Invalid JSON: {}", e), None))?;
-            
+
             if let serde_json::Value::Object(obj) = parsed {
-                let values: Result<Vec<Value>, Error> = obj.values()
+                let values: Result<Vec<Value>, Error> = obj
+                    .values()
                     .map(|v| crate::json_to_value(v.clone()))
                     .collect();
                 Ok(Value::Array(values?))
@@ -244,12 +263,12 @@ fn exec_json_method(
                 Err(Error::new("values() method requires JSON object", None))
             }
         }
-        
+
         "has_key" | "has" => {
             if args_expr.is_empty() {
                 return Err(Error::new("has_key method expects 1 argument", None));
             }
-            
+
             use crate::runtime::evaluator::{eval, eval_with_vars};
             let key_val = if let Some(vars) = base_vars {
                 eval_with_vars(&args_expr[0], vars)?
@@ -260,21 +279,24 @@ fn exec_json_method(
                 Value::String(s) => s,
                 _ => return Err(Error::new("has_key method expects string argument", None)),
             };
-            
+
             let parsed: serde_json::Value = serde_json::from_str(json_str)
                 .map_err(|e| Error::new(format!("Invalid JSON: {}", e), None))?;
-                
+
             if let serde_json::Value::Object(obj) = parsed {
                 Ok(Value::Boolean(obj.contains_key(&key)))
             } else {
                 Ok(Value::Boolean(false))
             }
         }
-        
+
         "dig" => {
             // :json_obj.dig([path...], [default])
             if args_expr.is_empty() {
-                return Err(Error::new("dig(path_array, [default]) expects at least 1 argument", None));
+                return Err(Error::new(
+                    "dig(path_array, [default]) expects at least 1 argument",
+                    None,
+                ));
             }
             use crate::runtime::evaluator::{eval, eval_with_vars};
             let path_val = if let Some(vars) = base_vars {
@@ -283,12 +305,23 @@ fn exec_json_method(
                 eval(&args_expr[0])?
             };
             let default_val = if args_expr.len() > 1 {
-                Some(if let Some(vars) = base_vars { eval_with_vars(&args_expr[1], vars)? } else { eval(&args_expr[1])? })
-            } else { None };
+                Some(if let Some(vars) = base_vars {
+                    eval_with_vars(&args_expr[1], vars)?
+                } else {
+                    eval(&args_expr[1])?
+                })
+            } else {
+                None
+            };
 
             let path_vals = match path_val {
                 Value::Array(a) => a,
-                _ => return Err(Error::new("dig expects first argument to be an array path", None)),
+                _ => {
+                    return Err(Error::new(
+                        "dig expects first argument to be an array path",
+                        None,
+                    ))
+                }
             };
 
             let parsed: serde_json::Value = serde_json::from_str(json_str)
@@ -299,16 +332,39 @@ fn exec_json_method(
                 match seg {
                     Value::String(key) => {
                         if let serde_json::Value::Object(map) = cur {
-                            if let Some(next) = map.get(key) { cur = next; } else { ok = false; break; }
-                        } else { ok = false; break; }
+                            if let Some(next) = map.get(key) {
+                                cur = next;
+                            } else {
+                                ok = false;
+                                break;
+                            }
+                        } else {
+                            ok = false;
+                            break;
+                        }
                     }
                     Value::Number(n) => {
                         if let serde_json::Value::Array(arr) = cur {
-                            let idx = if n.is_finite() { n.floor() as isize } else { -1 };
-                            if idx >= 0 && (idx as usize) < arr.len() { cur = &arr[idx as usize]; } else { ok = false; break; }
-                        } else { ok = false; break; }
+                            let idx = if n.is_finite() {
+                                n.floor() as isize
+                            } else {
+                                -1
+                            };
+                            if idx >= 0 && (idx as usize) < arr.len() {
+                                cur = &arr[idx as usize];
+                            } else {
+                                ok = false;
+                                break;
+                            }
+                        } else {
+                            ok = false;
+                            break;
+                        }
                     }
-                    _ => { ok = false; break; }
+                    _ => {
+                        ok = false;
+                        break;
+                    }
                 }
             }
 
@@ -320,10 +376,7 @@ fn exec_json_method(
                 Ok(Value::Null)
             }
         }
-        
-        _ => Err(Error::new(
-            format!("Unknown JSON method: {}", name),
-            None,
-        )),
+
+        _ => Err(Error::new(format!("Unknown JSON method: {}", name), None)),
     }
 }

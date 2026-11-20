@@ -31,7 +31,10 @@ pub fn check_authentication(request: &str, server_token: &Option<String>) -> Opt
     None
 }
 
-pub fn check_admin_authentication(request: &str, server_admin_token: &Option<String>) -> Option<String> {
+pub fn check_admin_authentication(
+    request: &str,
+    server_admin_token: &Option<String>,
+) -> Option<String> {
     if let Some(cfg_admin_token) = server_admin_token {
         let auth_token = extract_auth_header(request);
         let supplied = auth_token.as_deref().unwrap_or("");

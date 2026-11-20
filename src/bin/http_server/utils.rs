@@ -1,7 +1,7 @@
-use std::net::TcpStream;
-use std::io::{Read, Write};
 use serde::de::DeserializeOwned;
 use serde_json;
+use std::io::{Read, Write};
+use std::net::TcpStream;
 
 use super::cache::{get_pooled_buffer, return_pooled_buffer};
 
@@ -27,13 +27,13 @@ pub fn read_complete_http_request(stream: &mut TcpStream) -> Result<String, std:
     // Set socket timeouts to prevent hanging connections
     stream.set_read_timeout(Some(std::time::Duration::from_secs(30)))?;
     stream.set_write_timeout(Some(std::time::Duration::from_secs(10)))?;
-    
+
     let mut buffer = get_pooled_buffer();
     let mut temp_buffer = [0; 4096]; // Increased buffer size for better performance
     let mut headers_complete = false;
     let mut content_length: usize = 0;
     let mut headers_end_pos = 0;
-    
+
     // Maximum request size limit (1MB)
     const MAX_REQUEST_SIZE: usize = 1024 * 1024;
 
@@ -45,12 +45,12 @@ pub fn read_complete_http_request(stream: &mut TcpStream) -> Result<String, std:
         }
 
         buffer.extend_from_slice(&temp_buffer[..bytes_read]);
-        
+
         // Check request size limit
         if buffer.len() > MAX_REQUEST_SIZE {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                "Request too large (max 1MB)"
+                "Request too large (max 1MB)",
             ));
         }
 
@@ -62,12 +62,12 @@ pub fn read_complete_http_request(stream: &mut TcpStream) -> Result<String, std:
             // Parse the headers to get Content-Length
             let headers_str = String::from_utf8_lossy(&buffer[..pos]);
             content_length = parse_content_length(&headers_str);
-            
+
             // Validate content length
             if content_length > MAX_REQUEST_SIZE {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
-                    "Request body too large (max 1MB)"
+                    "Request body too large (max 1MB)",
                 ));
             }
         }
@@ -80,7 +80,7 @@ pub fn read_complete_http_request(stream: &mut TcpStream) -> Result<String, std:
     if remaining_bytes > 0 {
         // Reserve space in buffer to avoid multiple reallocations
         buffer.reserve(remaining_bytes);
-        
+
         let mut temp_body_buffer = [0; 8192]; // Larger read buffer
         let mut total_read = 0;
 
@@ -90,15 +90,15 @@ pub fn read_complete_http_request(stream: &mut TcpStream) -> Result<String, std:
             if bytes_read == 0 {
                 break; // Connection closed by client
             }
-            
+
             buffer.extend_from_slice(&temp_body_buffer[..bytes_read]);
             total_read += bytes_read;
-            
+
             // Additional safety check
             if buffer.len() > MAX_REQUEST_SIZE {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
-                    "Request exceeded size limit during body read"
+                    "Request exceeded size limit during body read",
                 ));
             }
         }
@@ -116,7 +116,9 @@ pub fn read_complete_http_request(stream: &mut TcpStream) -> Result<String, std:
 
 fn find_headers_end(buffer: &[u8]) -> Option<usize> {
     let pattern = b"\r\n\r\n";
-    buffer.windows(pattern.len()).position(|window| window == pattern)
+    buffer
+        .windows(pattern.len())
+        .position(|window| window == pattern)
 }
 
 fn parse_content_length(headers: &str) -> usize {
@@ -158,7 +160,11 @@ pub fn send_http_response(stream: &mut TcpStream, status: u16, content_type: &st
          Connection: close\r\n\
          \r\n\
          {}",
-        status, status_text, content_type, body.len(), body
+        status,
+        status_text,
+        content_type,
+        body.len(),
+        body
     );
 
     let _ = stream.write_all(response.as_bytes());
@@ -205,7 +211,8 @@ pub fn load_html_file() -> String {
     <h1>🥘 Skillet Expression Server</h1>
     <p>Documentation file not found. Please ensure documentation.html is available.</p>
 </body>
-</html>"#.to_string()
+</html>"#
+                .to_string()
         }
     }
 }

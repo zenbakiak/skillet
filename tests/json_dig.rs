@@ -1,7 +1,13 @@
-use skillet::{evaluate, evaluate_with_assignments, Value};
+use skillet::{evaluate_with_assignments, Value};
 use std::collections::HashMap;
 
-fn s(v: Value) -> String { if let Value::String(s) = v { s } else { panic!("expected string") } }
+fn s(v: Value) -> String {
+    if let Value::String(s) = v {
+        s
+    } else {
+        panic!("expected string")
+    }
+}
 
 #[test]
 fn dig_function_basic() {
@@ -37,4 +43,3 @@ fn dig_method_and_safe_nav() {
     let result2 = evaluate_with_assignments(expr2, &vars).unwrap();
     assert_eq!(result2, Value::Null); // safe call short-circuits to NULL
 }
-

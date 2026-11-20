@@ -1,24 +1,31 @@
 mod http_server;
 
-use skillet::JSPluginLoader;
 use scalar_doc::Documentation;
+use skillet::JSPluginLoader;
 use std::net::{TcpListener, TcpStream};
-use std::sync::{Arc, atomic::{AtomicU64, Ordering}};
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
+};
 use threadpool::ThreadPool;
 
 use http_server::auth::TokenConfig;
 use http_server::daemon::{setup_signal_handlers, write_pid_file};
-use http_server::eval::{handle_eval_post, handle_eval_get, handle_health, handle_cache_clear};
-use http_server::js_management::{handle_list_js, handle_update_js, handle_delete_js, handle_upload_js, handle_reload_hooks};
+use http_server::eval::{handle_cache_clear, handle_eval_get, handle_eval_post, handle_health};
+use http_server::js_management::{
+    handle_delete_js, handle_list_js, handle_reload_hooks, handle_update_js, handle_upload_js,
+};
 use http_server::stats::ServerStats;
-use http_server::utils::{read_complete_http_request, send_http_response, send_http_error, handle_cors_preflight, load_html_file};
+use http_server::utils::{
+    handle_cors_preflight, load_html_file, read_complete_http_request, send_http_error,
+    send_http_response,
+};
 
 #[cfg(unix)]
 use http_server::daemon::daemonize;
 
 /// HTTP-compatible Skillet evaluation server
 /// Works with all standard HTTP clients
-
 fn handle_http_request(
     mut stream: TcpStream,
     stats: Arc<ServerStats>,
@@ -73,8 +80,12 @@ fn handle_http_request(
         ("GET", "/") => handle_root(&mut stream),
         ("GET", "/docs") => handle_api_docs(&mut stream),
         ("GET", "/openapi.yml") => handle_openapi_spec(&mut stream),
-        ("POST", "/eval") => handle_eval_post(&mut stream, &request, stats, request_counter, server_token),
-        ("GET", "/eval") => handle_eval_get(&mut stream, &request, stats, request_counter, server_token),
+        ("POST", "/eval") => {
+            handle_eval_post(&mut stream, &request, stats, request_counter, server_token)
+        }
+        ("GET", "/eval") => {
+            handle_eval_get(&mut stream, &request, stats, request_counter, server_token)
+        }
         ("POST", "/upload-js") => handle_upload_js(&mut stream, &request, server_admin_token),
         ("PUT", "/update-js") => handle_update_js(&mut stream, &request, server_admin_token),
         ("DELETE", "/delete-js") => handle_delete_js(&mut stream, &request, server_admin_token),
@@ -100,7 +111,7 @@ fn handle_api_docs(stream: &mut TcpStream) {
             format!("<!DOCTYPE html><html><head><title>Documentation Error</title></head><body><h1>Error</h1><p>Failed to generate documentation: {}</p></body></html>", e)
         }
     };
-    
+
     send_http_response(stream, 200, "text/html", &docs_html);
 }
 
@@ -124,7 +135,8 @@ fn main() {
     });
 
     // Parse command line arguments
-    let (mut auth_token, mut admin_token, daemon_mode, pid_file, bind_host, thread_count) = parse_args(&args[2..]);
+    let (mut auth_token, mut admin_token, daemon_mode, pid_file, bind_host, thread_count) =
+        parse_args(&args[2..]);
 
     // Apply intelligent token logic
     let token_config = TokenConfig::new(auth_token, admin_token);
@@ -153,7 +165,15 @@ fn main() {
     let pool = ThreadPool::new(thread_count);
 
     // Print startup messages
-    print_startup_messages(daemon_mode, port, &bind_host, &auth_token, &admin_token, &token_config, thread_count);
+    print_startup_messages(
+        daemon_mode,
+        port,
+        &bind_host,
+        &auth_token,
+        &admin_token,
+        &token_config,
+        thread_count,
+    );
 
     // Accept loop
     while running.load(Ordering::Relaxed) {
@@ -165,7 +185,13 @@ fn main() {
                 let server_admin_token = Arc::clone(&server_admin_token);
 
                 pool.execute(move || {
-                    handle_http_request(stream, stats, request_counter, server_token, server_admin_token);
+                    handle_http_request(
+                        stream,
+                        stats,
+                        request_counter,
+                        server_token,
+                        server_admin_token,
+                    );
                 });
             }
             Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
@@ -187,7 +213,7 @@ fn main() {
 
 fn print_usage() {
     eprintln!("Usage: sk_http_server <port> [options]");
-    eprintln!("");
+    eprintln!();
     eprintln!("Options:");
     eprintln!("  -d, --daemon         Run as daemon (background process)");
     eprintln!("  -H, --host <addr>    Bind host/interface (default: 127.0.0.1)");
@@ -196,7 +222,7 @@ fn print_usage() {
     eprintln!("  --log-file <file>    Write logs to file (daemon mode only)");
     eprintln!("  --token <value>      Require token for eval requests");
     eprintln!("  --admin-token <val>  Require admin token for JS function management");
-    eprintln!("");
+    eprintln!();
     eprintln!("Examples:");
     eprintln!("  sk_http_server 5074");
     eprintln!("  sk_http_server 5074 --host 0.0.0.0 --threads 8");
@@ -205,7 +231,7 @@ fn print_usage() {
     eprintln!("  sk_http_server 5074 --token secret123 --admin-token admin456");
     eprintln!("  sk_http_server 5074 -d --pid-file /var/run/skillet-http.pid --threads 12");
     eprintln!("  sk_http_server 5074 -d --host 0.0.0.0 --token secret123 --admin-token admin456");
-    eprintln!("");
+    eprintln!();
     eprintln!("Endpoints:");
     eprintln!("  GET  /health          - Health check with cache stats");
     eprintln!("  GET  /                - API documentation");
@@ -296,25 +322,45 @@ fn parse_args(args: &[String]) -> (Option<String>, Option<String>, bool, String,
         i += 1;
     }
 
-    (auth_token, admin_token, daemon_mode, pid_file, bind_host, thread_count)
+    (
+        auth_token,
+        admin_token,
+        daemon_mode,
+        pid_file,
+        bind_host,
+        thread_count,
+    )
 }
 
 #[cfg(unix)]
-fn handle_daemon_mode(port: u16, bind_host: &str, pid_file: &str, token_config: &TokenConfig, thread_count: usize) {
+fn handle_daemon_mode(
+    port: u16,
+    bind_host: &str,
+    pid_file: &str,
+    token_config: &TokenConfig,
+    thread_count: usize,
+) {
     // Print startup message before daemonizing
     eprintln!("Starting Skillet HTTP server as daemon...");
-    eprintln!("Port: {}, Host: {}, Threads: {}, PID file: {}", port, bind_host, thread_count, pid_file);
-    if token_config.auth_token.is_some() { eprintln!("Eval token auth: enabled"); }
-    if token_config.admin_token.is_some() { eprintln!("Admin token auth: enabled"); }
-    
+    eprintln!(
+        "Port: {}, Host: {}, Threads: {}, PID file: {}",
+        port, bind_host, thread_count, pid_file
+    );
+    if token_config.auth_token.is_some() {
+        eprintln!("Eval token auth: enabled");
+    }
+    if token_config.admin_token.is_some() {
+        eprintln!("Admin token auth: enabled");
+    }
+
     // Print warnings before daemonizing
     token_config.print_warnings();
-    
+
     if let Err(e) = daemonize() {
         eprintln!("Failed to daemonize: {}", e);
         std::process::exit(1);
     }
-    
+
     // Write PID file after successful daemonization
     if let Err(_e) = write_pid_file(pid_file) {
         // Log to syslog or a file since we can't use stderr
@@ -323,7 +369,13 @@ fn handle_daemon_mode(port: u16, bind_host: &str, pid_file: &str, token_config: 
 }
 
 #[cfg(not(unix))]
-fn handle_daemon_mode(_port: u16, _bind_host: &str, _pid_file: &str, _token_config: &TokenConfig, _thread_count: usize) {
+fn handle_daemon_mode(
+    _port: u16,
+    _bind_host: &str,
+    _pid_file: &str,
+    _token_config: &TokenConfig,
+    _thread_count: usize,
+) {
     eprintln!("Error: Daemon mode not supported on this platform");
     std::process::exit(1);
 }
@@ -347,11 +399,10 @@ fn load_js_functions(daemon_mode: bool) {
 }
 
 fn start_server(port: u16, bind_host: &str) -> TcpListener {
-    let listener = TcpListener::bind(format!("{}:{}", bind_host, port))
-        .unwrap_or_else(|e| {
-            eprintln!("Error: Failed to bind to {}:{}: {}", bind_host, port, e);
-            std::process::exit(1);
-        });
+    let listener = TcpListener::bind(format!("{}:{}", bind_host, port)).unwrap_or_else(|e| {
+        eprintln!("Error: Failed to bind to {}:{}: {}", bind_host, port, e);
+        std::process::exit(1);
+    });
 
     listener.set_nonblocking(true).unwrap_or_else(|e| {
         eprintln!("Error: Failed to set non-blocking mode: {}", e);
@@ -371,16 +422,26 @@ fn print_startup_messages(
     thread_count: usize,
 ) {
     if !daemon_mode {
-        eprintln!("🚀 Skillet HTTP Server started on http://{}:{}", bind_host, port);
+        eprintln!(
+            "🚀 Skillet HTTP Server started on http://{}:{}",
+            bind_host, port
+        );
         eprintln!("🧵 Worker threads: {}", thread_count);
-        if auth_token.is_some() { eprintln!("🔒 Eval token auth: enabled"); }
-        if admin_token.is_some() { eprintln!("🔐 Admin token auth: enabled"); }
-        
+        if auth_token.is_some() {
+            eprintln!("🔒 Eval token auth: enabled");
+        }
+        if admin_token.is_some() {
+            eprintln!("🔐 Admin token auth: enabled");
+        }
+
         // Print security warnings
         token_config.print_warnings();
-        
+
         eprintln!("🌐 Ready for HTTP requests");
-        eprintln!("📖 Visit http://{}:{} for API documentation", bind_host, port);
-        eprintln!("");
+        eprintln!(
+            "📖 Visit http://{}:{} for API documentation",
+            bind_host, port
+        );
+        eprintln!();
     }
 }

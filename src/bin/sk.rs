@@ -1,7 +1,7 @@
-use skillet::{evaluate_with_custom, evaluate_with_assignments, Value, JSPluginLoader};
+use serde_json::json;
+use skillet::{evaluate_with_assignments, evaluate_with_custom, JSPluginLoader, Value};
 use std::collections::HashMap;
 use std::time::Instant;
-use serde_json::json;
 
 /// Sanitize JSON keys by replacing special characters with underscores
 fn sanitize_json_key(key: &str) -> String {
@@ -39,21 +39,21 @@ fn main() {
     if args.is_empty() {
         eprintln!("Usage: sk \"expression\" [options] [var=value ...]");
         eprintln!("       sk \"expression\" --json '{{\"var\": \"value\"}}'");
-        eprintln!("");
+        eprintln!();
         eprintln!("Options:");
         eprintln!("  --output-json    Output result in JSON format with type and timing");
         eprintln!("  --json JSON      Use JSON string for variable values");
-        eprintln!("");
+        eprintln!();
         eprintln!("Examples:");
         eprintln!("  # Basic usage:");
         eprintln!("  sk \"=2 + 3 * 4\"");
         eprintln!("  sk \"=2 + 3 * 4\" --output-json");
-        eprintln!("");
+        eprintln!();
         eprintln!("  # Key-value variables:");
         eprintln!("  sk \"=SUM(:sales, 1000)\" sales=5000");
         eprintln!("  sk \"=:name.upper()\" name=\"hello world\" --output-json");
         eprintln!("  sk \"=:price * :quantity\" price=19.99 quantity=3");
-        eprintln!("");
+        eprintln!();
         eprintln!("  # JSON variables:");
         eprintln!("  sk \"=SUM(:sales, :bonus)\" --json '{{\"sales\": 5000, \"bonus\": 1000}}'");
         eprintln!("  sk \"=:user.name.upper()\" --json '{{\"user\": {{\"name\": \"alice\"}}}}' --output-json");
@@ -90,7 +90,10 @@ fn main() {
             let value = parse_value(value_str);
             vars.insert(name.to_string(), value);
         } else {
-            eprintln!("Invalid variable assignment: '{}'. Use format: var=value", arg);
+            eprintln!(
+                "Invalid variable assignment: '{}'. Use format: var=value",
+                arg
+            );
             std::process::exit(1);
         }
 
@@ -116,7 +119,10 @@ fn main() {
                     let mut result = HashMap::new();
 
                     // Add the original JSON data for JQ function
-                    result.insert("arguments".to_string(), skillet::Value::Json(json_str.clone()));
+                    result.insert(
+                        "arguments".to_string(),
+                        skillet::Value::Json(json_str.clone()),
+                    );
 
                     for (key, value) in map {
                         let skillet_value = match skillet::json_to_value(value) {
@@ -156,7 +162,7 @@ fn main() {
             } else {
                 println!("{:?}", val);
             }
-        },
+        }
         Err(e) => {
             eprintln!("Error: {}", e);
             std::process::exit(2);
@@ -172,25 +178,26 @@ fn format_json_output(value: &Value, execution_time_ms: f64) -> String {
         Value::Currency(c) => (json!(c), "Currency"),
         Value::DateTime(dt) => (json!(dt), "DateTime"),
         Value::Array(arr) => {
-            let json_arr: Vec<serde_json::Value> = arr.iter().map(|v| match v {
-                Value::Number(n) => json!(n),
-                Value::String(s) => json!(s),
-                Value::Boolean(b) => json!(b),
-                Value::Currency(c) => json!(c),
-                Value::DateTime(dt) => json!(dt),
-                Value::Null => json!(null),
-                Value::Array(_) => json!(format!("{:?}", v)), // Nested arrays as debug string for now
-                Value::Json(s) => serde_json::from_str(s).unwrap_or_else(|_| json!(s)),
-            }).collect();
+            let json_arr: Vec<serde_json::Value> = arr
+                .iter()
+                .map(|v| match v {
+                    Value::Number(n) => json!(n),
+                    Value::String(s) => json!(s),
+                    Value::Boolean(b) => json!(b),
+                    Value::Currency(c) => json!(c),
+                    Value::DateTime(dt) => json!(dt),
+                    Value::Null => json!(null),
+                    Value::Array(_) => json!(format!("{:?}", v)), // Nested arrays as debug string for now
+                    Value::Json(s) => serde_json::from_str(s).unwrap_or_else(|_| json!(s)),
+                })
+                .collect();
             (json!(json_arr), "Array")
-        },
-        Value::Null => (json!(null), "Null"),
-        Value::Json(s) => {
-            match serde_json::from_str(s) {
-                Ok(parsed) => (parsed, "Json"),
-                Err(_) => (json!(s), "Json")
-            }
         }
+        Value::Null => (json!(null), "Null"),
+        Value::Json(s) => match serde_json::from_str(s) {
+            Ok(parsed) => (parsed, "Json"),
+            Err(_) => (json!(s), "Json"),
+        },
     };
 
     let output = json!({
@@ -207,7 +214,7 @@ fn parse_value(s: &str) -> Value {
 
     // Check for string (quoted)
     if (s.starts_with('"') && s.ends_with('"')) || (s.starts_with('\'') && s.ends_with('\'')) {
-        return Value::String(s[1..s.len()-1].to_string());
+        return Value::String(s[1..s.len() - 1].to_string());
     }
 
     // Check for boolean
@@ -220,11 +227,12 @@ fn parse_value(s: &str) -> Value {
 
     // Check for array (basic support for [1,2,3] format)
     if s.starts_with('[') && s.ends_with(']') {
-        let inner = &s[1..s.len()-1];
+        let inner = &s[1..s.len() - 1];
         if inner.trim().is_empty() {
             return Value::Array(vec![]);
         }
-        let items: Vec<Value> = inner.split(',')
+        let items: Vec<Value> = inner
+            .split(',')
             .map(|item| parse_value(item.trim()))
             .collect();
         return Value::Array(items);
