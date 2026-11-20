@@ -279,7 +279,7 @@ Remove or relocate `test_js_upload.py`, `test_large_request.py`, `performance_re
 `Error` is `{message, position}` only; callers can't match on error type. Propose an `ErrorKind`
 enum without breaking `Error::new`.
 
-### BL-017 · Stack overflow on deeply nested input (DoS) · P1 · `in-progress` · security-reviewer → rust-engineer
+### BL-017 · Stack overflow on deeply nested input (DoS) · P1 · `review` · security-reviewer → rust-engineer
 `sk "((((…20000×…1"` aborts with `fatal runtime error: stack overflow` (reproduced 2026-11-20).
 It's an abort, not a panic, so one HTTP request kills `sk_http_server` for everyone. Add a nesting
 depth limit in `parser.rs` (and in evaluator recursion) that returns `Error`. QA adds
@@ -317,7 +317,7 @@ Brief (orchestrator, 2026-11-20):
       parser: enforce the same 128 depth when the evaluator constructs an Array value from evaluated
       elements, returning the same error. Keep it O(1) per construction (e.g. track depth, don't
       re-walk), and report the overhead on one array-heavy expression.
-  BL-017b · rust-engineer · `in-progress`
+  BL-017b · rust-engineer (Claude Opus 5.5) · `review`
     Do: enforce the limit at parse time (depth counter in recursive descent AND in the iterative
         binary/postfix loops so left-deep trees are bounded too). If 017a shows the evaluator or
         `Drop` can still overflow at depth 256 on a 2 MB thread, fix that too. Un-ignore 017a tests.
@@ -351,6 +351,43 @@ Handoff (security-reviewer, Claude Opus 5.5, 2026-11-20):
       items -> 1M elements, 175 MB measured; 26 items -> ~11 GB est.); each lambda iteration clones the whole variable
       map (`clone_variables`), so big JSON vars x big arrays costs O(n*m). REPT does not exist.
   ADR: none
+
+Handoff (rust-engineer, Claude Opus 5.5, 2026-11-20) — BL-017b:
+  Did: - `src/limits.rs`: `pub const MAX_NESTING_DEPTH = 128` (re-exported from `lib.rs`, additive API)
+         and the error "Expression nested too deeply (max 128)".
+       - Parser: internal fns return `(Expr, depth)` (AST depth: leaves/empty = 0, node = 1 + deepest
+         child) so every accepted AST is <= 128 deep, including left-deep binary chains (one shared
+         `parse_binary_level` loop) and postfix chains; plus a recursion counter on `parse_expr` and
+         unary/power operands (parens add recursion, no node). Errors carry the parser position.
+         Pure refactor otherwise (shared arg-list/suffix helpers); no other test changed.
+       - Evaluator: results of array literals, function calls, method/safe-method calls and casts go
+         through `check_value_depth` (walk stops after 128 levels; non-arrays cost one match), which
+         covers `.reduce([:acc], 0)` and `:a := [:a]; …`.
+       - `sk_http_server`/`sk_server` pools: `threadpool::Builder` with 16 MB `thread_stack_size`.
+       - `tests/security_limits.rs`: 17 ignores removed; hostile tests assert "nested too deeply"
+         (runtime_deep_value too, plus new runtime_deep_value_assignments); positives at 128 (objects/
+         property 100; index 64+64). Lambdas use 127 levels: `lambda(n)` has AST depth n+1 because each
+         level's `[1]` target sits under the call. Unit tests in `parser.rs` and `limits.rs`.
+  Evidence: `./harness/check.sh` (full, strict) OK. `cargo test --test security_limits` 38 passed,
+       0 ignored, debug and `--release`. `sk "$(printf '(%.0s' {1..20000})1"` prints
+       "Error: Expression nested too deeply (max 128) at position 129" and exits normally (code 2).
+       HTTP server (debug, 2 workers): parens/ABS 128 and lambda 127 evaluate; 20k parens -> 400.
+       Overhead (release `sk`, whole process, median of 5, macOS; 10k-element array
+       `.map([:x,[:x*2,:x]]).map([:x,:x]).map([:x]).filter(:x.length() > 0).length()`):
+       before 19.4 / 17.4 ms, after 19.3 / 19.2 ms (two rounds) — within run-to-run noise;
+       `.map(:x*2).filter(:x>10).sum()` 7.5 -> 7.1 ms.
+       Stack headroom at depth 128: release survives full eval on a 1 MB stack (fails at 512 KB);
+       debug needs 2-3 MB for the parser alone (~20 KB per paren level, measured), so 8 MB main
+       thread and 16 MB workers are fine, 2 MB debug threads are not.
+  Risks/Follow-ups:
+       - Debug builds on default 2 MB threads (e.g. an embedder's `std::thread::spawn`, cargo test
+         threads) still overflow on ~100+ nested parens. Release is fine. Fix if it matters: fold the
+         six binary levels into one precedence-climbing loop and shrink `parse_atom`'s frame (~4 KB).
+       - Values passed in through the Rust API (`evaluate_with(vars)`) are not depth-checked until
+         wrapped; JSON vars are capped by serde_json (128).
+       - Runtime nesting errors have no position (`None`).
+       - BL-028 (docs) filed for the new limit/error.
+  ADR: none (limit value decided by orchestrator in the revised plan; new pub const is additive).
 
 ### BL-018 · QuickJS resource limits + constant-time token compare · P1 · `todo` · security-reviewer → rust-engineer
 `src/js_plugin.rs` sets no memory limit or interrupt handler (an uploaded `while(true){}` pins a
@@ -397,3 +434,9 @@ Found in BL-017a: `[1,…].reduce([:acc, :acc], 0)` doubles per item (20 items �
 ~26 items → ~11 GB). Needs a total-size/step budget per evaluation (and a server-side timeout).
 Language Designer decides the limits and error; Rust implements; Security re-tests.
 Related perf note: lambdas clone the whole variable map per item (`clone_variables`) — O(items × vars).
+
+### BL-028 · Document the nesting depth limit · P3 · `todo` · docs-engineer
+BL-017b added `MAX_NESTING_DEPTH = 128` (`skillet::MAX_NESTING_DEPTH`) and the error
+"Expression nested too deeply (max 128)". It applies to expression nesting (parens, brackets,
+calls, unary/ternary, operator and `.`/`[]` chains) and to arrays built at runtime. Add it to
+`DOCUMENTATION.md` / `API_REFERENCE.md` (limits section) and the HTTP error docs.

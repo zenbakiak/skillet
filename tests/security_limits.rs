@@ -11,11 +11,11 @@
 //! ~120 KB: Linux caps a single argv string at 128 KB (MAX_ARG_STRLEN), and `sk` has no
 //! file/stdin input.
 //!
-//! Tests marked `#[ignore = "BL-017 crash"]` abort today. BL-017b removes the `ignore`.
-//! Exact error wording is decided by BL-017b and is not asserted here.
+//! Before BL-017b every hostile expression below aborted the process. They now fail with
+//! "Expression nested too deeply (max 128)" (`MAX_NESTING_DEPTH`).
 //!
-//! The positive tests (`*_depth_200` / `*_depth_100`) pin that realistic nesting keeps
-//! working under the `MAX_NESTING_DEPTH = 256` limit.
+//! The positive tests (`*_depth_128` / `*_depth_100`) pin that nesting up to the limit
+//! keeps working.
 
 use std::process::{Command, Output};
 
@@ -80,6 +80,18 @@ fn assert_rejected(name: &str, args: Vec<String>) {
     assert!(
         text.contains("Error"),
         "{name}: expected an error, got: {}",
+        text.chars().take(200).collect::<String>()
+    );
+}
+
+/// Hostile input over `MAX_NESTING_DEPTH`: must survive and report the nesting error.
+fn assert_too_deep(name: &str, args: Vec<String>) {
+    let out = run_sk(&args);
+    assert_survives(name, &out);
+    let text = combined(&out);
+    assert!(
+        text.contains("Error") && text.contains("nested too deeply"),
+        "{name}: expected the nesting-depth error, got: {}",
         text.chars().take(200).collect::<String>()
     );
 }
@@ -173,78 +185,69 @@ fn reduce_wrap(n: usize) -> String {
 }
 
 // ---------------------------------------------------------------------------------------
-// Hostile inputs. Crash thresholds (debug / release, 8 MB main thread) are in comments.
+// Hostile inputs. Comments give the pre-BL-017b crash thresholds (debug / release, 8 MB
+// main thread).
 // ---------------------------------------------------------------------------------------
 
 /// Crashes at ~250 (debug) / ~2_500 (release): parser recursion, 14 frames per level.
 #[test]
-#[ignore = "BL-017 crash"]
 fn regression_sec_deep_parens() {
-    assert_rejected("deep_parens", expr(parens(20_000)));
+    assert_too_deep("deep_parens", expr(parens(20_000)));
 }
 
 /// Crashes at ~250 / ~2_500: parser.
 #[test]
-#[ignore = "BL-017 crash"]
 fn regression_sec_deep_arrays() {
-    assert_rejected("deep_arrays", expr(arrays(10_000)));
+    assert_too_deep("deep_arrays", expr(arrays(10_000)));
 }
 
 /// Crashes at ~250 / ~2_500: parser.
 #[test]
-#[ignore = "BL-017 crash"]
 fn regression_sec_deep_objects() {
-    assert_rejected("deep_objects", expr(objects(10_000)));
+    assert_too_deep("deep_objects", expr(objects(10_000)));
 }
 
 /// Crashes at ~1_350 / ~11_600: evaluator (parser alone survives ~4_200 in debug).
 #[test]
-#[ignore = "BL-017 crash"]
 fn regression_sec_unary_minus_chain() {
-    assert_rejected("unary_minus_chain", expr(unary_minus(50_000)));
+    assert_too_deep("unary_minus_chain", expr(unary_minus(50_000)));
 }
 
 /// Crashes at ~1_350 / ~11_600: evaluator.
 #[test]
-#[ignore = "BL-017 crash"]
 fn regression_sec_unary_not_chain() {
-    assert_rejected("unary_not_chain", expr(unary_not(50_000)));
+    assert_too_deep("unary_not_chain", expr(unary_not(50_000)));
 }
 
 /// Right-assoc `1^1^…`. Crashes at ~1_350 / ~11_600: evaluator (parser ~2_700 debug).
 #[test]
-#[ignore = "BL-017 crash"]
 fn regression_sec_power_chain() {
-    assert_rejected("power_chain", expr(power(50_000)));
+    assert_too_deep("power_chain", expr(power(50_000)));
 }
 
 /// Crashes at ~925 / ~16_000: evaluator (parser ~2_600 debug).
 #[test]
-#[ignore = "BL-017 crash"]
 fn regression_sec_ternary_then_chain() {
-    assert_rejected("ternary_then_chain", expr(ternary_then(15_000)));
+    assert_too_deep("ternary_then_chain", expr(ternary_then(15_000)));
 }
 
 /// Crashes at ~925 / ~16_800: evaluator.
 #[test]
-#[ignore = "BL-017 crash"]
 fn regression_sec_ternary_else_chain() {
-    assert_rejected("ternary_else_chain", expr(ternary_else(14_000)));
+    assert_too_deep("ternary_else_chain", expr(ternary_else(14_000)));
 }
 
 /// 60k-term left-assoc chain (brief asked 100k; 200 KB breaks Linux MAX_ARG_STRLEN). Parser is iterative (fine at 200k); crashes at ~1_350 /
 /// ~11_600 in the evaluator; `Drop` of the AST alone overflows at ~35_000 (debug).
 #[test]
-#[ignore = "BL-017 crash"]
 fn regression_sec_left_assoc_chain() {
-    assert_rejected("left_assoc_chain", expr(left_add(60_000)));
+    assert_too_deep("left_assoc_chain", expr(left_add(60_000)));
 }
 
 /// Crashes at ~1_350 / ~11_600: evaluator (iterative postfix loop in parser).
 #[test]
-#[ignore = "BL-017 crash"]
 fn regression_sec_property_chain() {
-    assert_rejected(
+    assert_too_deep(
         "property_chain",
         with_json(property(50_000), r#"{"a":{}}"#.to_string()),
     );
@@ -252,9 +255,8 @@ fn regression_sec_property_chain() {
 
 /// Crashes at ~1_350 / ~11_600: evaluator.
 #[test]
-#[ignore = "BL-017 crash"]
 fn regression_sec_safe_nav_chain() {
-    assert_rejected(
+    assert_too_deep(
         "safe_nav_chain",
         with_json(safe_nav(35_000), r#"{"a":null}"#.to_string()),
     );
@@ -262,48 +264,50 @@ fn regression_sec_safe_nav_chain() {
 
 /// `.upper().upper()…`. Crashes at ~1_350 / ~11_600: evaluator.
 #[test]
-#[ignore = "BL-017 crash"]
 fn regression_sec_method_chain() {
-    assert_rejected("method_chain", expr(method(12_000)));
+    assert_too_deep("method_chain", expr(method(12_000)));
 }
 
 /// `[1][0][0]…`. Crashes at ~1_350 / ~11_600: evaluator.
 #[test]
-#[ignore = "BL-017 crash"]
 fn regression_sec_index_chain() {
-    assert_rejected("index_chain", expr(index_on("[1]".to_string(), 35_000)));
+    assert_too_deep("index_chain", expr(index_on("[1]".to_string(), 35_000)));
 }
 
 /// `((1::string)::string)…` (a bare `1::a::b` is a syntax error). Crashes at ~250 / ~2_500.
 #[test]
-#[ignore = "BL-017 crash"]
 fn regression_sec_cast_chain() {
-    assert_rejected("cast_chain", expr(cast(10_000)));
+    assert_too_deep("cast_chain", expr(cast(10_000)));
 }
 
 /// `ABS(ABS(…))`. Crashes at ~250 / ~2_500: parser.
 #[test]
-#[ignore = "BL-017 crash"]
 fn regression_sec_nested_function_calls() {
-    assert_rejected("nested_function_calls", expr(func(10_000)));
+    assert_too_deep("nested_function_calls", expr(func(10_000)));
 }
 
 /// `[1].map([1].map(…))`. Crashes at ~312 / ~2_500: parser.
 #[test]
-#[ignore = "BL-017 crash"]
 fn regression_sec_nested_lambdas() {
-    assert_rejected("nested_lambdas", expr(lambda(5_000)));
+    assert_too_deep("nested_lambdas", expr(lambda(5_000)));
 }
 
 /// Deep value built at *runtime* from a flat AST: `[1,…].reduce([:acc], 0)` over 50k items.
 /// Crashes between 7_000 and 10_000 items (debug) in Value drop/clone/Debug recursion.
-/// A parse-time AST depth limit does NOT cover this; BL-017b needs a value-depth guard
-/// (or iterative Drop) for it. Only survival is asserted (an error OR a value is fine).
+/// A parse-time limit does not cover this; the evaluator's value-depth check does.
 #[test]
-#[ignore = "BL-017 crash"]
 fn regression_sec_runtime_deep_value() {
-    let out = run_sk(&expr(format!("{}.length()", reduce_wrap(50_000))));
-    assert_survives("runtime_deep_value", &out);
+    assert_too_deep(
+        "runtime_deep_value",
+        expr(format!("{}.length()", reduce_wrap(50_000))),
+    );
+}
+
+/// Same, via repeated assignment: `:a := [1]; :a := [:a]; …`.
+#[test]
+fn regression_sec_runtime_deep_value_assignments() {
+    let s = format!(":a := [1]; {}:a.length()", ":a := [:a]; ".repeat(5_000));
+    assert_too_deep("runtime_deep_value_assignments", expr(s));
 }
 
 /// Deep JSON arrays via `--json`. Safe today: serde_json's recursion limit (128) rejects it.
@@ -334,18 +338,18 @@ fn regression_sec_deep_json_vars_assignment_path() {
 }
 
 // ---------------------------------------------------------------------------------------
-// Positive tests: realistic depth keeps working (must stay green after BL-017b).
+// Positive tests: nesting up to MAX_NESTING_DEPTH (128) keeps working.
 // ---------------------------------------------------------------------------------------
 
 #[test]
-fn regression_sec_parens_depth_200() {
-    assert_value("parens_200", expr(parens(200)), "Number(1.0)");
+fn regression_sec_parens_depth_128() {
+    assert_value("parens_128", expr(parens(128)), "Number(1.0)");
 }
 
 #[test]
-fn regression_sec_arrays_depth_200() {
-    let out = assert_ok_stdout("arrays_200", expr(arrays(200)));
-    assert_eq!(out.matches("Array(").count(), 200, "arrays_200");
+fn regression_sec_arrays_depth_128() {
+    let out = assert_ok_stdout("arrays_128", expr(arrays(128)));
+    assert_eq!(out.matches("Array(").count(), 128, "arrays_128");
     assert!(out.contains("Number(1.0)"));
 }
 
@@ -358,33 +362,33 @@ fn regression_sec_objects_depth_100() {
 }
 
 #[test]
-fn regression_sec_unary_minus_depth_200() {
-    assert_value("unary_minus_200", expr(unary_minus(200)), "Number(1.0)");
+fn regression_sec_unary_minus_depth_128() {
+    assert_value("unary_minus_128", expr(unary_minus(128)), "Number(1.0)");
 }
 
 #[test]
-fn regression_sec_unary_not_depth_200() {
-    assert_value("unary_not_200", expr(unary_not(200)), "Boolean(true)");
+fn regression_sec_unary_not_depth_128() {
+    assert_value("unary_not_128", expr(unary_not(128)), "Boolean(true)");
 }
 
 #[test]
-fn regression_sec_power_depth_200() {
-    assert_value("power_200", expr(power(200)), "Number(1.0)");
+fn regression_sec_power_depth_128() {
+    assert_value("power_128", expr(power(128)), "Number(1.0)");
 }
 
 #[test]
-fn regression_sec_ternary_then_depth_200() {
-    assert_value("ternary_then_200", expr(ternary_then(200)), "Number(1.0)");
+fn regression_sec_ternary_then_depth_128() {
+    assert_value("ternary_then_128", expr(ternary_then(128)), "Number(1.0)");
 }
 
 #[test]
-fn regression_sec_ternary_else_depth_200() {
-    assert_value("ternary_else_200", expr(ternary_else(200)), "Number(1.0)");
+fn regression_sec_ternary_else_depth_128() {
+    assert_value("ternary_else_128", expr(ternary_else(128)), "Number(1.0)");
 }
 
 #[test]
-fn regression_sec_left_assoc_depth_200() {
-    assert_value("left_assoc_200", expr(left_add(200)), "Number(201.0)");
+fn regression_sec_left_assoc_depth_128() {
+    assert_value("left_assoc_128", expr(left_add(128)), "Number(129.0)");
 }
 
 /// JSON vars are capped at depth 128 by serde_json, so the property chain uses 100.
@@ -398,47 +402,49 @@ fn regression_sec_property_depth_100() {
 }
 
 #[test]
-fn regression_sec_safe_nav_depth_200() {
+fn regression_sec_safe_nav_depth_128() {
     assert_value(
-        "safe_nav_200",
-        with_json(safe_nav(200), r#"{"a":null}"#.to_string()),
+        "safe_nav_128",
+        with_json(safe_nav(128), r#"{"a":null}"#.to_string()),
         "Null",
     );
 }
 
 #[test]
-fn regression_sec_method_depth_200() {
-    assert_value("method_200", expr(method(200)), "String(\"X\")");
+fn regression_sec_method_depth_128() {
+    assert_value("method_128", expr(method(128)), "String(\"X\")");
 }
 
-/// 100 nested arrays indexed 100 times: total AST depth 200.
+/// 64 nested arrays indexed 64 times: total AST depth 128.
 #[test]
-fn regression_sec_index_depth_200() {
-    assert_value("index_200", expr(index_on(arrays(100), 100)), "Number(1.0)");
-}
-
-#[test]
-fn regression_sec_cast_depth_200() {
-    assert_value("cast_200", expr(cast(200)), "String(\"1\")");
+fn regression_sec_index_depth_128() {
+    assert_value("index_128", expr(index_on(arrays(64), 64)), "Number(1.0)");
 }
 
 #[test]
-fn regression_sec_function_calls_depth_200() {
-    assert_value("function_calls_200", expr(func(200)), "Number(1.0)");
+fn regression_sec_cast_depth_128() {
+    assert_value("cast_128", expr(cast(128)), "String(\"1\")");
 }
 
 #[test]
-fn regression_sec_lambdas_depth_200() {
-    let out = assert_ok_stdout("lambdas_200", expr(lambda(200)));
-    assert_eq!(out.matches("Array(").count(), 200, "lambdas_200");
+fn regression_sec_function_calls_depth_128() {
+    assert_value("function_calls_128", expr(func(128)), "Number(1.0)");
+}
+
+/// `lambda(n)` has AST depth n + 1 (each level's `[1]` target sits under the call), so
+/// 127 levels is the deepest accepted.
+#[test]
+fn regression_sec_lambdas_depth_127() {
+    let out = assert_ok_stdout("lambdas_127", expr(lambda(127)));
+    assert_eq!(out.matches("Array(").count(), 127, "lambdas_127");
     assert!(out.contains("Number(1.0)"));
 }
 
 #[test]
-fn regression_sec_runtime_value_depth_200() {
+fn regression_sec_runtime_value_depth_128() {
     assert_value(
-        "runtime_value_200",
-        expr(format!("{}.length()", reduce_wrap(200))),
+        "runtime_value_128",
+        expr(format!("{}.length()", reduce_wrap(128))),
         "Number(1.0)",
     );
 }
