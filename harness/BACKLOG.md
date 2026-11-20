@@ -8,7 +8,7 @@ Seeded 2026-11-20 from a codebase audit: 153 tracked files, ~16k LOC, all tests 
 
 ---
 
-### BL-001 · Unify the two evaluators · P1 · `todo`
+### BL-001 · Unify the two evaluators · P1 · `in-progress`
 Two parallel implementations exist: `src/runtime/evaluator.rs` (used by `lib.rs` public API) and
 `src/runtime/evaluation/` (used by `method_calls/*` when evaluating lambdas). Top-level and
 nested evaluation can silently diverge.
@@ -16,6 +16,62 @@ nested evaluation can silently diverge.
   and `runtime::evaluation::*`; document every divergence found.
 - **BL-001b (rust-engineer)**: keep one (likely `evaluation/`, it is already modular), make the
   other a re-export, delete the duplicate. Blocked by BL-001a.
+
+Brief (orchestrator, 2026-11-20):
+  Goal: one evaluator implementation; every expression returns the same Value as today via the public API.
+  Branch: feature/bl-001-unify-evaluators (001a commits first, then 001b; one PR).
+  BL-001a · qa-engineer · `review`
+    Scope: new tests/evaluator_parity.rs only.
+    Do: run a broad expression corpus (every Expr variant, every builtin category, methods,
+        lambdas, assignments, custom functions, errors) through both
+        skillet::runtime::evaluator::{eval, eval_with_vars, eval_with_vars_and_custom,
+        eval_with_assignments*} and skillet::runtime::evaluation::{same}; assert equal
+        (Ok values equal, or both Err). Divergences: keep the test, mark #[ignore = "BL-001 divergence"],
+        and list them in the handoff with both outputs.
+    Out of scope: src/ changes.
+    Acceptance: cargo test --test evaluator_parity green; divergence list in handoff.
+  BL-001b · rust-engineer · `todo` (blocked by 001a)
+    Scope: src/runtime/, src/lib.rs (call sites only).
+    Do: keep runtime/evaluation/, turn runtime/evaluator.rs into a thin re-export (pub items keep
+        their paths and signatures), delete the duplicated code.
+    Contract for divergences: the public-API path (evaluator.rs) wins, because tests/ pin it.
+        Any divergence where that is unclear goes back to the orchestrator, not decided in code.
+    Acceptance: ./harness/check.sh green; parity tests un-ignored and green; clippy count not up;
+        `wc -l src/runtime/evaluator.rs` shrinks to a re-export.
+    Refs: ADR-0002, PRD-003 FR-1.
+
+Handoff (qa-engineer, Claude Opus 5.5, 2026-11-20) — BL-001a:
+  Did: added tests/evaluator_parity.rs: table-driven differential harness, 273 expressions
+       (all Expr variants, every function_dispatch category incl. JQ/DIG, FILTER/MAP/REDUCE/FIND/
+       SUMIF/AVGIF/COUNTIF + .filter/.map/.reduce/.find with default and custom params, null,
+       errors, local-registry custom fns) run through eval / eval_with_vars /
+       eval_with_vars_and_custom / eval_with_assignments / eval_with_assignments_and_context of
+       both runtime::evaluator and runtime::evaluation (~1190 expression x entry-point pairs).
+       Known divergences are skipped by the parity tests and replayed in 5 #[ignore] tests.
+  Evidence: cargo test --test evaluator_parity -> 7 passed, 5 ignored; with --ignored the 5
+       divergence tests fail as expected (64 divergent pairs). ./harness/check.sh --fast OK.
+       New file adds 0 clippy warnings (count 113 vs baseline 95 predates this change).
+  Divergences (evaluator.rs result wins per brief; evaluation/ result shown second):
+    D1 JQ/DIG missing in evaluation/ (all var entry points): e.g. JQ(:arguments,'$.name') ->
+       Ok(String "acme") vs Err "Unknown function: JQ"; DIG(:obj,['user','name']) -> Ok "Ann" vs
+       Err "Unknown function: DIG".
+    D2 evaluation::eval (no vars) rejects FILTER/MAP/REDUCE/FIND/SUMIF/AVGIF/COUNTIF:
+       e.g. MAP([1,2,3], :x * 10) -> Ok [10,20,30] vs Err "MAP requires variable context".
+    D3 REDUCE default :acc in evaluation/ non-custom path: REDUCE([1,2,3], :acc + :x, 0) ->
+       Ok 6 vs Err "Missing variable: :acc" (get_param_name(None) returns "x" for acc too).
+       Same for REDUCE(:arr, :acc * :x, 1) -> 120. Method .reduce() is unaffected.
+    D4 evaluation/ *_with_custom higher-order fns ignore param-name args: e.g.
+       FILTER([1,2,3,4], :v > 2, 'v') -> Ok [3,4] vs Err "Undefined variable: v" (also MAP/REDUCE/FIND).
+    D5 evaluation::eval (no vars) is reduced: 'a' == 'a' -> Ok true vs Err "Comparison on
+       non-number"; NULL == NULL -> Ok false (QA: suspected bug, pinned as-is) vs same Err;
+       {"a":{"b":2}}.a.b, &.prop, &.method(), "1; 2; 3" -> Ok vs Err "Use eval_with_vars for ...".
+    Error-message-only differences (outcome agrees): builtin arg errors in evaluation/ surface as
+       "Unknown function: <NAME>" (UPPER(1,2,3), SUBSTRING(), REPLACE('aaa','a','b'),
+       ROUND(:money,0)); missing var "Missing variable: :x" vs "Undefined variable: x".
+  Risks/Follow-ups: BL-001b must un-ignore the 5 divergence_* tests. NULL == NULL -> false in the
+       public API looks wrong; Language Designer should rule (not filed as an item yet).
+       REPLACE is Excel-style (4 args), so REPLACE('aaa','a','b') errors in both paths.
+  ADR: none
 
 ### BL-002 · Remove dead modules and unused dependencies · P1 · `todo` · rust-engineer
 `memory_pool.rs`, `traits.rs`, `concurrent_registry.rs` are `pub mod` but unused;
