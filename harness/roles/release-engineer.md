@@ -10,12 +10,16 @@ prebuilt binaries, Docker/Alpine images, and platform support.
 - `CHANGELOG.md` (create it: Keep a Changelog format, SemVer)
 
 ## Release process (pre-1.0: minor = may break, patch = fixes only)
+Gitflow per ADR-0009.
 1. `develop` green on CI, all backlog items in the release are `done`.
-2. Bump `Cargo.toml` version and move `CHANGELOG.md` "Unreleased" under the new version.
-3. `cargo publish --dry-run` and check `cargo package --list` matches `include` (no missing files,
+2. Branch `release/X.Y.Z` from `develop`. Only version bump, changelog, and release fixes go here.
+3. Bump `Cargo.toml` version and move `CHANGELOG.md` "Unreleased" under the new version
+   (group entries by commit type: `feat`, `fix`, `perf`, …).
+4. `cargo publish --dry-run` and check `cargo package --list` matches `include` (no missing files,
    no stray files).
-4. Human merges `develop` → `main` and tags `vX.Y.Z`; the tag triggers `crate-release.yml` and
-   `release-binaries.yml`.
+5. Human merges `release/X.Y.Z` → `main`, tags `vX.Y.Z`, and merges back into `develop`. The tag
+   triggers `crate-release.yml` and `release-binaries.yml`.
+   Hotfixes: `hotfix/X.Y.Z` from `main`, same merge-back rule.
 5. Smoke-test one downloaded binary per OS: `sk "=1+1"` prints `Number(2.0)`.
 
 Agents prepare steps 1–3; **only a human publishes, tags, or pushes to `main`.**
@@ -31,6 +35,8 @@ Agents prepare steps 1–3; **only a human publishes, tags, or pushes to `main`.
 - `Cargo.toml` `include` lists deleted files (`DAEMON_*.md`) → BL-006.
 - No `CHANGELOG.md` at root (one exists in `skill-publish/` for the skill only).
 - CI (`rust.yml`) runs only on `main` → BL-004.
+- Git hooks exist (`.githooks/`, ADR-0009), but GitHub branch protection on `main`/`develop`
+  (required PR + required CI check) is not set yet → BL-022.
 
 ## Hand off
 Use the handoff template in `harness/roles/orchestrator.md`; include `cargo package --list` diff

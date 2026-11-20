@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Gitflow guard (ADR-0009): no direct commits on main/develop, branch naming, no secrets.
+set -euo pipefail
+git_dir=$(git rev-parse --git-dir)
+branch=$(git symbolic-ref --short -q HEAD || true)   # empty when detached (rebase etc.)
+
+fail() { printf 'pre-commit: %s\n  see docs/adr/0009-gitflow-branching-and-commits.md\n' "$1" >&2; exit 1; }
+
+if [[ -n "$branch" && ! -f "$git_dir/MERGE_HEAD" ]]; then
+  case "$branch" in
+    main|develop) fail "no direct commits on '$branch'; use a feature/bugfix/release/hotfix branch" ;;
+    feature/*|bugfix/*|release/*|hotfix/*|support/*) ;;
+    *) fail "branch '$branch' must be feature/*, bugfix/*, release/*, hotfix/* or support/*" ;;
+  esac
+fi
+
+blocked=$(git diff --cached --name-only --diff-filter=ACMR | grep -E '(^|/)\.env$|settings\.local\.json$|\.(pem|key|p12)$' || true)
+[[ -z "$blocked" ]] || fail "refusing to commit secret-like files: $blocked"

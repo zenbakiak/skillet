@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Gitflow guard (ADR-0009): main/develop change only through reviewed PRs; gate must pass.
+set -euo pipefail
+fail() { printf 'pre-push: %s\n  see docs/adr/0009-gitflow-branching-and-commits.md\n' "$1" >&2; exit 1; }
+
+while read -r _local_ref local_sha remote_ref _remote_sha; do
+  [[ "$local_sha" =~ ^0+$ ]] && continue   # branch deletion
+  case "$remote_ref" in
+    refs/heads/main|refs/heads/develop) fail "direct push to ${remote_ref#refs/heads/}; open a PR instead" ;;
+  esac
+done
+
+./harness/check.sh --fast || fail "harness gate failed"

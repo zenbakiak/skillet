@@ -78,9 +78,12 @@ item, and follow the role it names.
 
 ## 6. Shared protocol (all roles)
 
+0. **Git setup (once per clone)**: `git config core.hooksPath .githooks`. Rules: [ADR-0009](docs/adr/0009-gitflow-branching-and-commits.md).
 1. **Start**: read this file, your role file, and the backlog item. Run `./harness/check.sh` to get a baseline.
 2. **Claim**: set the item to `in-progress` with your agent/model name in `harness/BACKLOG.md`.
-3. **Work small**: one backlog item per branch (`bl-<id>-<slug>`), one logical change per commit.
+3. **Work small**: one backlog item per branch, `feature/bl-<id>-<slug>` (or `bugfix/…`) from `develop`.
+   One logical change per commit, Conventional Commits format. **No `Co-authored-by` or
+   "Generated with" lines in commits or PRs.** PRs target `develop`; never push to `main`/`develop`.
 4. **Gate**: `./harness/check.sh` must pass. Never weaken a test to make it pass; if behavior *should* change, say so in the handoff and update the PRD.
 5. **Handoff**: append a handoff note to the item (template in `harness/roles/orchestrator.md`) and set status `review`.
 6. **Decisions**: any choice that is hard to reverse (public API, syntax, `Value` layout, dependency, MSRV, wire format) needs an ADR in `docs/adr/` with status `Proposed`. Only the Orchestrator (or a human) moves it to `Accepted`.

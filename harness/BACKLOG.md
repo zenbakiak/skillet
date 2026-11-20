@@ -101,3 +101,7 @@ is documented. Output is a table QA turns into tests. Also decide the canonical 
 ### BL-021 · `CHANGELOG.md` + release checklist dry run · P2 · `todo` · release-engineer
 Create root `CHANGELOG.md` (Keep a Changelog) back-filled from git tags, and run
 `cargo publish --dry-run` / `cargo package --list` (expected to catch the BL-006 `include` issue).
+
+### BL-022 · GitHub branch protection for `main`/`develop` · P1 · `todo` · release-engineer (human applies)
+Client-side hooks (ADR-0009) can be bypassed. Require PR review and a passing CI check on
+`main` and `develop`; block force-push. Depends on BL-004 for the CI check.
