@@ -13,4 +13,4 @@ Secrets*.toml
 .env.prd
 *.prd.*
 dist/
-skill-publish
+skill-publish.claude/settings.local.json
