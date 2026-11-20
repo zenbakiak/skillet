@@ -33,7 +33,6 @@ serde_json = "1.0"
 lazy_static = "1.5"
 rquickjs = { version = "0.11", optional = true }
 # High-performance dependencies
-dashmap = "6.1"
 threadpool = "1.8"
 num_cpus = "1.17"
 # Daemon support
