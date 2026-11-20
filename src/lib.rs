@@ -4,6 +4,7 @@ pub mod error;
 #[cfg(feature = "plugins")]
 pub mod js_plugin;
 pub mod lexer;
+mod limits;
 pub mod parser;
 pub mod runtime;
 pub mod types;
@@ -13,6 +14,7 @@ pub use custom::{CustomFunction, FunctionRegistry};
 pub use error::Error;
 #[cfg(feature = "plugins")]
 pub use js_plugin::{JSPluginLoader, JavaScriptFunction};
+pub use limits::MAX_NESTING_DEPTH;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 pub use types::Value;

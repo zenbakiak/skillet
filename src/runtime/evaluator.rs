@@ -1,6 +1,7 @@
 use crate::ast::{BinaryOp, Expr, UnaryOp};
 use crate::custom::FunctionRegistry;
 use crate::error::Error;
+use crate::limits::check_value_depth;
 use crate::runtime::{
     function_dispatch::exec_builtin_fast,
     method_calls::{exec_method, exec_method_with_custom},
@@ -134,7 +135,7 @@ impl Evaluator {
                 if matches!(target_value, Value::Null) {
                     return Ok(Value::Null);
                 }
-                if let Some(registry) = context.get_custom_registry() {
+                let result = if let Some(registry) = context.get_custom_registry() {
                     exec_method_with_custom(
                         name,
                         false,
@@ -151,7 +152,8 @@ impl Evaluator {
                         args,
                         Some(&context.clone_variables()),
                     )
-                }
+                };
+                result.and_then(check_value_depth)
             }
 
             Expr::Array(items) => {
@@ -159,7 +161,7 @@ impl Evaluator {
                 for e in items {
                     out.push(Self::eval(e, context)?);
                 }
-                Ok(Value::Array(out))
+                check_value_depth(Value::Array(out))
             }
 
             Expr::ObjectLiteral(pairs) => {
@@ -177,7 +179,7 @@ impl Evaluator {
 
             Expr::TypeCast { expr, ty } => {
                 let v = Self::eval(expr, context)?;
-                cast_value(v, ty)
+                cast_value(v, ty).and_then(check_value_depth)
             }
 
             Expr::Index { target, index } => {
@@ -206,7 +208,9 @@ impl Evaluator {
                 }
             }
 
-            Expr::FunctionCall { name, args } => Self::eval_function_call(name, args, context),
+            Expr::FunctionCall { name, args } => {
+                Self::eval_function_call(name, args, context).and_then(check_value_depth)
+            }
 
             Expr::MethodCall {
                 target,
@@ -215,7 +219,7 @@ impl Evaluator {
                 predicate,
             } => {
                 let recv = Self::eval(target, context)?;
-                if let Some(registry) = context.get_custom_registry() {
+                let result = if let Some(registry) = context.get_custom_registry() {
                     exec_method_with_custom(
                         name,
                         *predicate,
@@ -232,7 +236,8 @@ impl Evaluator {
                         args,
                         Some(&context.clone_variables()),
                     )
-                }
+                };
+                result.and_then(check_value_depth)
             }
 
             Expr::Spread(_) => Err(Error::new("Spread not allowed here", None)),

@@ -511,8 +511,12 @@ fn main() {
         eprintln!();
     }
 
-    // Use a thread pool for handling connections
-    let pool = threadpool::ThreadPool::new(num_threads);
+    // Use a thread pool for handling connections. Workers get a 16 MB stack (default 2 MB)
+    // so expressions up to MAX_NESTING_DEPTH have headroom in debug builds too (BL-017).
+    let pool = threadpool::Builder::new()
+        .num_threads(num_threads)
+        .thread_stack_size(16 * 1024 * 1024)
+        .build();
 
     // Accept loop that can be interrupted by Ctrl+C
     let server_token = Arc::new(auth_token);
