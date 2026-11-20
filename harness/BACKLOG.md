@@ -105,7 +105,7 @@ Review (orchestrator, 2026-11-20): accepted. Full gate green, 12/12 parity tests
   -1199 lines. Method lambdas now gain JQ/DIG and the other D1-D5 fixes (intended). Perf unmeasured
   until BL-005. Pre-existing JQ single-match unwrap filed as BL-024.
 
-### BL-002 · Remove dead modules and unused dependencies · P1 · `review` · rust-engineer
+### BL-002 · Remove dead modules and unused dependencies · P1 · `done` · rust-engineer
 `memory_pool.rs`, `traits.rs`, `concurrent_registry.rs` are `pub mod` but unused;
 `runtime/method_calls_old.rs` is not even compiled. Deps `string-interner`, `typed-arena`, `beef`,
 `dashmap` are only used by dead code. Since the modules are `pub`, removal is a semver-visible
@@ -113,7 +113,7 @@ change → mark `#[deprecated]` in 0.7, remove in 0.8 (or ADR to remove now whil
 
 Brief (orchestrator, 2026-11-20): maintainer chose to remove now (ADR-0010, Accepted).
   Goal: no dead modules, files, or dependencies left; gate green.
-  Role: rust-engineer · `review` · Branch: feature/bl-002-remove-dead-code
+  Role: rust-engineer · `done` · Branch: feature/bl-002-remove-dead-code
   Part 1 (internal, no API impact):
     - Cargo.toml: drop `string-interner`, `typed-arena`, `beef` (no users at all).
     - Delete src/runtime/method_calls_old.rs (not compiled).
@@ -167,6 +167,11 @@ Handoff (rust-engineer, claude-opus-5-5, 2026-11-20):
          generic "use string interning" tip; left as advice. Cargo.toml `include` still lists
          deleted DAEMON_*.md files (BL-006).
   ADR: none (implements ADR-0010)
+
+Review (orchestrator, 2026-11-20): accepted. 5 modules/files and 4 deps gone, ~1.9k lines removed,
+  strict gate green (234 tests; the 5 fewer are unit tests of deleted code). No HTTP response shape
+  changed. 0.7.0 changelog "Removed": skillet::{memory_pool, traits, concurrent_registry,
+  runtime::evaluation} (BL-021). Leftover false claims moved to BL-006.
 
 ### BL-003 · Format + clippy to zero, then make the gate strict · P1 · `done` · rust-engineer
 One commit `cargo fmt` (no other changes), then fix clippy (mostly `args.get(0)` → `first()`,
@@ -233,6 +238,8 @@ and record eval latency (lib, CLI, HTTP) in `benches/BASELINE.md`. All perf item
 - `docs/README.md` links `performance-optimization.prd.md` (missing).
 - `docs/DEVELOPMENT_GUIDE.md` claims lexer string interning and AST memory pooling — not true in code.
 - "100x+ speed increase" claim has no reproducible benchmark (re-measure after BL-005).
+- `README.md` and `benches/benchmark_phase1.sh` still claim string interning and memory pooling
+  (the code for them was deleted in BL-002).
 
 ### BL-007 · Rustdoc for the public API · P2 · `todo` · docs-engineer
 Every `pub fn` in `src/lib.rs` gets docs + runnable doctest; fix `parse` docstring ("arithmetic").
