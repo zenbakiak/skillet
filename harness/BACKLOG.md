@@ -434,11 +434,35 @@ always return arrays; breaking change needs an ADR.
 BL-003 with `#[allow(clippy::manual_range_contains)]`). Decide: error on NaN (likely), then use
 `!(0.0..=1.0).contains(&p)` and drop the allow.
 
-### BL-027 · Exponential value growth and evaluation budget · P2 · `todo` · security-reviewer → language-designer → rust-engineer
+### BL-027 · Exponential value growth and evaluation budget · P1 · `in-progress` · security-reviewer → language-designer → rust-engineer
 Found in BL-017a: `[1,…].reduce([:acc, :acc], 0)` doubles per item (20 items → 1M elements, 175 MB;
 ~26 items → ~11 GB). Needs a total-size/step budget per evaluation (and a server-side timeout).
 Language Designer decides the limits and error; Rust implements; Security re-tests.
 Related perf note: lambdas clone the whole variable map per item (`clone_variables`) — O(items × vars).
+
+Raised to P1 by maintainer, 2026-11-20 (same DoS class as BL-017: one request can OOM a shared server).
+Brief (orchestrator, 2026-11-20):
+  Goal: no expression can make one evaluation allocate unbounded memory or run unbounded time;
+        it returns an Error instead. Servers additionally bound wall-clock time per request.
+  Branch: bugfix/bl-027-evaluation-budget (stacked on bugfix/bl-017-nesting-depth-limit, PR #44;
+        retarget to develop after #44 merges).
+  BL-027a · language-designer · `in-progress`
+    Do: write ADR-0011 (Proposed) + PRD-001 NFR rows defining the evaluation budget:
+      - what is counted (e.g. total Value cells created per evaluation incl. string bytes; and/or max
+        single array length / string length; lambda iteration steps), with concrete default numbers;
+      - error text(s), consistent in style with "Expression nested too deeply (max 128)";
+      - per-request wall-clock timeout for sk_http_server/sk_server (default, and whether it is a
+        CLI flag/env var — only add a knob if a real deployment needs to tune it);
+      - whether library users get a way to change limits (ponytail: constants unless justified).
+      Base the numbers on evidence: run realistic formulas from tests/ and docs (largest JSON/array
+      workloads in tests/sk_performance.rs, benches) to show they stay far below the limits, and show
+      the attacks (`.reduce([:acc, :acc], 0)` on arrays; string doubling via CONCAT/`+` in REDUCE;
+      `SUBSTITUTE`-style growth; huge ranges if any builtin creates arrays from numbers) exceed them.
+      Do NOT run inputs that would allocate more than ~500 MB on this machine.
+      Output: example table (expression → expected Value or Error) for QA/Rust.
+    Out of scope: src/ changes.
+  BL-027b · rust-engineer · `todo` (blocked by 027a + ADR-0011 accepted by maintainer)
+  BL-027c · security-reviewer · `todo` (re-attack after 027b)
 
 ### BL-028 · Document the nesting depth limit · P3 · `todo` · docs-engineer
 BL-017b added `MAX_NESTING_DEPTH = 128` (`skillet::MAX_NESTING_DEPTH`) and the error
