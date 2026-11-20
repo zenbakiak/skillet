@@ -44,8 +44,8 @@ Toolchain: Rust `1.81.0` (`.tool-versions`), edition 2021. Plugins feature is de
 | `src/lib.rs` | Public API (`parse`, `evaluate*`, registry fns) | Calls `runtime::evaluator` |
 | `src/lexer.rs`, `src/parser.rs`, `src/ast.rs` | Front end | Recursive descent, `Rc<Expr>` AST |
 | `src/types.rs`, `src/error.rs` | `Value` enum, `Error {message, position}` | |
-| `src/runtime/evaluator.rs` | Evaluator used by **public API** | ⚠ duplicate, see BL-001 |
-| `src/runtime/evaluation/` | Evaluator used by **method/lambda calls** | ⚠ duplicate, see BL-001 |
+| `src/runtime/evaluator.rs` | The single evaluator (public API, methods, lambdas) | 812 lines; split into modules later |
+| `src/runtime/evaluation.rs` | Re-exports of `evaluator` for old paths | Compatibility only, BL-001 |
 | `src/runtime/function_dispatch.rs`, `builtin_functions.rs` | `UPPERCASE()` builtins by category | |
 | `src/runtime/method_calls/` | `.method()` dispatch | |
 | `src/runtime/{arithmetic,string,array,datetime,financial,statistical,logical,json,jsonpath}.rs` | Builtin implementations | |
@@ -53,7 +53,7 @@ Toolchain: Rust `1.81.0` (`.tool-versions`), edition 2021. Plugins feature is de
 | `src/bin/http_server/` | HTTP server modules | std::net + threadpool, no async |
 | `src/memory_pool.rs`, `src/traits.rs`, `src/concurrent_registry.rs` | **Unused** | BL-002 |
 | `src/runtime/method_calls_old.rs` | **Orphan, not compiled** | BL-002 |
-| `tests/*.rs` | Integration tests, one file per feature area | `prd_*.rs` = PRD-001 acceptance |
+| `tests/*.rs` | Integration tests, one file per feature area | `prd_*.rs` = PRD-001 acceptance; `evaluator_parity.rs` = BL-001 |
 
 ## 5. Roles
 

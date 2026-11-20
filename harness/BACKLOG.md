@@ -8,7 +8,7 @@ Seeded 2026-11-20 from a codebase audit: 153 tracked files, ~16k LOC, all tests 
 
 ---
 
-### BL-001 · Unify the two evaluators · P1 · `in-progress`
+### BL-001 · Unify the two evaluators · P1 · `done`
 Two parallel implementations exist: `src/runtime/evaluator.rs` (used by `lib.rs` public API) and
 `src/runtime/evaluation/` (used by `method_calls/*` when evaluating lambdas). Top-level and
 nested evaluation can silently diverge.
@@ -20,7 +20,7 @@ nested evaluation can silently diverge.
 Brief (orchestrator, 2026-11-20):
   Goal: one evaluator implementation; every expression returns the same Value as today via the public API.
   Branch: feature/bl-001-unify-evaluators (001a commits first, then 001b; one PR).
-  BL-001a · qa-engineer · `review`
+  BL-001a · qa-engineer · `done`
     Scope: new tests/evaluator_parity.rs only.
     Do: run a broad expression corpus (every Expr variant, every builtin category, methods,
         lambdas, assignments, custom functions, errors) through both
@@ -30,7 +30,7 @@ Brief (orchestrator, 2026-11-20):
         and list them in the handoff with both outputs.
     Out of scope: src/ changes.
     Acceptance: cargo test --test evaluator_parity green; divergence list in handoff.
-  BL-001b · rust-engineer · `review`
+  BL-001b · rust-engineer · `done`
     Scope: src/runtime/, src/lib.rs (call sites only).
     Do: REVISED after 001a (orchestrator): keep runtime/evaluator.rs. It is self-contained and
         matches all 64 parity divergences on the contract side; evaluation/ is the incomplete copy
@@ -100,6 +100,10 @@ Handoff (rust-engineer, Claude Opus 5.5, 2026-11-20) — BL-001b:
        deletes it. Stale doc comments in evaluator_parity.rs still say the divergence tests are
        #[ignore]d / "expected to FAIL" (QA to tidy). The NULL == NULL question stays in BL-023.
   ADR: none
+
+Review (orchestrator, 2026-11-20): accepted. Full gate green, 12/12 parity tests, clippy 113 → 92,
+  -1199 lines. Method lambdas now gain JQ/DIG and the other D1-D5 fixes (intended). Perf unmeasured
+  until BL-005. Pre-existing JQ single-match unwrap filed as BL-024.
 
 ### BL-002 · Remove dead modules and unused dependencies · P1 · `todo` · rust-engineer
 `memory_pool.rs`, `traits.rs`, `concurrent_registry.rs` are `pub mod` but unused;
@@ -193,3 +197,8 @@ Client-side hooks (ADR-0009) can be bypassed. Require PR review and a passing CI
 ### BL-023 · `NULL == NULL` evaluates to `false` · P2 · `todo` · language-designer → rust-engineer
 Found by BL-001a parity tests (public API). Decide intended semantics (likely `true`; Excel has no
 null, SQL says unknown) and the rule for `NULL != NULL`; ADR if it changes results.
+
+### BL-024 · `JQ` unwraps single matches to a scalar · P3 · `todo` · language-designer
+`JQ({"a":[3]}, "$.a[*]")` returns `3`, but two matches return an array, so
+`.map(JQ(:x, "$.a[*]").sum())` fails on rows with one element. Decide whether wildcard paths
+always return arrays; breaking change needs an ADR.

@@ -6,8 +6,8 @@
 //! (both `Ok` with the same `Value`, or both `Err`). Error messages are not compared, but a
 //! differing message is reported on stderr so it shows up with `--nocapture`.
 //!
-//! Known divergences live in `#[ignore = "BL-001 divergence"]` tests at the bottom of the file.
-//! BL-001b removes the `#[ignore]` once the evaluators are unified (public-API path wins).
+//! Since BL-001b both paths share one implementation; the `divergence_*` tests at the bottom
+//! pin the cases (D1-D5) where the old duplicate evaluator disagreed, as regression tests.
 //!
 //! To extend the corpus, add a string to the relevant table.
 
@@ -202,8 +202,7 @@ fn is_known_divergence(src: &str, mode: Mode) -> bool {
 }
 
 /// Runs every expression in `table` through every mode in `modes` and fails with the full list
-/// of divergences (not just the first). Pairs listed in `KNOWN_DIVERGENCES` are skipped here and
-/// exercised by the `#[ignore]`d divergence tests instead.
+/// of divergences (not just the first). Pairs listed in `KNOWN_DIVERGENCES` are skipped here.
 fn assert_parity(table: &[&str], modes: &[Mode]) {
     let failures: Vec<String> = table
         .iter()
