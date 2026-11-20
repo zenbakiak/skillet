@@ -135,7 +135,7 @@ fn exec_number_method(
             if args_expr.is_empty() {
                 Ok(Value::Number(num.round()))
             } else {
-                use crate::runtime::evaluation::{eval, eval_with_vars};
+                use crate::runtime::evaluator::{eval, eval_with_vars};
                 let precision_val = if let Some(vars) = base_vars {
                     eval_with_vars(&args_expr[0], vars)?
                 } else {
@@ -170,7 +170,7 @@ fn exec_number_method(
                 return Err(Error::new("between expects 2 arguments: min, max", None));
             }
             
-            use crate::runtime::evaluation::{eval, eval_with_vars};
+            use crate::runtime::evaluator::{eval, eval_with_vars};
             let min_val = if let Some(vars) = base_vars {
                 eval_with_vars(&args_expr[0], vars)?
             } else {
@@ -250,7 +250,7 @@ fn exec_json_method(
                 return Err(Error::new("has_key method expects 1 argument", None));
             }
             
-            use crate::runtime::evaluation::{eval, eval_with_vars};
+            use crate::runtime::evaluator::{eval, eval_with_vars};
             let key_val = if let Some(vars) = base_vars {
                 eval_with_vars(&args_expr[0], vars)?
             } else {
@@ -276,7 +276,7 @@ fn exec_json_method(
             if args_expr.is_empty() {
                 return Err(Error::new("dig(path_array, [default]) expects at least 1 argument", None));
             }
-            use crate::runtime::evaluation::{eval, eval_with_vars};
+            use crate::runtime::evaluator::{eval, eval_with_vars};
             let path_val = if let Some(vars) = base_vars {
                 eval_with_vars(&args_expr[0], vars)?
             } else {

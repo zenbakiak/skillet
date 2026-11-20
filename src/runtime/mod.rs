@@ -16,6 +16,6 @@ pub mod json;
 pub mod jsonpath;
 
 // Re-export the main public functions
-pub use evaluation::{eval, eval_with_vars, eval_with_vars_and_custom, eval_with_assignments, eval_with_assignments_and_context};
+pub use evaluator::{eval, eval_with_vars, eval_with_vars_and_custom, eval_with_assignments, eval_with_assignments_and_context};
 pub use type_casting::cast_value;
 pub use utils::{is_blank, clamp_index, index_array, slice_array, values_equal};
