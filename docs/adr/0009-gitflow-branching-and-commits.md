@@ -32,7 +32,7 @@ Only humans merge `release/*` and `hotfix/*` into `main` and create tags.
 
 <body: why, not what; wrap at 72>
 ```
-- Types: `feat fix perf refactor docs test build ci chore revert`; `!` after type/scope marks a breaking change.
+- Types: `feat fix perf refactor style docs test build ci chore revert` (`style` = formatting only); `!` after type/scope marks a breaking change.
 - Scope is the area: `parser`, `runtime`, `http`, `adr`, `harness`, `ci`, …
 - One logical change per commit. Formatting-only changes are their own commit.
 - **No attribution trailers or footers**: no `Co-authored-by:` lines and no "Generated with …" lines

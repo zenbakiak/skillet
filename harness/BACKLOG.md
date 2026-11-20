@@ -111,14 +111,14 @@ Review (orchestrator, 2026-11-20): accepted. Full gate green, 12/12 parity tests
 `dashmap` are only used by dead code. Since the modules are `pub`, removal is a semver-visible
 change → mark `#[deprecated]` in 0.7, remove in 0.8 (or ADR to remove now while pre-1.0).
 
-### BL-003 · Format + clippy to zero, then make the gate strict · P1 · `review` · rust-engineer
+### BL-003 · Format + clippy to zero, then make the gate strict · P1 · `done` · rust-engineer
 One commit `cargo fmt` (no other changes), then fix clippy (mostly `args.get(0)` → `first()`,
 empty `println!("")`). Finish by setting `STRICT=1` default in `harness/check.sh`.
 
 Brief (orchestrator, 2026-11-20):
   Goal: `cargo fmt --check` and `cargo clippy --all-targets -- -D warnings` pass (default and
         --no-default-features); the gate enforces it by default.
-  Role: rust-engineer · `in-progress` · Branch: feature/bl-003-fmt-clippy
+  Role: rust-engineer · `done` · Branch: feature/bl-003-fmt-clippy
   Scope: whole crate (src/, tests/, hook_examples/ if compiled), harness/check.sh.
   Commits, in order:
     1. style: `cargo fmt` only. Nothing else in that commit, so reviewers can skip it.
@@ -158,6 +158,10 @@ Handoff (rust-engineer, claude-opus-5-5, 2026-11-20):
          `required-features` on the bins. PERCENTILE accepting NaN is likely a bug; route to
          language-designer if anyone cares.
   ADR: none
+
+Review (orchestrator, 2026-11-20): accepted. fmt commit verified as pure `cargo fmt` output (re-ran
+  on parent, identical tree); 239 tests pass before and after; clippy 92 → 0; strict gate default.
+  Follow-ups: BL-025 (bins without plugins), BL-026 (PERCENTILE NaN). `style` type added to ADR-0009 hook.
 
 ### BL-004 · CI parity with the harness gate · P1 · `todo` · release-engineer (QA defines checks)
 `.github/workflows/rust.yml` only runs build/test on `main`. Run `./harness/check.sh` on push/PR
@@ -246,3 +250,13 @@ null, SQL says unknown) and the rule for `NULL != NULL`; ADR if it changes resul
 `JQ({"a":[3]}, "$.a[*]")` returns `3`, but two matches return an array, so
 `.map(JQ(:x, "$.a[*]").sum())` fails on rows with one element. Decide whether wildcard paths
 always return arrays; breaking change needs an ADR.
+
+### BL-025 · Binaries don't build with `--no-default-features` · P2 · `todo` · release-engineer + rust-engineer
+`src/bin/*` import `JSPluginLoader`/`js_plugin` unconditionally. Gate those imports on
+`#[cfg(feature = "plugins")]` (preferred: servers still work without JS) or set
+`required-features = ["plugins"]` per bin. Then extend `harness/check.sh` to build all targets without plugins.
+
+### BL-026 · `PERCENTILE` accepts NaN as the percentile · P3 · `todo` · language-designer → rust-engineer
+`src/runtime/statistical.rs` range check uses `p < 0.0 || p > 1.0`, which lets NaN through (kept by
+BL-003 with `#[allow(clippy::manual_range_contains)]`). Decide: error on NaN (likely), then use
+`!(0.0..=1.0).contains(&p)` and drop the allow.
