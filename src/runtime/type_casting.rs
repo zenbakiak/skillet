@@ -22,9 +22,7 @@ pub fn cast_value(v: Value, ty: &TypeName) -> Result<Value, Error> {
                 let mut clean_s = String::new();
                 let mut has_dot = false;
                 for (i, c) in s.chars().enumerate() {
-                    if i == 0 && (c == '-' || c == '+') {
-                        clean_s.push(c);
-                    } else if c.is_ascii_digit() {
+                    if (i == 0 && (c == '-' || c == '+')) || c.is_ascii_digit() {
                         clean_s.push(c);
                     } else if c == '.' && !has_dot {
                         clean_s.push(c);

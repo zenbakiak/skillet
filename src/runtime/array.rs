@@ -23,14 +23,14 @@ pub fn exec_array(name: &str, args: &[Value]) -> Result<Value, Error> {
             }
             Ok(Value::Array(out))
         }
-        "FIRST" => match args.get(0) {
+        "FIRST" => match args.first() {
             Some(Value::Array(items)) => items
                 .first()
                 .cloned()
                 .ok_or_else(|| Error::new("FIRST on empty array", None)),
             _ => Err(Error::new("FIRST expects array", None)),
         },
-        "LAST" => match args.get(0) {
+        "LAST" => match args.first() {
             Some(Value::Array(items)) => items
                 .last()
                 .cloned()
@@ -38,7 +38,7 @@ pub fn exec_array(name: &str, args: &[Value]) -> Result<Value, Error> {
             _ => Err(Error::new("LAST expects array", None)),
         },
         "CONTAINS" => {
-            if let Some(Value::Array(items)) = args.get(0) {
+            if let Some(Value::Array(items)) = args.first() {
                 let needle = args.get(1).cloned().unwrap_or(Value::Null);
                 Ok(Value::Boolean(
                     items.iter().any(|v| values_equal(v, &needle)),
@@ -51,7 +51,7 @@ pub fn exec_array(name: &str, args: &[Value]) -> Result<Value, Error> {
             if args.len() != 2 {
                 return Err(Error::new("IN expects 2 arguments: array, value", None));
             }
-            if let Some(Value::Array(items)) = args.get(0) {
+            if let Some(Value::Array(items)) = args.first() {
                 let needle = &args[1];
                 Ok(Value::Boolean(
                     items.iter().any(|v| values_equal(v, needle)),
@@ -64,14 +64,14 @@ pub fn exec_array(name: &str, args: &[Value]) -> Result<Value, Error> {
             if args.len() != 1 {
                 return Err(Error::new("COUNT expects 1 argument: array", None));
             }
-            match args.get(0) {
+            match args.first() {
                 Some(Value::Array(items)) => Ok(Value::Number(items.len() as f64)),
                 Some(Value::Null) => Ok(Value::Number(0.0)),
                 Some(_) => Err(Error::new("COUNT expects array", None)),
                 None => Ok(Value::Number(0.0)),
             }
         }
-        "UNIQUE" => match args.get(0) {
+        "UNIQUE" => match args.first() {
             Some(Value::Array(items)) => {
                 let mut set = BTreeSet::new();
                 let mut out = Vec::new();
@@ -86,7 +86,7 @@ pub fn exec_array(name: &str, args: &[Value]) -> Result<Value, Error> {
             }
             _ => Err(Error::new("UNIQUE expects array", None)),
         },
-        "SORT" => match args.get(0) {
+        "SORT" => match args.first() {
             Some(Value::Array(items)) => {
                 let desc =
                     matches!(args.get(1), Some(Value::String(s)) if s.eq_ignore_ascii_case("DESC"));
@@ -106,11 +106,11 @@ pub fn exec_array(name: &str, args: &[Value]) -> Result<Value, Error> {
             }
             _ => Err(Error::new("SORT expects array", None)),
         },
-        "REVERSE" => match args.get(0) {
+        "REVERSE" => match args.first() {
             Some(Value::Array(items)) => Ok(Value::Array(items.iter().rev().cloned().collect())),
             _ => Err(Error::new("REVERSE expects array", None)),
         },
-        "JOIN" => match args.get(0) {
+        "JOIN" => match args.first() {
             Some(Value::Array(items)) => {
                 let sep = match args.get(1) {
                     Some(Value::String(s)) => s.as_str(),

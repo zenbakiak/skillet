@@ -64,13 +64,13 @@ fn test_year_month_day_functions() {
     let day = as_number(evaluate("=DAY(NOW())").unwrap());
 
     // Should be current year (around 2025)
-    assert!(year >= 2024.0 && year <= 2026.0);
+    assert!((2024.0..=2026.0).contains(&year));
 
     // Month should be 1-12
-    assert!(month >= 1.0 && month <= 12.0);
+    assert!((1.0..=12.0).contains(&month));
 
     // Day should be 1-31
-    assert!(day >= 1.0 && day <= 31.0);
+    assert!((1.0..=31.0).contains(&day));
 }
 
 #[test]
@@ -161,7 +161,7 @@ fn test_complex_datetime_expressions() {
     // This is a conceptual test - in practice you'd use actual birth dates
     let years_diff =
         as_number(evaluate("=DATEDIFF(DATEADD(NOW(), -365, \"days\"), NOW(), \"years\")").unwrap());
-    assert!(years_diff >= 0.0 && years_diff <= 2.0); // Should be about 1 year
+    assert!((0.0..=2.0).contains(&years_diff)); // Should be about 1 year
 
     // Test chaining date functions
     let next_year = as_number(evaluate("=YEAR(DATEADD(NOW(), 1, \"years\"))").unwrap());

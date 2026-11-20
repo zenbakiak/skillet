@@ -30,7 +30,7 @@ impl BenchResult {
 fn run_sk_command(args: &[&str]) -> Result<(String, Duration), Box<dyn std::error::Error>> {
     let start = Instant::now();
     let output = Command::new("cargo")
-        .args(&["run", "--release", "--bin", "sk", "--"])
+        .args(["run", "--release", "--bin", "sk", "--"])
         .args(args)
         .output()?;
     let duration = start.elapsed();

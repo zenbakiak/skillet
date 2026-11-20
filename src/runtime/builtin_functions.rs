@@ -45,8 +45,5 @@ pub fn exec_builtin(name: &str, args: &[Value]) -> Result<Value, Error> {
     }
 
     // Handle remaining functions not yet modularized
-    match name {
-        // SUMIF/AVGIF/COUNTIF handled in FunctionCall branch to preserve lambda expr
-        _ => Err(Error::new(format!("Unknown function: {}", name), None)),
-    }
+    Err(Error::new(format!("Unknown function: {}", name), None))
 }

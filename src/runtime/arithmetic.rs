@@ -46,35 +46,35 @@ pub fn exec_arithmetic(name: &str, args: &[Value]) -> Result<Value, Error> {
             Ok(Value::Number((n * factor).round() / factor))
         }
         "CEIL" => {
-            let n = match args.get(0) {
+            let n = match args.first() {
                 Some(Value::Number(n)) => *n,
                 _ => 0.0,
             };
             Ok(Value::Number(n.ceil()))
         }
         "FLOOR" => {
-            let n = match args.get(0) {
+            let n = match args.first() {
                 Some(Value::Number(n)) => *n,
                 _ => 0.0,
             };
             Ok(Value::Number(n.floor()))
         }
         "ABS" => {
-            let n = match args.get(0) {
+            let n = match args.first() {
                 Some(Value::Number(n)) => *n,
                 _ => 0.0,
             };
             Ok(Value::Number(n.abs()))
         }
         "SQRT" => {
-            let n = match args.get(0) {
+            let n = match args.first() {
                 Some(Value::Number(n)) => *n,
                 _ => 0.0,
             };
             Ok(Value::Number(n.sqrt()))
         }
         "POW" | "POWER" => {
-            let a = match args.get(0) {
+            let a = match args.first() {
                 Some(Value::Number(n)) => *n,
                 _ => 0.0,
             };
@@ -85,7 +85,7 @@ pub fn exec_arithmetic(name: &str, args: &[Value]) -> Result<Value, Error> {
             Ok(Value::Number(a.powf(b)))
         }
         "MOD" => {
-            let a = match args.get(0) {
+            let a = match args.first() {
                 Some(Value::Number(n)) => *n,
                 _ => 0.0,
             };
@@ -96,14 +96,14 @@ pub fn exec_arithmetic(name: &str, args: &[Value]) -> Result<Value, Error> {
             Ok(Value::Number(a % b))
         }
         "INT" => {
-            let n = match args.get(0) {
+            let n = match args.first() {
                 Some(Value::Number(n)) => *n,
                 _ => 0.0,
             };
             Ok(Value::Number(n.floor()))
         }
         "CEILING" => {
-            let n = match args.get(0) {
+            let n = match args.first() {
                 Some(Value::Number(n)) => *n,
                 _ => 0.0,
             };

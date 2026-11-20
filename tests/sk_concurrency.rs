@@ -24,7 +24,7 @@ fn run_sk_concurrent(args: &[&str], thread_id: usize) -> ConcurrencyTestResult {
     let start = Instant::now();
 
     match Command::new("cargo")
-        .args(&["run", "--release", "--bin", "sk", "--"])
+        .args(["run", "--release", "--bin", "sk", "--"])
         .args(args)
         .output()
     {
@@ -171,7 +171,7 @@ mod tests {
                 for i in 0..operations_per_thread {
                     let (expr, vars, _expected) = &test_cases[i % test_cases.len()];
                     let mut args = vec![*expr];
-                    args.extend(vars.iter().map(|s| *s));
+                    args.extend(vars.iter().copied());
 
                     let result = run_sk_concurrent(&args, thread_id);
                     results.lock().unwrap().push(result);
@@ -238,7 +238,7 @@ mod tests {
                 for i in 0..operations_per_thread {
                     let (expr, args) = &json_tests[i % json_tests.len()];
                     let mut full_args = vec![*expr];
-                    full_args.extend(args.iter().map(|s| *s));
+                    full_args.extend(args.iter().copied());
 
                     let result = run_sk_concurrent(&full_args, thread_id);
                     results.lock().unwrap().push(result);

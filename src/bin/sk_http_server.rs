@@ -26,7 +26,6 @@ use http_server::daemon::daemonize;
 
 /// HTTP-compatible Skillet evaluation server
 /// Works with all standard HTTP clients
-
 fn handle_http_request(
     mut stream: TcpStream,
     stats: Arc<ServerStats>,
@@ -214,7 +213,7 @@ fn main() {
 
 fn print_usage() {
     eprintln!("Usage: sk_http_server <port> [options]");
-    eprintln!("");
+    eprintln!();
     eprintln!("Options:");
     eprintln!("  -d, --daemon         Run as daemon (background process)");
     eprintln!("  -H, --host <addr>    Bind host/interface (default: 127.0.0.1)");
@@ -223,7 +222,7 @@ fn print_usage() {
     eprintln!("  --log-file <file>    Write logs to file (daemon mode only)");
     eprintln!("  --token <value>      Require token for eval requests");
     eprintln!("  --admin-token <val>  Require admin token for JS function management");
-    eprintln!("");
+    eprintln!();
     eprintln!("Examples:");
     eprintln!("  sk_http_server 5074");
     eprintln!("  sk_http_server 5074 --host 0.0.0.0 --threads 8");
@@ -232,7 +231,7 @@ fn print_usage() {
     eprintln!("  sk_http_server 5074 --token secret123 --admin-token admin456");
     eprintln!("  sk_http_server 5074 -d --pid-file /var/run/skillet-http.pid --threads 12");
     eprintln!("  sk_http_server 5074 -d --host 0.0.0.0 --token secret123 --admin-token admin456");
-    eprintln!("");
+    eprintln!();
     eprintln!("Endpoints:");
     eprintln!("  GET  /health          - Health check with cache stats");
     eprintln!("  GET  /                - API documentation");
@@ -443,6 +442,6 @@ fn print_startup_messages(
             "📖 Visit http://{}:{} for API documentation",
             bind_host, port
         );
-        eprintln!("");
+        eprintln!();
     }
 }

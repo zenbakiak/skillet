@@ -1,3 +1,6 @@
+// 3.14 etc. are ROUND() expectations, not approximations of PI.
+#![allow(clippy::approx_constant)]
+
 use skillet::{evaluate, evaluate_with, Value};
 use std::collections::HashMap;
 

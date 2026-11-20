@@ -1,4 +1,4 @@
-use skillet::{evaluate, evaluate_with_assignments, Value};
+use skillet::{evaluate_with_assignments, Value};
 use std::collections::HashMap;
 
 fn s(v: Value) -> String {

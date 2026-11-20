@@ -11,7 +11,7 @@ pub fn exec_json(name: &str, args: &[Value]) -> Result<Value, Error> {
                     None,
                 ));
             }
-            let json_str = match args.get(0) {
+            let json_str = match args.first() {
                 Some(Value::Json(s)) => s,
                 Some(_) => return Err(Error::new("DIG first argument must be JSON object", None)),
                 None => return Err(Error::new("DIG missing first argument", None)),

@@ -2,7 +2,7 @@ use std::process::Command;
 
 fn run_sk(args: &[&str]) -> Result<(String, String, i32), Box<dyn std::error::Error>> {
     let output = Command::new("cargo")
-        .args(&["run", "--bin", "sk", "--"])
+        .args(["run", "--bin", "sk", "--"])
         .args(args)
         .output()?;
 

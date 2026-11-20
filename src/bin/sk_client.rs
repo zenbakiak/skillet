@@ -29,7 +29,7 @@ fn main() {
         eprintln!("Usage: sk_client <host:port> <expression> [var=value ...]");
         eprintln!("       sk_client <host:port> <expression> --json '{{\"var\": \"value\"}}'");
         eprintln!("       sk_client <host:port> --benchmark <expression> [iterations]");
-        eprintln!("");
+        eprintln!();
         eprintln!("Examples:");
         eprintln!("  sk_client localhost:8080 '=2 + 3 * 4'");
         eprintln!("  sk_client localhost:8080 '=SUM(:sales, :bonus)' sales=1000 bonus=500");
@@ -242,7 +242,7 @@ fn run_benchmark_with_request(server_addr: &str, request: EvalRequest, iteration
     println!("Server: {}", server_addr);
     println!("Expression: {}", request.expression);
     println!("Iterations: {}", iterations);
-    println!("");
+    println!();
 
     // Warmup
     print!("Warming up...");
@@ -336,7 +336,7 @@ fn run_benchmark_with_request(server_addr: &str, request: EvalRequest, iteration
     let p99 = percentile(&sorted_durations, 99.0);
 
     // Results
-    println!("");
+    println!();
     println!("📊 BENCHMARK RESULTS");
     println!("====================");
     println!("Total requests: {}", iterations);
@@ -345,7 +345,7 @@ fn run_benchmark_with_request(server_addr: &str, request: EvalRequest, iteration
     println!("Success rate: {:.2}%", success_rate);
     println!("Total time: {:.2}s", total_duration.as_secs_f64());
     println!("Throughput: {:.1} requests/second", throughput);
-    println!("");
+    println!();
     println!("Client-side latency (includes network):");
     println!("  Average: {:.2}ms", avg_client_time);
     println!("  Min: {:.2}ms", min_client_time);
@@ -353,12 +353,12 @@ fn run_benchmark_with_request(server_addr: &str, request: EvalRequest, iteration
     println!("  P50: {:.2}ms", p50);
     println!("  P95: {:.2}ms", p95);
     println!("  P99: {:.2}ms", p99);
-    println!("");
+    println!();
     println!("Server-side execution time:");
     println!("  Average: {:.2}ms", avg_server_time);
     println!("  Min: {:.2}ms", min_server_time);
     println!("  Max: {:.2}ms", max_server_time);
-    println!("");
+    println!();
     println!(
         "Network overhead: {:.2}ms average",
         avg_client_time - avg_server_time
@@ -366,7 +366,7 @@ fn run_benchmark_with_request(server_addr: &str, request: EvalRequest, iteration
 
     // Performance comparison
     let improvement_factor = 250.0 / avg_server_time; // vs original 0.25s per operation
-    println!("");
+    println!();
     println!("🎯 PERFORMANCE IMPROVEMENT");
     println!("==========================");
     println!("Original sk command: ~250ms per operation");

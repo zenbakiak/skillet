@@ -196,7 +196,7 @@ pub fn exec_array_method(
                 eval(&args_expr[0])?
             };
 
-            let found = recv_array.iter().any(|v| *v == search_val);
+            let found = recv_array.contains(&search_val);
             Ok(Value::Boolean(found))
         }
 

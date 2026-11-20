@@ -23,7 +23,7 @@ pub fn exec_datetime(name: &str, args: &[Value]) -> Result<Value, Error> {
                 Ok(Value::DateTime(timestamp))
             } else if args.len() == 3 {
                 // Three arguments - year, month, day
-                let year = match args.get(0) {
+                let year = match args.first() {
                     Some(Value::Number(n)) => *n as i32,
                     _ => return Err(Error::new("DATE expects year as number", None)),
                 };
@@ -54,7 +54,7 @@ pub fn exec_datetime(name: &str, args: &[Value]) -> Result<Value, Error> {
             Ok(Value::Number(seconds_since_midnight))
         }
         "YEAR" => {
-            if let Some(Value::DateTime(timestamp)) = args.get(0) {
+            if let Some(Value::DateTime(timestamp)) = args.first() {
                 let dt = DateTime::from_timestamp(*timestamp, 0)
                     .ok_or_else(|| Error::new("Invalid timestamp", None))?;
                 Ok(Value::Number(dt.year() as f64))
@@ -63,7 +63,7 @@ pub fn exec_datetime(name: &str, args: &[Value]) -> Result<Value, Error> {
             }
         }
         "MONTH" => {
-            if let Some(Value::DateTime(timestamp)) = args.get(0) {
+            if let Some(Value::DateTime(timestamp)) = args.first() {
                 let dt = DateTime::from_timestamp(*timestamp, 0)
                     .ok_or_else(|| Error::new("Invalid timestamp", None))?;
                 Ok(Value::Number(dt.month() as f64))
@@ -72,7 +72,7 @@ pub fn exec_datetime(name: &str, args: &[Value]) -> Result<Value, Error> {
             }
         }
         "DAY" => {
-            if let Some(Value::DateTime(timestamp)) = args.get(0) {
+            if let Some(Value::DateTime(timestamp)) = args.first() {
                 let dt = DateTime::from_timestamp(*timestamp, 0)
                     .ok_or_else(|| Error::new("Invalid timestamp", None))?;
                 Ok(Value::Number(dt.day() as f64))
@@ -84,7 +84,7 @@ pub fn exec_datetime(name: &str, args: &[Value]) -> Result<Value, Error> {
             if args.len() < 3 {
                 return Err(Error::new("DATEADD expects date, interval, unit", None));
             }
-            let timestamp = match args.get(0) {
+            let timestamp = match args.first() {
                 Some(Value::DateTime(ts)) => *ts,
                 _ => {
                     return Err(Error::new(
@@ -152,7 +152,7 @@ pub fn exec_datetime(name: &str, args: &[Value]) -> Result<Value, Error> {
             if args.len() < 3 {
                 return Err(Error::new("DATEDIFF expects date1, date2, unit", None));
             }
-            let timestamp1 = match args.get(0) {
+            let timestamp1 = match args.first() {
                 Some(Value::DateTime(ts)) => *ts,
                 _ => {
                     return Err(Error::new(

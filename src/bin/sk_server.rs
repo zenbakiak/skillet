@@ -120,7 +120,7 @@ fn handle_client(
             )
         });
 
-        if let Err(_) = writeln!(stream, "{}", response_json) {
+        if writeln!(stream, "{}", response_json).is_err() {
             break;
         }
 
@@ -183,20 +183,20 @@ fn process_request(req: EvalRequest, request_id: u64) -> EvalResponse {
                     Value::Currency(c) => (serde_json::json!(c), "Currency"),
                     Value::DateTime(dt) => (serde_json::json!(dt), "DateTime"),
                     Value::Array(arr) => {
-                        let json_arr: Vec<serde_json::Value> = arr
-                            .iter()
-                            .map(|v| match v {
-                                Value::Number(n) => serde_json::json!(n),
-                                Value::String(s) => serde_json::json!(s),
-                                Value::Boolean(b) => serde_json::json!(b),
-                                Value::Currency(c) => serde_json::json!(c),
-                                Value::DateTime(dt) => serde_json::json!(dt),
-                                Value::Null => serde_json::json!(null),
-                                Value::Array(_) => serde_json::json!(format!("{:?}", v)),
-                                Value::Json(s) => serde_json::from_str(&s)
-                                    .unwrap_or_else(|_| serde_json::json!(s)),
-                            })
-                            .collect();
+                        let json_arr: Vec<serde_json::Value> =
+                            arr.iter()
+                                .map(|v| match v {
+                                    Value::Number(n) => serde_json::json!(n),
+                                    Value::String(s) => serde_json::json!(s),
+                                    Value::Boolean(b) => serde_json::json!(b),
+                                    Value::Currency(c) => serde_json::json!(c),
+                                    Value::DateTime(dt) => serde_json::json!(dt),
+                                    Value::Null => serde_json::json!(null),
+                                    Value::Array(_) => serde_json::json!(format!("{:?}", v)),
+                                    Value::Json(s) => serde_json::from_str(s)
+                                        .unwrap_or_else(|_| serde_json::json!(s)),
+                                })
+                                .collect();
                         (serde_json::json!(json_arr), "Array")
                     }
                     Value::Null => (serde_json::json!(null), "Null"),
@@ -220,20 +220,20 @@ fn process_request(req: EvalRequest, request_id: u64) -> EvalResponse {
                     Value::Currency(c) => serde_json::json!(c),
                     Value::DateTime(dt) => serde_json::json!(dt.to_string()),
                     Value::Array(arr) => {
-                        let json_arr: Vec<serde_json::Value> = arr
-                            .iter()
-                            .map(|v| match v {
-                                Value::Number(n) => serde_json::json!(n),
-                                Value::String(s) => serde_json::json!(s),
-                                Value::Boolean(b) => serde_json::json!(b),
-                                Value::Currency(c) => serde_json::json!(c),
-                                Value::DateTime(dt) => serde_json::json!(dt.to_string()),
-                                Value::Null => serde_json::json!(null),
-                                Value::Array(_) => serde_json::json!(format!("{:?}", v)),
-                                Value::Json(s) => serde_json::from_str(&s)
-                                    .unwrap_or_else(|_| serde_json::json!(s)),
-                            })
-                            .collect();
+                        let json_arr: Vec<serde_json::Value> =
+                            arr.iter()
+                                .map(|v| match v {
+                                    Value::Number(n) => serde_json::json!(n),
+                                    Value::String(s) => serde_json::json!(s),
+                                    Value::Boolean(b) => serde_json::json!(b),
+                                    Value::Currency(c) => serde_json::json!(c),
+                                    Value::DateTime(dt) => serde_json::json!(dt.to_string()),
+                                    Value::Null => serde_json::json!(null),
+                                    Value::Array(_) => serde_json::json!(format!("{:?}", v)),
+                                    Value::Json(s) => serde_json::from_str(s)
+                                        .unwrap_or_else(|_| serde_json::json!(s)),
+                                })
+                                .collect();
                         serde_json::json!(json_arr)
                     }
                     Value::Null => serde_json::json!(null),
@@ -348,14 +348,14 @@ fn main() {
 
     if args.len() < 2 {
         eprintln!("Usage: sk_server <port> [num_threads] [options]");
-        eprintln!("");
+        eprintln!();
         eprintln!("Options:");
         eprintln!("  -d, --daemon         Run as daemon (background process)");
         eprintln!("  -H, --host <addr>    Bind host/interface (default: 127.0.0.1)");
         eprintln!("  --pid-file <file>    Write PID to file (default: skillet-server.pid)");
         eprintln!("  --log-file <file>    Write logs to file (daemon mode only)");
         eprintln!("  --token <value>      Require token for requests (or set SKILLET_AUTH_TOKEN)");
-        eprintln!("");
+        eprintln!();
         eprintln!("Examples:");
         eprintln!("  sk_server 8080              # Start server on port 8080");
         eprintln!("  sk_server 8080 16           # Start with 16 worker threads");
@@ -363,7 +363,7 @@ fn main() {
         eprintln!("  sk_server 8080 --host 0.0.0.0   # Expose on all interfaces");
         eprintln!("  sk_server 8080 --host 0.0.0.0 --token <secret>");
         eprintln!("  sk_server 8080 -d --pid-file /var/run/skillet.pid");
-        eprintln!("");
+        eprintln!();
         eprintln!("Protocol: Send JSON requests as newline-delimited messages");
         eprintln!("Request format: {{\"expression\": \"=2+3\", \"variables\": {{\"x\": 10}}, \"output_json\": true}}");
         std::process::exit(1);
@@ -508,7 +508,7 @@ fn main() {
             eprintln!("🔒 Token auth: enabled");
         }
         eprintln!("🔧 Ready for high-throughput expression evaluation");
-        eprintln!("");
+        eprintln!();
     }
 
     // Use a thread pool for handling connections

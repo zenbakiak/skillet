@@ -65,7 +65,7 @@ pub fn exec_logical(name: &str, args: &[Value]) -> Result<Value, Error> {
             Ok(Value::Boolean(result))
         }
         "NOT" => {
-            let val = match args.get(0) {
+            let val = match args.first() {
                 Some(Value::Boolean(b)) => *b,
                 Some(Value::Number(n)) => *n != 0.0,
                 _ => false,

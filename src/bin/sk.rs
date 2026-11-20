@@ -39,21 +39,21 @@ fn main() {
     if args.is_empty() {
         eprintln!("Usage: sk \"expression\" [options] [var=value ...]");
         eprintln!("       sk \"expression\" --json '{{\"var\": \"value\"}}'");
-        eprintln!("");
+        eprintln!();
         eprintln!("Options:");
         eprintln!("  --output-json    Output result in JSON format with type and timing");
         eprintln!("  --json JSON      Use JSON string for variable values");
-        eprintln!("");
+        eprintln!();
         eprintln!("Examples:");
         eprintln!("  # Basic usage:");
         eprintln!("  sk \"=2 + 3 * 4\"");
         eprintln!("  sk \"=2 + 3 * 4\" --output-json");
-        eprintln!("");
+        eprintln!();
         eprintln!("  # Key-value variables:");
         eprintln!("  sk \"=SUM(:sales, 1000)\" sales=5000");
         eprintln!("  sk \"=:name.upper()\" name=\"hello world\" --output-json");
         eprintln!("  sk \"=:price * :quantity\" price=19.99 quantity=3");
-        eprintln!("");
+        eprintln!();
         eprintln!("  # JSON variables:");
         eprintln!("  sk \"=SUM(:sales, :bonus)\" --json '{{\"sales\": 5000, \"bonus\": 1000}}'");
         eprintln!("  sk \"=:user.name.upper()\" --json '{{\"user\": {{\"name\": \"alice\"}}}}' --output-json");

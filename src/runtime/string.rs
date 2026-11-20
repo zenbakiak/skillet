@@ -21,7 +21,7 @@ pub fn exec_string(name: &str, args: &[Value]) -> Result<Value, Error> {
     match name {
         "SUBSTITUTE" => {
             // SUBSTITUTE(text, substr, replacement)
-            match (args.get(0), args.get(1), args.get(2)) {
+            match (args.first(), args.get(1), args.get(2)) {
                 (
                     Some(Value::String(text)),
                     Some(Value::String(substr)),
@@ -35,7 +35,7 @@ pub fn exec_string(name: &str, args: &[Value]) -> Result<Value, Error> {
         }
         "SUBSTITUTEM" => {
             // SUBSTITUTEM(text, substr, replacement) - replace all occurrences (alias of SUBSTITUTE)
-            match (args.get(0), args.get(1), args.get(2)) {
+            match (args.first(), args.get(1), args.get(2)) {
                 (
                     Some(Value::String(text)),
                     Some(Value::String(substr)),
@@ -52,7 +52,7 @@ pub fn exec_string(name: &str, args: &[Value]) -> Result<Value, Error> {
             if args.is_empty() {
                 return Err(Error::new("LEFT expects string, [num_chars]", None));
             }
-            let s = match args.get(0) {
+            let s = match args.first() {
                 Some(Value::String(st)) => st,
                 _ => return Err(Error::new("LEFT expects string as first argument", None)),
             };
@@ -74,7 +74,7 @@ pub fn exec_string(name: &str, args: &[Value]) -> Result<Value, Error> {
             if args.is_empty() {
                 return Err(Error::new("RIGHT expects string, [num_chars]", None));
             }
-            let s = match args.get(0) {
+            let s = match args.first() {
                 Some(Value::String(st)) => st,
                 _ => return Err(Error::new("RIGHT expects string as first argument", None)),
             };
@@ -99,7 +99,7 @@ pub fn exec_string(name: &str, args: &[Value]) -> Result<Value, Error> {
             if args.len() < 2 {
                 return Err(Error::new("MID expects string, start, [num_chars]", None));
             }
-            let s = match args.get(0) {
+            let s = match args.first() {
                 Some(Value::String(st)) => st,
                 _ => return Err(Error::new("MID expects string as first argument", None)),
             };
@@ -143,7 +143,7 @@ pub fn exec_string(name: &str, args: &[Value]) -> Result<Value, Error> {
                 Ok(Value::String(s[byte_start..byte_end].to_string()))
             }
         }
-        "LENGTH" => match args.get(0) {
+        "LENGTH" => match args.first() {
             Some(Value::Array(items)) => Ok(Value::Number(items.len() as f64)),
             Some(Value::String(s)) => Ok(Value::Number(s.chars().count() as f64)),
             Some(Value::Null) => Ok(Value::Number(0.0)),
@@ -185,15 +185,15 @@ pub fn exec_string(name: &str, args: &[Value]) -> Result<Value, Error> {
             }
             Ok(Value::String(out))
         }
-        "UPPER" => match args.get(0) {
+        "UPPER" => match args.first() {
             Some(Value::String(s)) => Ok(Value::String(s.to_uppercase())),
             _ => Err(Error::new("UPPER expects string", None)),
         },
-        "LOWER" => match args.get(0) {
+        "LOWER" => match args.first() {
             Some(Value::String(s)) => Ok(Value::String(s.to_lowercase())),
             _ => Err(Error::new("LOWER expects string", None)),
         },
-        "TRIM" => match args.get(0) {
+        "TRIM" => match args.first() {
             Some(Value::String(s)) => Ok(Value::String(s.trim().to_string())),
             _ => Err(Error::new("TRIM expects string", None)),
         },
@@ -204,7 +204,7 @@ pub fn exec_string(name: &str, args: &[Value]) -> Result<Value, Error> {
                     None,
                 ));
             }
-            let string = match args.get(0) {
+            let string = match args.first() {
                 Some(Value::String(s)) => s,
                 _ => {
                     return Err(Error::new(
@@ -243,7 +243,7 @@ pub fn exec_string(name: &str, args: &[Value]) -> Result<Value, Error> {
                 Ok(Value::String(string[byte_start..byte_end].to_string()))
             }
         }
-        "SPLIT" => match (args.get(0), args.get(1)) {
+        "SPLIT" => match (args.first(), args.get(1)) {
             (Some(Value::String(s)), Some(Value::String(sep))) => Ok(Value::Array(
                 s.split(sep).map(|p| Value::String(p.to_string())).collect(),
             )),
@@ -263,7 +263,7 @@ pub fn exec_string(name: &str, args: &[Value]) -> Result<Value, Error> {
                     None,
                 ));
             }
-            let old_text = match args.get(0) {
+            let old_text = match args.first() {
                 Some(Value::String(s)) => s,
                 _ => return Err(Error::new("REPLACE expects string as first argument", None)),
             };
@@ -316,20 +316,20 @@ pub fn exec_string(name: &str, args: &[Value]) -> Result<Value, Error> {
             out.push_str(&old_text[byte_end..]);
             Ok(Value::String(out))
         }
-        "REVERSE" => match args.get(0) {
+        "REVERSE" => match args.first() {
             Some(Value::String(s)) => Ok(Value::String(s.chars().rev().collect())),
             _ => Err(Error::new("REVERSE expects string", None)),
         },
-        "ISBLANK" => match args.get(0) {
+        "ISBLANK" => match args.first() {
             Some(v) => Ok(Value::Boolean(is_blank(v))),
             None => Ok(Value::Boolean(true)),
         },
         "ISNUMBER" => Ok(Value::Boolean(matches!(
-            args.get(0),
+            args.first(),
             Some(Value::Number(_) | Value::Currency(_))
         ))),
         "ISTEXT" => Ok(Value::Boolean(matches!(
-            args.get(0),
+            args.first(),
             Some(Value::String(_))
         ))),
         "INCLUDES" => {
@@ -337,7 +337,7 @@ pub fn exec_string(name: &str, args: &[Value]) -> Result<Value, Error> {
             if args.len() != 2 {
                 return Err(Error::new("INCLUDES expects string, substring", None));
             }
-            match (args.get(0), args.get(1)) {
+            match (args.first(), args.get(1)) {
                 (Some(Value::String(s)), Some(Value::String(substring))) => {
                     Ok(Value::Boolean(s.contains(substring)))
                 }

@@ -44,7 +44,7 @@ fn null_conversions() {
     assert_eq!(n(evaluate("NULL.to_f()").unwrap()), 0.0);
     assert_eq!(a(evaluate("NULL.to_a()").unwrap()).len(), 0);
     assert_eq!(j(evaluate("NULL.to_json()").unwrap()), "{}");
-    assert_eq!(b(evaluate("NULL.to_bool()").unwrap()), false);
+    assert!(!b(evaluate("NULL.to_bool()").unwrap()));
 }
 
 #[test]
@@ -61,8 +61,8 @@ fn string_conversions() {
             Value::String("i".to_string())
         ]
     );
-    assert_eq!(b(evaluate("\"\".to_bool()").unwrap()), false);
-    assert_eq!(b(evaluate("\"hello\".to_bool()").unwrap()), true);
+    assert!(!b(evaluate("\"\".to_bool()").unwrap()));
+    assert!(b(evaluate("\"hello\".to_bool()").unwrap()));
 }
 
 #[test]
@@ -73,8 +73,8 @@ fn number_conversions() {
     assert_eq!(n(evaluate("123.45.to_i()").unwrap()), 123.0); // Truncates
     assert_eq!(n(evaluate("123.45.to_f()").unwrap()), 123.45);
     assert_eq!(a(evaluate("42.to_a()").unwrap()), vec![Value::Number(42.0)]);
-    assert_eq!(b(evaluate("0.to_bool()").unwrap()), false);
-    assert_eq!(b(evaluate("123.to_bool()").unwrap()), true);
+    assert!(!b(evaluate("0.to_bool()").unwrap()));
+    assert!(b(evaluate("123.to_bool()").unwrap()));
 }
 
 #[test]
@@ -86,8 +86,8 @@ fn boolean_conversions() {
     assert_eq!(n(evaluate("false.to_i()").unwrap()), 0.0);
     assert_eq!(n(evaluate("true.to_f()").unwrap()), 1.0);
     assert_eq!(n(evaluate("false.to_f()").unwrap()), 0.0);
-    assert_eq!(b(evaluate("true.to_bool()").unwrap()), true);
-    assert_eq!(b(evaluate("false.to_bool()").unwrap()), false);
+    assert!(b(evaluate("true.to_bool()").unwrap()));
+    assert!(!b(evaluate("false.to_bool()").unwrap()));
 }
 
 #[test]
@@ -100,8 +100,8 @@ fn array_conversions() {
         a(evaluate("[1, 2, 3].to_a()").unwrap()),
         vec![Value::Number(1.0), Value::Number(2.0), Value::Number(3.0)]
     );
-    assert_eq!(b(evaluate("[].to_bool()").unwrap()), false);
-    assert_eq!(b(evaluate("[1].to_bool()").unwrap()), true);
+    assert!(!b(evaluate("[].to_bool()").unwrap()));
+    assert!(b(evaluate("[1].to_bool()").unwrap()));
 }
 
 #[test]
@@ -117,7 +117,7 @@ fn long_form_method_names() {
             Value::String("i".to_string())
         ]
     );
-    assert_eq!(b(evaluate("\"\".to_boolean()").unwrap()), false);
+    assert!(!b(evaluate("\"\".to_boolean()").unwrap()));
 }
 
 #[test]
@@ -143,8 +143,5 @@ fn chained_conversions() {
     // Test chaining conversion methods
     assert_eq!(s(evaluate("123.to_s().to_s()").unwrap()), "123");
     assert_eq!(n(evaluate("\"123\".to_i().to_f()").unwrap()), 123.0);
-    assert_eq!(
-        b(evaluate("\"hello\".to_a().length().to_bool()").unwrap()),
-        true
-    );
+    assert!(b(evaluate("\"hello\".to_a().length().to_bool()").unwrap()));
 }

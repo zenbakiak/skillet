@@ -138,30 +138,20 @@ impl<'a> Parser<'a> {
 
     fn parse_or(&mut self) -> Result<Expr, Error> {
         let mut node = self.parse_and()?;
-        loop {
-            match self.lookahead {
-                Token::Or | Token::OrOr => {
-                    self.bump()?;
-                    let rhs = self.parse_and()?;
-                    node = Expr::Binary(Rc::new(node), BinaryOp::Or, Rc::new(rhs));
-                }
-                _ => break,
-            }
+        while let Token::Or | Token::OrOr = self.lookahead {
+            self.bump()?;
+            let rhs = self.parse_and()?;
+            node = Expr::Binary(Rc::new(node), BinaryOp::Or, Rc::new(rhs));
         }
         Ok(node)
     }
 
     fn parse_and(&mut self) -> Result<Expr, Error> {
         let mut node = self.parse_equality()?;
-        loop {
-            match self.lookahead {
-                Token::And | Token::AndAnd => {
-                    self.bump()?;
-                    let rhs = self.parse_equality()?;
-                    node = Expr::Binary(Rc::new(node), BinaryOp::And, Rc::new(rhs));
-                }
-                _ => break,
-            }
+        while let Token::And | Token::AndAnd = self.lookahead {
+            self.bump()?;
+            let rhs = self.parse_equality()?;
+            node = Expr::Binary(Rc::new(node), BinaryOp::And, Rc::new(rhs));
         }
         Ok(node)
     }

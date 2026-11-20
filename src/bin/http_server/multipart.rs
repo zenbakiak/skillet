@@ -153,8 +153,8 @@ pub fn extract_boundary_from_content_type(content_type: &str) -> Option<String> 
 
     for part in content_type.split(';') {
         let part = part.trim();
-        if part.starts_with("boundary=") {
-            return Some(part[9..].to_string()); // Remove "boundary=" prefix
+        if let Some(boundary) = part.strip_prefix("boundary=") {
+            return Some(boundary.to_string());
         }
     }
 

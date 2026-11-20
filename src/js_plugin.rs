@@ -338,13 +338,12 @@ impl JSPluginLoader {
         }
 
         let mut functions = Vec::new();
-        self.load_functions_recursive(hooks_path, &mut functions)?;
+        Self::load_functions_recursive(hooks_path, &mut functions)?;
         Ok(functions)
     }
 
     /// Recursively load JavaScript functions from a directory
     fn load_functions_recursive(
-        &self,
         dir: &Path,
         functions: &mut Vec<Box<dyn CustomFunction>>,
     ) -> Result<(), Error> {
@@ -359,7 +358,7 @@ impl JSPluginLoader {
 
             if path.is_dir() {
                 // Recursively search subdirectories
-                self.load_functions_recursive(&path, functions)?;
+                Self::load_functions_recursive(&path, functions)?;
             } else if path.extension().and_then(|s| s.to_str()) == Some("js") {
                 match JavaScriptFunction::from_file(&path) {
                     Ok(js_func) => {

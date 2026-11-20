@@ -33,14 +33,14 @@ pub fn exec_financial(name: &str, args: &[Value]) -> Result<Value, Error> {
                 -(pv + fv) / nper
             } else {
                 let pvif = (1.0 + rate).powf(nper);
-                let payment = -(pv * pvif + fv)
+
+                -(pv * pvif + fv)
                     / (((pvif - 1.0) / rate)
                         * if payment_at_beginning {
                             1.0 + rate
                         } else {
                             1.0
-                        });
-                payment
+                        })
             };
 
             Ok(Value::Number(pmt))

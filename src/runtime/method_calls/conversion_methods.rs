@@ -130,7 +130,7 @@ fn to_json(value: &Value) -> Result<Value, Error> {
         }
         Value::Array(arr) => {
             let json_array: Result<Vec<serde_json::Value>, Error> =
-                arr.iter().map(|v| value_to_json_value(v)).collect();
+                arr.iter().map(value_to_json_value).collect();
             let json_val = serde_json::Value::Array(json_array?);
             serde_json::to_string(&json_val)
                 .map_err(|e| Error::new(format!("Failed to convert to JSON: {}", e), None))?
