@@ -18,7 +18,12 @@ pub fn exec_json(name: &str, args: &[Value]) -> Result<Value, Error> {
             };
             let path_vals = match args.get(1) {
                 Some(Value::Array(v)) => v,
-                _ => return Err(Error::new("DIG second argument must be an array path", None)),
+                _ => {
+                    return Err(Error::new(
+                        "DIG second argument must be an array path",
+                        None,
+                    ))
+                }
             };
 
             // Traverse JSON by keys and indexes
@@ -43,7 +48,11 @@ pub fn exec_json(name: &str, args: &[Value]) -> Result<Value, Error> {
                             }
                             Value::Number(n) => {
                                 if let serde_json::Value::Array(arr) = cur {
-                                    let idx = if n.is_finite() { n.floor() as isize } else { -1 };
+                                    let idx = if n.is_finite() {
+                                        n.floor() as isize
+                                    } else {
+                                        -1
+                                    };
                                     if idx >= 0 && (idx as usize) < arr.len() {
                                         cur = &arr[idx as usize];
                                     } else {
@@ -61,7 +70,11 @@ pub fn exec_json(name: &str, args: &[Value]) -> Result<Value, Error> {
                             }
                         }
                     }
-                    if ok { Some(cur.clone()) } else { None }
+                    if ok {
+                        Some(cur.clone())
+                    } else {
+                        None
+                    }
                 }
                 Err(e) => return Err(Error::new(format!("Invalid JSON: {}", e), None)),
             };
@@ -74,10 +87,6 @@ pub fn exec_json(name: &str, args: &[Value]) -> Result<Value, Error> {
                 Ok(Value::Null)
             }
         }
-        _ => Err(Error::new(
-            format!("Unknown JSON function: {}", name),
-            None,
-        )),
+        _ => Err(Error::new(format!("Unknown JSON function: {}", name), None)),
     }
 }
-

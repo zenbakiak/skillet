@@ -1,5 +1,5 @@
-use crate::types::Value;
 use crate::error::Error;
+use crate::types::Value;
 use jsonpath_rust::JsonPath;
 
 /// Apply JSONPath query to a JSON string or JSON Value
@@ -8,7 +8,8 @@ pub fn apply_jsonpath(json_data: &Value, path: &str) -> Result<Value, Error> {
     let json_value = value_to_json(json_data)?;
 
     // Apply JSONPath query - returns Vec<&serde_json::Value>
-    let results = json_value.query(path)
+    let results = json_value
+        .query(path)
         .map_err(|e| Error::new(format!("JSONPath error: {}", e), None))?;
 
     // Handle special cases for better usability
@@ -32,7 +33,9 @@ fn value_to_json(value: &Value) -> Result<serde_json::Value, Error> {
     match value {
         Value::Number(n) => {
             if n.fract() == 0.0 && *n >= i64::MIN as f64 && *n <= i64::MAX as f64 {
-                Ok(serde_json::Value::Number(serde_json::Number::from(*n as i64)))
+                Ok(serde_json::Value::Number(serde_json::Number::from(
+                    *n as i64,
+                )))
             } else {
                 serde_json::Number::from_f64(*n)
                     .map(serde_json::Value::Number)
@@ -49,16 +52,12 @@ fn value_to_json(value: &Value) -> Result<serde_json::Value, Error> {
             }
             Ok(serde_json::Value::Array(json_arr))
         }
-        Value::Currency(n) => {
-            serde_json::Number::from_f64(*n)
-                .map(serde_json::Value::Number)
-                .ok_or_else(|| Error::new("Invalid currency for JSON conversion", None))
-        }
+        Value::Currency(n) => serde_json::Number::from_f64(*n)
+            .map(serde_json::Value::Number)
+            .ok_or_else(|| Error::new("Invalid currency for JSON conversion", None)),
         Value::DateTime(ts) => Ok(serde_json::Value::Number(serde_json::Number::from(*ts))),
-        Value::Json(json_str) => {
-            serde_json::from_str(json_str)
-                .map_err(|e| Error::new(format!("Invalid JSON string: {}", e), None))
-        }
+        Value::Json(json_str) => serde_json::from_str(json_str)
+            .map_err(|e| Error::new(format!("Invalid JSON string: {}", e), None)),
     }
 }
 

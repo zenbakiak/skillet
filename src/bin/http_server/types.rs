@@ -52,7 +52,7 @@ impl<'de> Deserialize<'de> for IncludeVariables {
                         }
                     })
                     .collect();
-                
+
                 if vars.is_empty() {
                     Ok(IncludeVariables::None)
                 } else {

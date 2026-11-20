@@ -1,14 +1,19 @@
+use skillet::Value;
 use std::collections::HashMap;
 use std::net::TcpStream;
-use std::sync::{Arc, atomic::{AtomicU64, Ordering}};
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
+};
 use std::time::Instant;
-use skillet::Value;
 
 use super::auth::check_authentication;
-use super::cache::{evaluate_cached, get_cache_stats, clear_cache};
-use super::types::{EvalRequest, EvalResponse, HealthResponse, IncludeVariables, CacheStatsResponse};
-use super::utils::{send_http_response, send_http_error, parse_json_body, sanitize_json_key};
+use super::cache::{clear_cache, evaluate_cached, get_cache_stats};
 use super::stats::ServerStats;
+use super::types::{
+    CacheStatsResponse, EvalRequest, EvalResponse, HealthResponse, IncludeVariables,
+};
+use super::utils::{parse_json_body, sanitize_json_key, send_http_error, send_http_response};
 
 pub fn handle_eval_post(
     stream: &mut TcpStream,
@@ -33,7 +38,12 @@ pub fn handle_eval_post(
 
     let response = process_eval_request(eval_request, stats, request_counter);
     let json = serde_json::to_string(&response).unwrap_or_default();
-    send_http_response(stream, if response.success { 200 } else { 400 }, "application/json", &json);
+    send_http_response(
+        stream,
+        if response.success { 200 } else { 400 },
+        "application/json",
+        &json,
+    );
 }
 
 pub fn handle_eval_get(
@@ -106,7 +116,10 @@ pub fn handle_eval_get(
                     } else if decoded_value == "false" {
                         variables.insert(key.to_string(), serde_json::json!(false));
                     } else {
-                        variables.insert(key.to_string(), serde_json::json!(decoded_value.to_string()));
+                        variables.insert(
+                            key.to_string(),
+                            serde_json::json!(decoded_value.to_string()),
+                        );
                     }
                 }
             }
@@ -120,21 +133,30 @@ pub fn handle_eval_get(
 
     let eval_request = EvalRequest {
         expression,
-        arguments: if variables.is_empty() { None } else { Some(variables) },
+        arguments: if variables.is_empty() {
+            None
+        } else {
+            Some(variables)
+        },
         output_json: Some(output_json),
         include_variables: Some(include_variables),
     };
 
     let response = process_eval_request(eval_request, stats, request_counter);
     let json = serde_json::to_string(&response).unwrap_or_default();
-    send_http_response(stream, if response.success { 200 } else { 400 }, "application/json", &json);
+    send_http_response(
+        stream,
+        if response.success { 200 } else { 400 },
+        "application/json",
+        &json,
+    );
 }
 
 pub fn handle_health(
     stream: &mut TcpStream,
     stats: &ServerStats,
     request: &str,
-    server_token: Arc<Option<String>>
+    server_token: Arc<Option<String>>,
 ) {
     // Health endpoint doesn't require authentication
     let _ = (request, server_token); // Suppress unused warnings
@@ -225,7 +247,10 @@ fn process_eval_request(
     };
 
     // Evaluate expression with caching
-    let include_variables = matches!(req.include_variables, Some(IncludeVariables::All) | Some(IncludeVariables::Selected(_)));
+    let include_variables = matches!(
+        req.include_variables,
+        Some(IncludeVariables::All) | Some(IncludeVariables::Selected(_))
+    );
     let cached_result = evaluate_cached(&req.expression, &vars, include_variables);
 
     let (result, variable_context) = match cached_result.result {
@@ -266,7 +291,11 @@ fn process_eval_request(
                         }
                     }
                 }
-                if json_vars.is_empty() { None } else { Some(json_vars) }
+                if json_vars.is_empty() {
+                    None
+                } else {
+                    Some(json_vars)
+                }
             } else {
                 None
             };
@@ -301,14 +330,12 @@ fn format_structured_output(val: &Value, execution_time_ms: f64) -> serde_json::
         Value::Array(arr) => {
             let json_arr: Vec<serde_json::Value> = arr.iter().map(format_simple_output).collect();
             (serde_json::json!(json_arr), "Array")
-        },
-        Value::Null => (serde_json::json!(null), "Null"),
-        Value::Json(s) => {
-            match serde_json::from_str(s) {
-                Ok(parsed) => (parsed, "Json"),
-                Err(_) => (serde_json::json!(s), "Json")
-            }
         }
+        Value::Null => (serde_json::json!(null), "Null"),
+        Value::Json(s) => match serde_json::from_str(s) {
+            Ok(parsed) => (parsed, "Json"),
+            Err(_) => (serde_json::json!(s), "Json"),
+        },
     };
 
     serde_json::json!({
@@ -328,7 +355,7 @@ fn format_simple_output(val: &Value) -> serde_json::Value {
         Value::Array(arr) => {
             let json_arr: Vec<serde_json::Value> = arr.iter().map(format_simple_output).collect();
             serde_json::json!(json_arr)
-        },
+        }
         Value::Null => serde_json::json!(null),
         Value::Json(s) => serde_json::from_str(s).unwrap_or_else(|_| serde_json::json!(s)),
     }

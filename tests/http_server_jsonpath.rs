@@ -1,9 +1,12 @@
 // Test JSONPath functionality as it would be used by the HTTP server
+use skillet::{evaluate_with_custom, Value};
 use std::collections::HashMap;
-use skillet::{Value, evaluate_with_custom};
 
 // This function simulates how the HTTP server processes JSONPath arguments
-fn test_http_server_jsonpath_eval(expression: &str, arguments: HashMap<String, serde_json::Value>) -> Result<Value, String> {
+fn test_http_server_jsonpath_eval(
+    expression: &str,
+    arguments: HashMap<String, serde_json::Value>,
+) -> Result<Value, String> {
     let mut vars = HashMap::new();
 
     // Add JSON data for JSONPath functions (like the HTTP server does)
@@ -15,8 +18,15 @@ fn test_http_server_jsonpath_eval(expression: &str, arguments: HashMap<String, s
         match skillet::json_to_value(value) {
             Ok(v) => {
                 // Sanitize key like the HTTP server does
-                let sanitized_key = key.chars()
-                    .map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' })
+                let sanitized_key = key
+                    .chars()
+                    .map(|c| {
+                        if c.is_alphanumeric() || c == '_' {
+                            c
+                        } else {
+                            '_'
+                        }
+                    })
                     .collect::<String>();
                 vars.insert(sanitized_key, v);
             }
@@ -25,8 +35,7 @@ fn test_http_server_jsonpath_eval(expression: &str, arguments: HashMap<String, s
     }
 
     // Evaluate with custom functions (like the HTTP server does)
-    evaluate_with_custom(expression, &vars)
-        .map_err(|e| e.to_string())
+    evaluate_with_custom(expression, &vars).map_err(|e| e.to_string())
 }
 
 fn approx_eq(a: f64, b: f64) -> bool {
@@ -36,12 +45,17 @@ fn approx_eq(a: f64, b: f64) -> bool {
 #[test]
 fn test_http_server_jsonpath_sum() {
     let mut arguments = HashMap::new();
-    arguments.insert("accounts".to_string(), serde_json::json!([
-        {"id": 1, "amount": 300.1},
-        {"id": 4, "amount": 890.1}
-    ]));
+    arguments.insert(
+        "accounts".to_string(),
+        serde_json::json!([
+            {"id": 1, "amount": 300.1},
+            {"id": 4, "amount": 890.1}
+        ]),
+    );
 
-    let result = test_http_server_jsonpath_eval("SUM(JQ(:arguments, \"$.accounts[*].amount\"))", arguments).unwrap();
+    let result =
+        test_http_server_jsonpath_eval("SUM(JQ(:arguments, \"$.accounts[*].amount\"))", arguments)
+            .unwrap();
 
     if let Value::Number(sum) = result {
         assert!(approx_eq(sum, 1190.2));
@@ -53,14 +67,19 @@ fn test_http_server_jsonpath_sum() {
 #[test]
 fn test_http_server_jsonpath_avg() {
     let mut arguments = HashMap::new();
-    arguments.insert("scores".to_string(), serde_json::json!([
-        {"value": 85},
-        {"value": 92},
-        {"value": 78},
-        {"value": 95}
-    ]));
+    arguments.insert(
+        "scores".to_string(),
+        serde_json::json!([
+            {"value": 85},
+            {"value": 92},
+            {"value": 78},
+            {"value": 95}
+        ]),
+    );
 
-    let result = test_http_server_jsonpath_eval("AVG(JQ(:arguments, \"$.scores[*].value\"))", arguments).unwrap();
+    let result =
+        test_http_server_jsonpath_eval("AVG(JQ(:arguments, \"$.scores[*].value\"))", arguments)
+            .unwrap();
 
     if let Value::Number(avg) = result {
         assert!(approx_eq(avg, 87.5));
@@ -72,14 +91,21 @@ fn test_http_server_jsonpath_avg() {
 #[test]
 fn test_http_server_jsonpath_max() {
     let mut arguments = HashMap::new();
-    arguments.insert("temperatures".to_string(), serde_json::json!([
-        {"reading": 22.5},
-        {"reading": 31.2},
-        {"reading": 18.7},
-        {"reading": 29.8}
-    ]));
+    arguments.insert(
+        "temperatures".to_string(),
+        serde_json::json!([
+            {"reading": 22.5},
+            {"reading": 31.2},
+            {"reading": 18.7},
+            {"reading": 29.8}
+        ]),
+    );
 
-    let result = test_http_server_jsonpath_eval("MAX(JQ(:arguments, \"$.temperatures[*].reading\"))", arguments).unwrap();
+    let result = test_http_server_jsonpath_eval(
+        "MAX(JQ(:arguments, \"$.temperatures[*].reading\"))",
+        arguments,
+    )
+    .unwrap();
 
     if let Value::Number(max_val) = result {
         assert!(approx_eq(max_val, 31.2));
@@ -91,14 +117,19 @@ fn test_http_server_jsonpath_max() {
 #[test]
 fn test_http_server_jsonpath_min() {
     let mut arguments = HashMap::new();
-    arguments.insert("prices".to_string(), serde_json::json!([
-        {"cost": 15.99},
-        {"cost": 8.50},
-        {"cost": 23.75},
-        {"cost": 12.30}
-    ]));
+    arguments.insert(
+        "prices".to_string(),
+        serde_json::json!([
+            {"cost": 15.99},
+            {"cost": 8.50},
+            {"cost": 23.75},
+            {"cost": 12.30}
+        ]),
+    );
 
-    let result = test_http_server_jsonpath_eval("MIN(JQ(:arguments, \"$.prices[*].cost\"))", arguments).unwrap();
+    let result =
+        test_http_server_jsonpath_eval("MIN(JQ(:arguments, \"$.prices[*].cost\"))", arguments)
+            .unwrap();
 
     if let Value::Number(min_val) = result {
         assert!(approx_eq(min_val, 8.5));
@@ -110,25 +141,32 @@ fn test_http_server_jsonpath_min() {
 #[test]
 fn test_http_server_jsonpath_nested() {
     let mut arguments = HashMap::new();
-    arguments.insert("departments".to_string(), serde_json::json!([
-        {
-            "name": "Sales",
-            "employees": [
-                {"salary": 50000},
-                {"salary": 55000}
-            ]
-        },
-        {
-            "name": "Engineering",
-            "employees": [
-                {"salary": 75000},
-                {"salary": 80000},
-                {"salary": 70000}
-            ]
-        }
-    ]));
+    arguments.insert(
+        "departments".to_string(),
+        serde_json::json!([
+            {
+                "name": "Sales",
+                "employees": [
+                    {"salary": 50000},
+                    {"salary": 55000}
+                ]
+            },
+            {
+                "name": "Engineering",
+                "employees": [
+                    {"salary": 75000},
+                    {"salary": 80000},
+                    {"salary": 70000}
+                ]
+            }
+        ]),
+    );
 
-    let result = test_http_server_jsonpath_eval("SUM(JQ(:arguments, \"$.departments[*].employees[*].salary\"))", arguments).unwrap();
+    let result = test_http_server_jsonpath_eval(
+        "SUM(JQ(:arguments, \"$.departments[*].employees[*].salary\"))",
+        arguments,
+    )
+    .unwrap();
 
     if let Value::Number(total_salary) = result {
         assert!(approx_eq(total_salary, 330000.0));
@@ -140,14 +178,21 @@ fn test_http_server_jsonpath_nested() {
 #[test]
 fn test_http_server_jsonpath_with_filter() {
     let mut arguments = HashMap::new();
-    arguments.insert("products".to_string(), serde_json::json!([
-        {"name": "A", "price": 10, "category": "electronics"},
-        {"name": "B", "price": 20, "category": "books"},
-        {"name": "C", "price": 30, "category": "electronics"},
-        {"name": "D", "price": 15, "category": "books"}
-    ]));
+    arguments.insert(
+        "products".to_string(),
+        serde_json::json!([
+            {"name": "A", "price": 10, "category": "electronics"},
+            {"name": "B", "price": 20, "category": "books"},
+            {"name": "C", "price": 30, "category": "electronics"},
+            {"name": "D", "price": 15, "category": "books"}
+        ]),
+    );
 
-    let result = test_http_server_jsonpath_eval("SUM(JQ(:arguments, \"$.products[?(@.category == 'electronics')].price\"))", arguments).unwrap();
+    let result = test_http_server_jsonpath_eval(
+        "SUM(JQ(:arguments, \"$.products[?(@.category == 'electronics')].price\"))",
+        arguments,
+    )
+    .unwrap();
 
     if let Value::Number(electronics_total) = result {
         assert!(approx_eq(electronics_total, 40.0));
@@ -159,13 +204,20 @@ fn test_http_server_jsonpath_with_filter() {
 #[test]
 fn test_http_server_jsonpath_complex_expression() {
     let mut arguments = HashMap::new();
-    arguments.insert("sales".to_string(), serde_json::json!([
-        {"amount": 100},
-        {"amount": 200}
-    ]));
+    arguments.insert(
+        "sales".to_string(),
+        serde_json::json!([
+            {"amount": 100},
+            {"amount": 200}
+        ]),
+    );
     arguments.insert("bonus".to_string(), serde_json::json!(50));
 
-    let result = test_http_server_jsonpath_eval("SUM(JQ(:arguments, \"$.sales[*].amount\")) + :bonus", arguments).unwrap();
+    let result = test_http_server_jsonpath_eval(
+        "SUM(JQ(:arguments, \"$.sales[*].amount\")) + :bonus",
+        arguments,
+    )
+    .unwrap();
 
     if let Value::Number(total) = result {
         assert!(approx_eq(total, 350.0));
@@ -179,7 +231,9 @@ fn test_http_server_jsonpath_error_handling() {
     let mut arguments = HashMap::new();
     arguments.insert("data".to_string(), serde_json::json!({"valid": "data"}));
 
-    let result = test_http_server_jsonpath_eval("SUM(JQ(:arguments, \"$.invalid[*].path\"))", arguments).unwrap();
+    let result =
+        test_http_server_jsonpath_eval("SUM(JQ(:arguments, \"$.invalid[*].path\"))", arguments)
+            .unwrap();
 
     // Should still succeed but return 0 for invalid JSONPath that returns empty result
     if let Value::Number(sum) = result {

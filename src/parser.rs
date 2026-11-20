@@ -15,7 +15,12 @@ impl<'a> Parser<'a> {
         let mut lexer = Lexer::new(input);
         let lookahead = lexer.next_token().unwrap_or(Token::Eof);
         let look_pos = lexer.last_start();
-        Self { lexer, lookahead, lookahead2: None, look_pos }
+        Self {
+            lexer,
+            lookahead,
+            lookahead2: None,
+            look_pos,
+        }
     }
 
     fn bump(&mut self) -> Result<(), Error> {
@@ -27,7 +32,7 @@ impl<'a> Parser<'a> {
         self.look_pos = self.lexer.last_start();
         Ok(())
     }
-    
+
     fn peek_ahead2(&mut self) -> Result<(Token, Token), Error> {
         // Use a temporary lexer clone for deeper lookahead since we need 3 tokens
         let mut temp_lexer = self.lexer.clone();
@@ -45,14 +50,16 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn err_here<T>(&self, msg: &str) -> Result<T, Error> { Err(Error::new(msg, Some(self.look_pos))) }
+    fn err_here<T>(&self, msg: &str) -> Result<T, Error> {
+        Err(Error::new(msg, Some(self.look_pos)))
+    }
 
     pub fn parse(&mut self) -> Result<Expr, Error> {
         let mut exprs = Vec::new();
-        
+
         // Parse first expression
         exprs.push(self.parse_expr()?);
-        
+
         // Parse semicolon-separated expressions
         while matches!(self.lookahead, Token::Semicolon) {
             self.bump()?; // consume ';'
@@ -61,10 +68,12 @@ impl<'a> Parser<'a> {
             }
             exprs.push(self.parse_expr()?);
         }
-        
+
         // If only one expression, return it directly; otherwise wrap in sequence
         if exprs.len() == 1 {
-            exprs.into_iter().next()
+            exprs
+                .into_iter()
+                .next()
                 .ok_or_else(|| Error::new("Expected expression but none found", None))
         } else {
             Ok(Expr::Sequence(exprs))
@@ -74,13 +83,13 @@ impl<'a> Parser<'a> {
     fn parse_expr(&mut self) -> Result<Expr, Error> {
         self.parse_assignment()
     }
-    
+
     fn parse_assignment(&mut self) -> Result<Expr, Error> {
         // Check for assignment pattern: :variable_name := expression
         if matches!(self.lookahead, Token::Colon) {
             // Look ahead to see if this is an assignment - use efficient 2-token lookahead
             let (next1, next2) = self.peek_ahead2()?;
-            
+
             if matches!((next1, next2), (Token::Identifier(_), Token::ColonEquals)) {
                 // This is an assignment
                 self.bump()?; // consume ':'
@@ -90,13 +99,16 @@ impl<'a> Parser<'a> {
                     if matches!(self.lookahead, Token::ColonEquals) {
                         self.bump()?; // consume ':='
                         let value = self.parse_ternary()?;
-                        return Ok(Expr::Assignment { variable: var_name, value: Rc::new(value) });
+                        return Ok(Expr::Assignment {
+                            variable: var_name,
+                            value: Rc::new(value),
+                        });
                     }
                 }
                 return self.err_here("Invalid assignment syntax");
             }
         }
-        
+
         self.parse_ternary()
     }
 
@@ -112,7 +124,10 @@ impl<'a> Parser<'a> {
                     // Represent ternary as IF function for now: IF(cond, then, else) but we don't have IF.
                     // We'll encode as Binary with Or? Instead, we can't, so we return a function call node.
                     // Use a special function name handled in runtime: __TERNARY__.
-                    Ok(Expr::FunctionCall { name: "__TERNARY__".to_string(), args: vec![cond, then_e, else_e] })
+                    Ok(Expr::FunctionCall {
+                        name: "__TERNARY__".to_string(),
+                        args: vec![cond, then_e, else_e],
+                    })
                 }
                 _ => self.err_here("Expected ':' in ternary"),
             }
@@ -155,8 +170,16 @@ impl<'a> Parser<'a> {
         let mut node = self.parse_relational()?;
         loop {
             match self.lookahead {
-                Token::EqEq => { self.bump()?; let rhs = self.parse_relational()?; node = Expr::Binary(Rc::new(node), BinaryOp::Eq, Rc::new(rhs)); }
-                Token::NotEq => { self.bump()?; let rhs = self.parse_relational()?; node = Expr::Binary(Rc::new(node), BinaryOp::Ne, Rc::new(rhs)); }
+                Token::EqEq => {
+                    self.bump()?;
+                    let rhs = self.parse_relational()?;
+                    node = Expr::Binary(Rc::new(node), BinaryOp::Eq, Rc::new(rhs));
+                }
+                Token::NotEq => {
+                    self.bump()?;
+                    let rhs = self.parse_relational()?;
+                    node = Expr::Binary(Rc::new(node), BinaryOp::Ne, Rc::new(rhs));
+                }
                 _ => break,
             }
         }
@@ -167,10 +190,26 @@ impl<'a> Parser<'a> {
         let mut node = self.parse_additive()?;
         loop {
             match self.lookahead {
-                Token::Greater => { self.bump()?; let rhs = self.parse_additive()?; node = Expr::Binary(Rc::new(node), BinaryOp::Gt, Rc::new(rhs)); }
-                Token::Less => { self.bump()?; let rhs = self.parse_additive()?; node = Expr::Binary(Rc::new(node), BinaryOp::Lt, Rc::new(rhs)); }
-                Token::Ge => { self.bump()?; let rhs = self.parse_additive()?; node = Expr::Binary(Rc::new(node), BinaryOp::Ge, Rc::new(rhs)); }
-                Token::Le => { self.bump()?; let rhs = self.parse_additive()?; node = Expr::Binary(Rc::new(node), BinaryOp::Le, Rc::new(rhs)); }
+                Token::Greater => {
+                    self.bump()?;
+                    let rhs = self.parse_additive()?;
+                    node = Expr::Binary(Rc::new(node), BinaryOp::Gt, Rc::new(rhs));
+                }
+                Token::Less => {
+                    self.bump()?;
+                    let rhs = self.parse_additive()?;
+                    node = Expr::Binary(Rc::new(node), BinaryOp::Lt, Rc::new(rhs));
+                }
+                Token::Ge => {
+                    self.bump()?;
+                    let rhs = self.parse_additive()?;
+                    node = Expr::Binary(Rc::new(node), BinaryOp::Ge, Rc::new(rhs));
+                }
+                Token::Le => {
+                    self.bump()?;
+                    let rhs = self.parse_additive()?;
+                    node = Expr::Binary(Rc::new(node), BinaryOp::Le, Rc::new(rhs));
+                }
                 _ => break,
             }
         }
@@ -272,8 +311,14 @@ impl<'a> Parser<'a> {
                     _ => self.err_here("Expected ')'"),
                 }
             }
-            Token::String(s) => { self.bump()?; Ok(Expr::StringLit(s)) }
-            Token::Null => { self.bump()?; Ok(Expr::Null) }
+            Token::String(s) => {
+                self.bump()?;
+                Ok(Expr::StringLit(s))
+            }
+            Token::Null => {
+                self.bump()?;
+                Ok(Expr::Null)
+            }
             Token::Colon => {
                 // Variable: ':' identifier (let postfix handle property chains and method calls)
                 self.bump()?; // consume ':'
@@ -285,8 +330,20 @@ impl<'a> Parser<'a> {
                     _ => self.err_here("Expected variable name after ':'"),
                 }
             }
-            Token::True => { self.bump()?; Ok(Expr::FunctionCall { name: "__CONST_TRUE__".to_string(), args: vec![] }) }
-            Token::False => { self.bump()?; Ok(Expr::FunctionCall { name: "__CONST_FALSE__".to_string(), args: vec![] }) }
+            Token::True => {
+                self.bump()?;
+                Ok(Expr::FunctionCall {
+                    name: "__CONST_TRUE__".to_string(),
+                    args: vec![],
+                })
+            }
+            Token::False => {
+                self.bump()?;
+                Ok(Expr::FunctionCall {
+                    name: "__CONST_FALSE__".to_string(),
+                    args: vec![],
+                })
+            }
             Token::Identifier(name) => {
                 // Function call: IDENT '(' args? ')'
                 let func_name = name;
@@ -299,18 +356,31 @@ impl<'a> Parser<'a> {
                             // empty args
                         } else {
                             loop {
-                                let arg = if let Token::Ellipsis = self.lookahead { self.bump()?; Expr::Spread(Rc::new(self.parse_expr()?)) } else { self.parse_expr()? };
+                                let arg = if let Token::Ellipsis = self.lookahead {
+                                    self.bump()?;
+                                    Expr::Spread(Rc::new(self.parse_expr()?))
+                                } else {
+                                    self.parse_expr()?
+                                };
                                 args.push(arg);
                                 match self.lookahead {
-                                    Token::Comma => { self.bump()?; }
+                                    Token::Comma => {
+                                        self.bump()?;
+                                    }
                                     Token::RParen => break,
-                                    _ => return self.err_here("Expected ',' or ')' in argument list"),
+                                    _ => {
+                                        return self
+                                            .err_here("Expected ',' or ')' in argument list")
+                                    }
                                 }
                             }
                         }
                         self.bump()?; // consume ')'
                         let final_name = func_name.to_uppercase();
-                        Ok(Expr::FunctionCall { name: final_name, args })
+                        Ok(Expr::FunctionCall {
+                            name: final_name,
+                            args,
+                        })
                     }
                     _ => self.err_here("Unexpected identifier (expected function call)"),
                 }
@@ -326,7 +396,9 @@ impl<'a> Parser<'a> {
                         let item = self.parse_expr()?;
                         items.push(item);
                         match self.lookahead {
-                            Token::Comma => { self.bump()?; }
+                            Token::Comma => {
+                                self.bump()?;
+                            }
                             Token::RBracket => break,
                             _ => return self.err_here("Expected ',' or ']' in array"),
                         }
@@ -353,23 +425,27 @@ impl<'a> Parser<'a> {
                                 self.bump()?;
                                 s
                             }
-                            _ => return self.err_here("Expected identifier or string key in object literal"),
+                            _ => {
+                                return self.err_here(
+                                    "Expected identifier or string key in object literal",
+                                )
+                            }
                         };
-                        
+
                         // Expect colon
                         if matches!(self.lookahead, Token::Colon) {
                             self.bump()?; // consume ':'
                         } else {
                             return self.err_here("Expected ':' after object key");
                         }
-                        
+
                         // Parse value
                         let value = self.parse_expr()?;
                         pairs.push((key, value));
-                        
+
                         match self.lookahead {
-                            Token::Comma => { 
-                                self.bump()?; 
+                            Token::Comma => {
+                                self.bump()?;
                                 // Allow trailing comma
                                 if matches!(self.lookahead, Token::RBrace) {
                                     break;
@@ -383,7 +459,10 @@ impl<'a> Parser<'a> {
                 self.bump()?; // consume '}'
                 Ok(Expr::ObjectLiteral(pairs))
             }
-            other => Err(Error::new(format!("Unexpected token: {:?}", other), Some(self.look_pos))),
+            other => Err(Error::new(
+                format!("Unexpected token: {:?}", other),
+                Some(self.look_pos),
+            )),
         }
     }
 
@@ -408,7 +487,10 @@ impl<'a> Parser<'a> {
                 }
                 _ => return Err(Error::new("Expected type name after '::'", None)),
             };
-            node = Expr::TypeCast { expr: Rc::new(node), ty: tname };
+            node = Expr::TypeCast {
+                expr: Rc::new(node),
+                ty: tname,
+            };
         }
         Ok(node)
     }
@@ -420,13 +502,21 @@ impl<'a> Parser<'a> {
                 Token::Dot => {
                     self.bump()?; // '.'
                     let name = match self.lookahead.clone() {
-                        Token::Identifier(s) => { self.bump()?; s }
+                        Token::Identifier(s) => {
+                            self.bump()?;
+                            s
+                        }
                         _ => return self.err_here("Expected property or method name after '.'"),
                     };
                     // Predicate style: name?
                     if let Token::QMark = self.lookahead {
                         self.bump()?; // consume '?'
-                        node = Expr::MethodCall { target: Rc::new(node), name: name.to_lowercase(), args: vec![], predicate: true };
+                        node = Expr::MethodCall {
+                            target: Rc::new(node),
+                            name: name.to_lowercase(),
+                            args: vec![],
+                            predicate: true,
+                        };
                         continue;
                     }
                     // Check for method call: '(' args ')'
@@ -438,28 +528,49 @@ impl<'a> Parser<'a> {
                                 // empty
                             } else {
                                 loop {
-                                    let arg = if let Token::Ellipsis = self.lookahead { self.bump()?; Expr::Spread(Rc::new(self.parse_expr()?)) } else { self.parse_expr()? };
+                                    let arg = if let Token::Ellipsis = self.lookahead {
+                                        self.bump()?;
+                                        Expr::Spread(Rc::new(self.parse_expr()?))
+                                    } else {
+                                        self.parse_expr()?
+                                    };
                                     args.push(arg);
                                     match self.lookahead {
-                                        Token::Comma => { self.bump()?; }
+                                        Token::Comma => {
+                                            self.bump()?;
+                                        }
                                         Token::RParen => break,
-                                        _ => return self.err_here("Expected ',' or ')' in method args"),
+                                        _ => {
+                                            return self
+                                                .err_here("Expected ',' or ')' in method args")
+                                        }
                                     }
                                 }
                             }
                             self.bump()?; // ')'
-                            node = Expr::MethodCall { target: Rc::new(node), name: name.to_lowercase(), args, predicate: false };
+                            node = Expr::MethodCall {
+                                target: Rc::new(node),
+                                name: name.to_lowercase(),
+                                args,
+                                predicate: false,
+                            };
                         }
                         _ => {
                             // No parentheses, treat as property access
-                            node = Expr::PropertyAccess { target: Rc::new(node), property: name };
+                            node = Expr::PropertyAccess {
+                                target: Rc::new(node),
+                                property: name,
+                            };
                         }
                     }
                 }
                 Token::SafeNavigation => {
                     self.bump()?; // '&.'
                     let name = match self.lookahead.clone() {
-                        Token::Identifier(s) => { self.bump()?; s }
+                        Token::Identifier(s) => {
+                            self.bump()?;
+                            s
+                        }
                         _ => return self.err_here("Expected property name after '&.'"),
                     };
                     // Check for method call after safe navigation
@@ -472,69 +583,98 @@ impl<'a> Parser<'a> {
                                 // empty args
                             } else {
                                 loop {
-                                    let arg = if let Token::Ellipsis = self.lookahead { 
-                                        self.bump()?; 
-                                        Expr::Spread(Rc::new(self.parse_expr()?))}
-                                    else { 
-                                        self.parse_expr()? 
+                                    let arg = if let Token::Ellipsis = self.lookahead {
+                                        self.bump()?;
+                                        Expr::Spread(Rc::new(self.parse_expr()?))
+                                    } else {
+                                        self.parse_expr()?
                                     };
                                     args.push(arg);
                                     match self.lookahead {
-                                        Token::Comma => { self.bump()?; }
+                                        Token::Comma => {
+                                            self.bump()?;
+                                        }
                                         Token::RParen => break,
-                                        _ => return self.err_here("Expected ',' or ')' in safe method args"),
+                                        _ => {
+                                            return self.err_here(
+                                                "Expected ',' or ')' in safe method args",
+                                            )
+                                        }
                                     }
                                 }
                             }
                             self.bump()?; // ')'
-                            node = Expr::SafeMethodCall { target: Rc::new(node), name: name.to_lowercase(), args };
+                            node = Expr::SafeMethodCall {
+                                target: Rc::new(node),
+                                name: name.to_lowercase(),
+                                args,
+                            };
                         }
                         _ => {
                             // Safe property access
-                            node = Expr::SafePropertyAccess { target: Rc::new(node), property: name };
+                            node = Expr::SafePropertyAccess {
+                                target: Rc::new(node),
+                                property: name,
+                            };
                         }
                     }
                 }
-            Token::LBracket => {
-                // Indexing or slicing
-                self.bump()?; // '['
-                // Cases: [expr], [start:end], [:end], [start:]
-                let mut start: Option<Expr> = None;
-                let mut end: Option<Expr> = None;
-                match self.lookahead {
-                    Token::RBracket => { self.bump()?; return self.err_here("Empty index '[]' not allowed"); }
-                    Token::Colon => { /* [:end] */ }
-                    _ => {
-                        // parse first expr
-                        let first = self.parse_expr()?;
-                        match self.lookahead {
-                            Token::Colon => { start = Some(first); }
-                            Token::RBracket => {
-                                self.bump()?; // ']'
-                                node = Expr::Index { target: Rc::new(node), index: Rc::new(first) };
-                                continue;
+                Token::LBracket => {
+                    // Indexing or slicing
+                    self.bump()?; // '['
+                                  // Cases: [expr], [start:end], [:end], [start:]
+                    let mut start: Option<Expr> = None;
+                    let mut end: Option<Expr> = None;
+                    match self.lookahead {
+                        Token::RBracket => {
+                            self.bump()?;
+                            return self.err_here("Empty index '[]' not allowed");
+                        }
+                        Token::Colon => { /* [:end] */ }
+                        _ => {
+                            // parse first expr
+                            let first = self.parse_expr()?;
+                            match self.lookahead {
+                                Token::Colon => {
+                                    start = Some(first);
+                                }
+                                Token::RBracket => {
+                                    self.bump()?; // ']'
+                                    node = Expr::Index {
+                                        target: Rc::new(node),
+                                        index: Rc::new(first),
+                                    };
+                                    continue;
+                                }
+                                _ => return self.err_here("Expected ':' or ']' in indexing"),
                             }
-                            _ => return self.err_here("Expected ':' or ']' in indexing"),
                         }
                     }
+                    // At this point, we saw ':' (slice)
+                    if let Token::Colon = self.lookahead {
+                        self.bump()?;
+                    }
+                    // Optional end expression
+                    if let Token::RBracket = self.lookahead {
+                        // [start:]
+                    } else {
+                        end = Some(self.parse_expr()?);
+                    }
+                    match self.lookahead {
+                        Token::RBracket => {
+                            self.bump()?;
+                        }
+                        _ => return self.err_here("Expected ']' to close slice"),
+                    }
+                    node = Expr::Slice {
+                        target: Rc::new(node),
+                        start: start.map(Rc::new),
+                        end: end.map(Rc::new),
+                    };
                 }
-                // At this point, we saw ':' (slice)
-                if let Token::Colon = self.lookahead { self.bump()?; }
-                // Optional end expression
-                if let Token::RBracket = self.lookahead {
-                    // [start:]
-                } else {
-                    end = Some(self.parse_expr()?);
-                }
-                match self.lookahead {
-                    Token::RBracket => { self.bump()?; }
-                    _ => return self.err_here("Expected ']' to close slice"),
-                }
-                node = Expr::Slice { target: Rc::new(node), start: start.map(Rc::new), end: end.map(Rc::new) };
+                _ => break,
             }
-            _ => break,
         }
+        Ok(node)
     }
-    Ok(node)
-}
 }

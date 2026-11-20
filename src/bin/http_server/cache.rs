@@ -1,10 +1,10 @@
-use std::sync::{Arc, Mutex};
-use std::collections::HashMap;
 use lru::LruCache;
 use once_cell::sync::Lazy;
+use std::collections::HashMap;
 use std::num::NonZeroUsize;
+use std::sync::{Arc, Mutex};
 
-use skillet::{Value, evaluate_with_assignments, evaluate_with_assignments_and_context};
+use skillet::{evaluate_with_assignments, evaluate_with_assignments_and_context, Value};
 
 /// Cached expression result with optional variable context
 #[derive(Clone, Debug)]
@@ -111,12 +111,12 @@ fn generate_cache_key(expression: &str, variables: &HashMap<String, Value>) -> S
 
 /// Evaluate expression with caching support
 pub fn evaluate_cached(
-    expression: &str, 
+    expression: &str,
     variables: &HashMap<String, Value>,
     include_variables: bool,
 ) -> CachedResult {
     let cache_key = generate_cache_key(expression, variables);
-    
+
     // Try to get from cache first
     if let Ok(mut cache) = EXPRESSION_CACHE.lock() {
         if let Some(entry) = cache.get(&cache_key) {
@@ -131,7 +131,7 @@ pub fn evaluate_cached(
 
     // Cache miss - evaluate the expression
     let start_time = std::time::Instant::now();
-    
+
     let (result, variable_context) = if expression.contains(";") || expression.contains(":=") {
         if include_variables {
             match evaluate_with_assignments_and_context(expression, variables) {
@@ -144,7 +144,7 @@ pub fn evaluate_cached(
     } else {
         (skillet::evaluate_with_custom(expression, variables), None)
     };
-    
+
     let execution_time_ms = start_time.elapsed().as_secs_f64() * 1000.0;
 
     // Store successful results in cache
@@ -202,7 +202,9 @@ impl BufferPool {
     }
 
     fn get_buffer(&mut self) -> Vec<u8> {
-        self.buffers.pop().unwrap_or_else(|| Vec::with_capacity(self.buffer_size))
+        self.buffers
+            .pop()
+            .unwrap_or_else(|| Vec::with_capacity(self.buffer_size))
     }
 
     fn return_buffer(&mut self, mut buffer: Vec<u8>) {
@@ -220,7 +222,7 @@ impl BufferPool {
 
 // Thread-local buffer pool for HTTP parsing
 thread_local! {
-    static HTTP_BUFFER_POOL: std::cell::RefCell<BufferPool> = 
+    static HTTP_BUFFER_POOL: std::cell::RefCell<BufferPool> =
         std::cell::RefCell::new(BufferPool::new(4, 65536)); // Increased to 64KB for large requests
 }
 
@@ -262,7 +264,7 @@ impl<T> ResponsePool<T> {
 
 /// Response pooling for EvalResponse objects
 thread_local! {
-    static RESPONSE_POOL: std::cell::RefCell<ResponsePool<super::types::EvalResponse>> = 
+    static RESPONSE_POOL: std::cell::RefCell<ResponsePool<super::types::EvalResponse>> =
         std::cell::RefCell::new(ResponsePool::new(8));
 }
 
@@ -283,19 +285,19 @@ mod tests {
     #[test]
     fn test_expression_cache() {
         clear_cache();
-        
+
         let vars = HashMap::new();
-        
+
         // First evaluation should be a cache miss
         let result1 = evaluate_cached("2+2", &vars, false);
         assert!(!result1.cache_hit);
         assert!(result1.result.is_ok());
-        
+
         // Second evaluation should be a cache hit
         let result2 = evaluate_cached("2+2", &vars, false);
         assert!(result2.cache_hit);
         assert!(result2.result.is_ok());
-        
+
         let stats = get_cache_stats();
         assert_eq!(stats.hits, 1);
         assert_eq!(stats.misses, 1);
@@ -307,14 +309,14 @@ mod tests {
         let mut vars1 = HashMap::new();
         vars1.insert("a".to_string(), Value::Number(1.0));
         vars1.insert("b".to_string(), Value::Number(2.0));
-        
+
         let mut vars2 = HashMap::new();
         vars2.insert("b".to_string(), Value::Number(2.0));
         vars2.insert("a".to_string(), Value::Number(1.0));
-        
+
         let key1 = generate_cache_key("test", &vars1);
         let key2 = generate_cache_key("test", &vars2);
-        
+
         // Should generate same key regardless of variable order
         assert_eq!(key1, key2);
     }
@@ -323,10 +325,10 @@ mod tests {
     fn test_buffer_pool() {
         let buffer = get_pooled_buffer();
         assert!(buffer.capacity() > 0);
-        
+
         let original_capacity = buffer.capacity();
         return_pooled_buffer(buffer);
-        
+
         // Get another buffer - might be the same one
         let buffer2 = get_pooled_buffer();
         assert!(buffer2.capacity() >= original_capacity || buffer2.capacity() > 0);

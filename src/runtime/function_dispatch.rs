@@ -1,7 +1,7 @@
-use crate::types::Value;
+use super::{arithmetic, array, datetime, financial, logical, statistical, string};
 use crate::error::Error;
+use crate::types::Value;
 use std::collections::HashSet;
-use super::{arithmetic, logical, string, array, datetime, financial, statistical};
 
 /// Optimized function dispatch using static hash sets for O(1) category lookup
 pub struct FunctionDispatch {
@@ -36,7 +36,7 @@ impl FunctionDispatch {
         arithmetic_functions.insert("INT");
         arithmetic_functions.insert("PRODUCT");
         arithmetic_functions.insert("MULTIPLY");
-        
+
         let mut logical_functions = HashSet::new();
         logical_functions.insert("AND");
         logical_functions.insert("OR");
@@ -44,7 +44,7 @@ impl FunctionDispatch {
         logical_functions.insert("XOR");
         logical_functions.insert("IF");
         logical_functions.insert("IFS");
-        
+
         let mut string_functions = HashSet::new();
         string_functions.insert("LENGTH");
         string_functions.insert("CONCAT");
@@ -64,7 +64,7 @@ impl FunctionDispatch {
         string_functions.insert("LEFT");
         string_functions.insert("RIGHT");
         string_functions.insert("MID");
-        
+
         let mut array_functions = HashSet::new();
         array_functions.insert("ARRAY");
         array_functions.insert("FLATTEN");
@@ -78,7 +78,7 @@ impl FunctionDispatch {
         array_functions.insert("REVERSE");
         array_functions.insert("JOIN");
         array_functions.insert("MERGE");
-        
+
         let mut datetime_functions = HashSet::new();
         datetime_functions.insert("NOW");
         datetime_functions.insert("DATE");
@@ -88,13 +88,13 @@ impl FunctionDispatch {
         datetime_functions.insert("DAY");
         datetime_functions.insert("DATEADD");
         datetime_functions.insert("DATEDIFF");
-        
+
         let mut financial_functions = HashSet::new();
         financial_functions.insert("PMT");
         financial_functions.insert("DB");
         financial_functions.insert("FV");
         financial_functions.insert("IPMT");
-        
+
         let mut statistical_functions = HashSet::new();
         statistical_functions.insert("MEDIAN");
         statistical_functions.insert("MODE.SNGL");
@@ -112,10 +112,10 @@ impl FunctionDispatch {
         statistical_functions.insert("QUARTILE.INC");
         statistical_functions.insert("QUARTILEINC");
         statistical_functions.insert("QUARTILE_INC");
-        
+
         let mut json_functions = HashSet::new();
         json_functions.insert("DIG");
-        
+
         Self {
             arithmetic_functions,
             logical_functions,
@@ -127,7 +127,7 @@ impl FunctionDispatch {
             json_functions,
         }
     }
-    
+
     /// Execute a builtin function using optimized category lookup
     pub fn execute(&self, name: &str, args: &[Value]) -> Result<Value, Error> {
         // O(1) category lookup then direct dispatch - much faster than sequential module tries
@@ -135,60 +135,60 @@ impl FunctionDispatch {
         if self.array_functions.contains(name) {
             return array::exec_array(name, args);
         }
-        
+
         if self.arithmetic_functions.contains(name) {
             return arithmetic::exec_arithmetic(name, args);
         }
-        
+
         if self.logical_functions.contains(name) {
             return logical::exec_logical(name, args);
         }
-        
+
         if self.string_functions.contains(name) {
             return string::exec_string(name, args);
         }
-        
+
         if self.datetime_functions.contains(name) {
             return datetime::exec_datetime(name, args);
         }
-        
+
         if self.financial_functions.contains(name) {
             return financial::exec_financial(name, args);
         }
-        
+
         if self.statistical_functions.contains(name) {
             return statistical::exec_statistical(name, args);
         }
-        
+
         if self.json_functions.contains(name) {
             return crate::runtime::json::exec_json(name, args);
         }
-        
+
         Err(Error::new(format!("Unknown function: {}", name), None))
     }
-    
+
     /// Check if a function is registered in any category
     pub fn has_function(&self, name: &str) -> bool {
-        self.arithmetic_functions.contains(name) ||
-        self.logical_functions.contains(name) ||
-        self.string_functions.contains(name) ||
-        self.array_functions.contains(name) ||
-        self.datetime_functions.contains(name) ||
-        self.financial_functions.contains(name) ||
-        self.statistical_functions.contains(name) ||
-        self.json_functions.contains(name)
+        self.arithmetic_functions.contains(name)
+            || self.logical_functions.contains(name)
+            || self.string_functions.contains(name)
+            || self.array_functions.contains(name)
+            || self.datetime_functions.contains(name)
+            || self.financial_functions.contains(name)
+            || self.statistical_functions.contains(name)
+            || self.json_functions.contains(name)
     }
-    
+
     /// Get the total number of registered functions
     pub fn count(&self) -> usize {
-        self.arithmetic_functions.len() +
-        self.logical_functions.len() +
-        self.string_functions.len() +
-        self.array_functions.len() +
-        self.datetime_functions.len() +
-        self.financial_functions.len() +
-        self.statistical_functions.len() +
-        self.json_functions.len()
+        self.arithmetic_functions.len()
+            + self.logical_functions.len()
+            + self.string_functions.len()
+            + self.array_functions.len()
+            + self.datetime_functions.len()
+            + self.financial_functions.len()
+            + self.statistical_functions.len()
+            + self.json_functions.len()
     }
 }
 
@@ -225,21 +225,21 @@ mod tests {
     #[test]
     fn test_function_dispatch_basic() {
         let dispatch = FunctionDispatch::new();
-        
+
         // Test arithmetic function exists
         assert!(dispatch.has_function("SUM"));
-        
+
         // Test string function exists
         assert!(dispatch.has_function("UPPER"));
-        
+
         // Test unknown function
         assert!(!dispatch.has_function("NONEXISTENT"));
     }
-    
+
     #[test]
     fn test_category_lookup() {
         let dispatch = FunctionDispatch::new();
-        
+
         // Test each category has functions
         assert!(dispatch.arithmetic_functions.contains("SUM"));
         assert!(dispatch.string_functions.contains("UPPER"));
@@ -248,7 +248,7 @@ mod tests {
         assert!(dispatch.financial_functions.contains("PMT"));
         assert!(dispatch.statistical_functions.contains("MEDIAN"));
     }
-    
+
     #[test]
     fn test_global_dispatch() {
         // Test that global dispatch works

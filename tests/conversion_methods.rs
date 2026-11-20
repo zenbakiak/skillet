@@ -1,10 +1,40 @@
 use skillet::{evaluate, Value};
 
-fn s(v: Value) -> String { if let Value::String(s) = v { s } else { panic!("expected string") } }
-fn n(v: Value) -> f64 { if let Value::Number(n) = v { n } else { panic!("expected number") } }
-fn b(v: Value) -> bool { if let Value::Boolean(b) = v { b } else { panic!("expected bool") } }
-fn a(v: Value) -> Vec<Value> { if let Value::Array(a) = v { a } else { panic!("expected array") } }
-fn j(v: Value) -> String { if let Value::Json(j) = v { j } else { panic!("expected json") } }
+fn s(v: Value) -> String {
+    if let Value::String(s) = v {
+        s
+    } else {
+        panic!("expected string")
+    }
+}
+fn n(v: Value) -> f64 {
+    if let Value::Number(n) = v {
+        n
+    } else {
+        panic!("expected number")
+    }
+}
+fn b(v: Value) -> bool {
+    if let Value::Boolean(b) = v {
+        b
+    } else {
+        panic!("expected bool")
+    }
+}
+fn a(v: Value) -> Vec<Value> {
+    if let Value::Array(a) = v {
+        a
+    } else {
+        panic!("expected array")
+    }
+}
+fn j(v: Value) -> String {
+    if let Value::Json(j) = v {
+        j
+    } else {
+        panic!("expected json")
+    }
+}
 
 #[test]
 fn null_conversions() {
@@ -24,7 +54,13 @@ fn string_conversions() {
     assert_eq!(n(evaluate("\"123\".to_i()").unwrap()), 123.0);
     assert_eq!(n(evaluate("\"123.45\".to_f()").unwrap()), 123.45);
     assert_eq!(n(evaluate("\"abc\".to_i()").unwrap()), 0.0); // Invalid string to 0
-    assert_eq!(a(evaluate("\"hi\".to_a()").unwrap()), vec![Value::String("h".to_string()), Value::String("i".to_string())]);
+    assert_eq!(
+        a(evaluate("\"hi\".to_a()").unwrap()),
+        vec![
+            Value::String("h".to_string()),
+            Value::String("i".to_string())
+        ]
+    );
     assert_eq!(b(evaluate("\"\".to_bool()").unwrap()), false);
     assert_eq!(b(evaluate("\"hello\".to_bool()").unwrap()), true);
 }
@@ -60,7 +96,10 @@ fn array_conversions() {
     assert_eq!(s(evaluate("[1, 2, 3].to_s()").unwrap()), "[1, 2, 3]");
     assert_eq!(n(evaluate("[1, 2, 3].to_i()").unwrap()), 3.0); // Array length
     assert_eq!(n(evaluate("[].to_i()").unwrap()), 0.0);
-    assert_eq!(a(evaluate("[1, 2, 3].to_a()").unwrap()), vec![Value::Number(1.0), Value::Number(2.0), Value::Number(3.0)]);
+    assert_eq!(
+        a(evaluate("[1, 2, 3].to_a()").unwrap()),
+        vec![Value::Number(1.0), Value::Number(2.0), Value::Number(3.0)]
+    );
     assert_eq!(b(evaluate("[].to_bool()").unwrap()), false);
     assert_eq!(b(evaluate("[1].to_bool()").unwrap()), true);
 }
@@ -71,7 +110,13 @@ fn long_form_method_names() {
     assert_eq!(s(evaluate("NULL.to_string()").unwrap()), "");
     assert_eq!(n(evaluate("\"123\".to_int()").unwrap()), 123.0);
     assert_eq!(n(evaluate("\"123.45\".to_float()").unwrap()), 123.45);
-    assert_eq!(a(evaluate("\"hi\".to_array()").unwrap()), vec![Value::String("h".to_string()), Value::String("i".to_string())]);
+    assert_eq!(
+        a(evaluate("\"hi\".to_array()").unwrap()),
+        vec![
+            Value::String("h".to_string()),
+            Value::String("i".to_string())
+        ]
+    );
     assert_eq!(b(evaluate("\"\".to_boolean()").unwrap()), false);
 }
 
@@ -80,12 +125,12 @@ fn practical_null_handling() {
     // Test the practical use case that motivated this feature
     use skillet::evaluate_with_assignments;
     use std::collections::HashMap;
-    
+
     let result = evaluate_with_assignments(r#"
         :cuentas := [{"FechaCierreCuenta": null}, {"FechaCierreCuenta": ""}, {"FechaCierreCuenta": "2023-01-01"}]; 
         :cuentas.filter(:x.FechaCierreCuenta.to_s().length() == 0)
     "#, &HashMap::new()).unwrap();
-    
+
     if let Value::Array(arr) = result {
         assert_eq!(arr.len(), 2); // null and empty string both convert to empty string
     } else {
@@ -98,5 +143,8 @@ fn chained_conversions() {
     // Test chaining conversion methods
     assert_eq!(s(evaluate("123.to_s().to_s()").unwrap()), "123");
     assert_eq!(n(evaluate("\"123\".to_i().to_f()").unwrap()), 123.0);
-    assert_eq!(b(evaluate("\"hello\".to_a().length().to_bool()").unwrap()), true);
+    assert_eq!(
+        b(evaluate("\"hello\".to_a().length().to_bool()").unwrap()),
+        true
+    );
 }

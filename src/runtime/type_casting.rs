@@ -33,12 +33,8 @@ pub fn cast_value(v: Value, ty: &TypeName) -> Result<Value, Error> {
                         break;
                     }
                 }
-                Value::Number(
-                    clean_s.parse::<f64>()
-                        .unwrap_or(0.0)
-                        .trunc(),
-                )
-            },
+                Value::Number(clean_s.parse::<f64>().unwrap_or(0.0).trunc())
+            }
             Value::Boolean(b) => Value::Number(if b { 1.0 } else { 0.0 }),
             Value::Null => Value::Number(0.0),
             _ => return Err(Error::new("Cannot cast to Integer", None)),

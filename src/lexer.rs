@@ -170,11 +170,11 @@ impl<'a> Lexer<'a> {
         }
         self.last_start = start;
         self.last_end = end;
-        
+
         // Fast path for common keywords - avoid string allocation
         let len = end - start;
         let bytes = &self.input[start..end];
-        
+
         // Check common keywords by length first, then bytes
         let token = match len {
             4 => {
@@ -208,7 +208,7 @@ impl<'a> Lexer<'a> {
                 Token::Identifier(s)
             }
         };
-        
+
         Ok(token)
     }
 

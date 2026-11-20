@@ -63,22 +63,22 @@ fn test_pmt_short_term_loan() {
 #[test]
 fn test_pmt_error_cases() {
     // Test error cases
-    
+
     // Too few arguments
     let result = evaluate("=PMT(0.05, 12)");
     assert!(result.is_err());
-    
+
     // Too many arguments
     let result = evaluate("=PMT(0.05, 12, 1000, 0, 0, 0)");
     assert!(result.is_err());
-    
+
     // Zero or negative periods
     let result = evaluate("=PMT(0.05, 0, 1000)");
     assert!(result.is_err());
-    
+
     let result = evaluate("=PMT(0.05, -12, 1000)");
     assert!(result.is_err());
-    
+
     // Non-numeric arguments
     let result = evaluate("=PMT(\"invalid\", 12, 1000)");
     assert!(result.is_err());
@@ -90,14 +90,18 @@ fn test_pmt_real_world_scenarios() {
     let loan_amount = 300000.0 * 0.8; // 240,000
     let monthly_rate = 0.065 / 12.0;
     let months = 30.0 * 12.0;
-    
-    let result = evaluate(&format!("=PMT({}, {}, {})", monthly_rate, months, loan_amount)).unwrap();
+
+    let result = evaluate(&format!(
+        "=PMT({}, {}, {})",
+        monthly_rate, months, loan_amount
+    ))
+    .unwrap();
     assert!(approx(result, -1516.96));
-    
+
     // Business loan: $75,000 at 7% for 7 years
     let result = evaluate("=PMT(0.07/12, 7*12, 75000)").unwrap();
     assert!(approx(result, -1131.95));
-    
+
     // Student loan: $40,000 at 4.5% for 10 years
     let result = evaluate("=PMT(0.045/12, 10*12, 40000)").unwrap();
     assert!(approx(result, -414.55));
@@ -107,12 +111,12 @@ fn test_pmt_real_world_scenarios() {
 fn test_pmt_with_variables() {
     use skillet::evaluate_with;
     use std::collections::HashMap;
-    
+
     let mut vars = HashMap::new();
     vars.insert("principal".to_string(), Value::Number(100000.0));
     vars.insert("annual_rate".to_string(), Value::Number(0.05));
     vars.insert("years".to_string(), Value::Number(30.0));
-    
+
     let result = evaluate_with("=PMT(:annual_rate/12, :years*12, :principal)", &vars).unwrap();
     assert!(approx(result, -536.82));
 }
@@ -120,18 +124,16 @@ fn test_pmt_with_variables() {
 #[test]
 fn test_pmt_json_integration() {
     use skillet::evaluate_with_json;
-    
+
     let json_vars = r#"{
         "principal": 50000,
         "annual_rate": 0.04,
         "years": 5
     }"#;
-    
-    let result = evaluate_with_json(
-        "=PMT(:annual_rate/12, :years*12, :principal)", 
-        json_vars
-    ).unwrap();
-    
+
+    let result =
+        evaluate_with_json("=PMT(:annual_rate/12, :years*12, :principal)", json_vars).unwrap();
+
     assert!(approx(result, -920.83));
 }
 
@@ -157,7 +159,7 @@ fn test_db_multiple_periods() {
     let result1 = evaluate("=DB(10000, 1000, 5, 1)").unwrap();
     let result2 = evaluate("=DB(10000, 1000, 5, 2)").unwrap();
     let result3 = evaluate("=DB(10000, 1000, 5, 3)").unwrap();
-    
+
     // Each period should be different and generally decreasing
     assert!(matches!(result1, Value::Number(a) if a > 0.0));
     assert!(matches!(result2, Value::Number(b) if b > 0.0));
@@ -238,11 +240,11 @@ fn test_financial_error_cases() {
     assert!(evaluate("=DB(10000, 1000, 5)").is_err()); // Too few arguments
     assert!(evaluate("=DB(-1000, 1000, 5, 1)").is_err()); // Negative cost
     assert!(evaluate("=DB(10000, 1000, 0, 1)").is_err()); // Zero life
-    
-    // FV errors  
+
+    // FV errors
     assert!(evaluate("=FV(0.05, 10)").is_err()); // Too few arguments
     assert!(evaluate("=FV(0.05, -10, 1000)").is_err()); // Negative periods
-    
+
     // IPMT errors
     assert!(evaluate("=IPMT(0.05, 1, 12)").is_err()); // Too few arguments
     assert!(evaluate("=IPMT(0.05, 0, 12, 1000)").is_err()); // Period < 1
