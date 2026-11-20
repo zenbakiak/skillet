@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Quality gate for every agent handoff. Usage: ./harness/check.sh [--fast]
 #   --fast  skips the slow integration suites (sk_concurrency, sk_performance)
+#   STRICT=0 ./harness/check.sh  reports clippy/fmt without failing (opt-out)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -20,15 +21,17 @@ else
   cargo test --quiet
 fi
 
-# ponytail: clippy/fmt are report-only until BL-003 lands; then flip STRICT=1 permanently.
-STRICT="${STRICT:-0}"
-step "clippy (strict=$STRICT)"
+# STRICT=1 (default): clippy -D warnings (default and no-plugins) + fmt --check.
+# STRICT=0 is an opt-out for local experiments only; handoffs require the strict gate.
+STRICT="${STRICT:-1}"
+step "clippy + fmt (strict=$STRICT)"
 if [[ "$STRICT" == "1" ]]; then
   cargo clippy --all-targets --quiet -- -D warnings
+  cargo clippy --lib --no-default-features --quiet -- -D warnings
   cargo fmt --check
 else
-  n=$(cargo clippy --all-targets --quiet 2>&1 | grep -c '^warning' || true)
-  echo "clippy warnings: $n (baseline after BL-001: 92; must not increase)"
+  cargo clippy --all-targets --quiet || true
+  cargo fmt --check || true
 fi
 
 step "OK"
