@@ -16,7 +16,6 @@ struct BenchConfig {
     port: u16,
     concurrent: usize,
     requests: usize,
-    duration: Option<Duration>,
     warmup: usize,
 }
 
@@ -24,7 +23,6 @@ struct BenchConfig {
 struct BenchResult {
     success_count: u64,
     error_count: u64,
-    total_time: Duration,
     min_latency: Duration,
     max_latency: Duration,
     avg_latency: Duration,
@@ -90,7 +88,6 @@ fn parse_args(args: &[String]) -> Result<BenchConfig, String> {
         port,
         concurrent: 10,
         requests: 100,
-        duration: None,
         warmup: 20,
     };
 
@@ -444,7 +441,6 @@ fn run_concurrent_benchmark(
     BenchResult {
         success_count,
         error_count,
-        total_time,
         min_latency,
         max_latency,
         avg_latency,

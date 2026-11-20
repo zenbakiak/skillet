@@ -4,6 +4,7 @@ use std::collections::HashMap;
 pub struct MultipartField {
     pub name: String,
     pub filename: Option<String>,
+    #[allow(dead_code)] // BL-002: pub field parsed but never read
     pub content_type: Option<String>,
     pub content: Vec<u8>,
 }
@@ -14,6 +15,7 @@ pub struct MultipartData {
 }
 
 impl MultipartData {
+    #[allow(dead_code)] // BL-002: unused pub method, removal tracked there
     pub fn get_field(&self, name: &str) -> Option<&MultipartField> {
         self.fields.get(name)
     }

@@ -11,7 +11,9 @@ use skillet::{evaluate_with_assignments, evaluate_with_assignments_and_context, 
 pub struct CachedResult {
     pub result: Result<Value, String>,
     pub variable_context: Option<HashMap<String, Value>>,
+    #[allow(dead_code)] // BL-002: pub field never read outside tests
     pub execution_time_ms: f64,
+    #[allow(dead_code)] // BL-002: pub field read only in unit tests
     pub cache_hit: bool,
 }
 
@@ -237,11 +239,13 @@ pub fn return_pooled_buffer(buffer: Vec<u8>) {
 }
 
 /// Response object pool for JSON serialization
+#[allow(dead_code)] // BL-002: unused pub pool, removal tracked there
 pub struct ResponsePool<T> {
     pool: Vec<T>,
     capacity: usize,
 }
 
+#[allow(dead_code)] // BL-002: unused pub pool, removal tracked there
 impl<T> ResponsePool<T> {
     fn new(capacity: usize) -> Self {
         Self {
@@ -269,11 +273,13 @@ thread_local! {
 }
 
 /// Get a pooled response object (if available)
+#[allow(dead_code)] // BL-002: unused pub fn, removal tracked there
 pub fn get_pooled_response() -> Option<super::types::EvalResponse> {
     RESPONSE_POOL.with(|pool| pool.borrow_mut().get())
 }
 
 /// Return a response object to the pool
+#[allow(dead_code)] // BL-002: unused pub fn, removal tracked there
 pub fn return_pooled_response(response: super::types::EvalResponse) {
     RESPONSE_POOL.with(|pool| pool.borrow_mut().return_item(response));
 }
