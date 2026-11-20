@@ -723,40 +723,29 @@ const DIV_EVAL_NO_VARS: &[(&str, Mode)] = &[
     ("1; 2; 3", Mode::Eval),
 ];
 
-const KNOWN_DIVERGENCES: &[&[(&str, Mode)]] = &[
-    DIV_EVAL_NO_VARS,
-    DIV_JQ_DIG,
-    DIV_HOF_WITHOUT_VARS,
-    DIV_REDUCE_DEFAULT_ACC,
-    DIV_HOF_CUSTOM_PARAM_NAMES,
-];
+const KNOWN_DIVERGENCES: &[&[(&str, Mode)]] = &[];
 
 #[test]
-#[ignore = "BL-001 divergence"]
 fn divergence_eval_without_vars_is_reduced() {
     assert_parity_each(DIV_EVAL_NO_VARS);
 }
 
 #[test]
-#[ignore = "BL-001 divergence"]
 fn divergence_jq_and_dig_missing_in_evaluation() {
     assert_parity_each(DIV_JQ_DIG);
 }
 
 #[test]
-#[ignore = "BL-001 divergence"]
 fn divergence_higher_order_builtins_without_vars() {
     assert_parity_each(DIV_HOF_WITHOUT_VARS);
 }
 
 #[test]
-#[ignore = "BL-001 divergence"]
 fn divergence_reduce_default_acc_param() {
     assert_parity_each(DIV_REDUCE_DEFAULT_ACC);
 }
 
 #[test]
-#[ignore = "BL-001 divergence"]
 fn divergence_higher_order_custom_param_names() {
     assert_parity_each(DIV_HOF_CUSTOM_PARAM_NAMES);
 }

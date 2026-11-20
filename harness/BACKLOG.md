@@ -30,7 +30,7 @@ Brief (orchestrator, 2026-11-20):
         and list them in the handoff with both outputs.
     Out of scope: src/ changes.
     Acceptance: cargo test --test evaluator_parity green; divergence list in handoff.
-  BL-001b · rust-engineer · `todo` (blocked by 001a)
+  BL-001b · rust-engineer · `review`
     Scope: src/runtime/, src/lib.rs (call sites only).
     Do: REVISED after 001a (orchestrator): keep runtime/evaluator.rs. It is self-contained and
         matches all 64 parity divergences on the contract side; evaluation/ is the incomplete copy
@@ -76,6 +76,29 @@ Handoff (qa-engineer, Claude Opus 5.5, 2026-11-20) — BL-001a:
   Risks/Follow-ups: BL-001b must un-ignore the 5 divergence_* tests. NULL == NULL -> false in the
        public API looks wrong; Language Designer should rule (not filed as an item yet).
        REPLACE is Excel-style (4 args), so REPLACE('aaa','a','b') errors in both paths.
+  ADR: none
+
+Handoff (rust-engineer, Claude Opus 5.5, 2026-11-20) — BL-001b:
+  Did: method_calls/{mod,lambda_methods,string_methods,array_methods}.rs and runtime/mod.rs
+       re-exports now call runtime::evaluator. Deleted runtime/evaluation/{core,higher_order,
+       assignments,mod}.rs; runtime/evaluation.rs is a 9-line re-export of the five entry points
+       (pub paths unchanged). evaluator.rs needed nothing from higher_order.rs (already
+       self-contained), so it is unchanged. Parity test file: removed the 5 #[ignore] attributes
+       and emptied KNOWN_DIVERGENCES. assert_parity_each kept: the 5 divergence_* tests use it.
+  Evidence: ./harness/check.sh (full) OK; cargo test --test evaluator_parity 12 passed, 0 ignored;
+       no other test in tests/ changed result. cargo build --lib --no-default-features OK.
+       Clippy 113 -> 92. Lines: evaluator.rs 812 -> 812; runtime/evaluation/ 1204 -> 9
+       (evaluation.rs); net -1199 in src/ (commit: +17 / -1216).
+       Perf not measured (no BL-005 baseline yet). Lambdas/methods now take evaluator.rs's path,
+       which borrows vars (Cow) per call, so no new cloning is expected; confirm in BL-005.
+  Risks/Follow-ups: behavior change inside method lambdas (contract side wins, per brief): checked,
+       [1,2,3].map(DIG({"a": :x}, ["a"])) was Err "Unknown function: DIG", now [1,2,3]
+       (same for JQ). [[1,2],[3]].map(REDUCE(:x, :acc + :x, 0)) = [3,3] before and after (the
+       lambda path already used the custom branch). No existing test pinned the old errors. The brief's
+       acceptance line "wc -l evaluator.rs shrinks to a re-export" is a typo: evaluation/ is the
+       part that shrank. method_calls_old.rs (not compiled) still names runtime::evaluation; BL-002
+       deletes it. Stale doc comments in evaluator_parity.rs still say the divergence tests are
+       #[ignore]d / "expected to FAIL" (QA to tidy). The NULL == NULL question stays in BL-023.
   ADR: none
 
 ### BL-002 · Remove dead modules and unused dependencies · P1 · `todo` · rust-engineer
