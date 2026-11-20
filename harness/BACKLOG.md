@@ -446,7 +446,7 @@ Brief (orchestrator, 2026-11-20):
         it returns an Error instead. Servers additionally bound wall-clock time per request.
   Branch: bugfix/bl-027-evaluation-budget (stacked on bugfix/bl-017-nesting-depth-limit, PR #44;
         retarget to develop after #44 merges).
-  BL-027a · language-designer · `in-progress`
+  BL-027a · language-designer (Claude Opus 5.5) · `review`
     Do: write ADR-0011 (Proposed) + PRD-001 NFR rows defining the evaluation budget:
       - what is counted (e.g. total Value cells created per evaluation incl. string bytes; and/or max
         single array length / string length; lambda iteration steps), with concrete default numbers;
@@ -464,6 +464,39 @@ Brief (orchestrator, 2026-11-20):
   BL-027b · rust-engineer · `todo` (blocked by 027a + ADR-0011 accepted by maintainer)
   BL-027c · security-reviewer · `todo` (re-attack after 027b)
 
+Handoff (language-designer, Claude Opus 5.5, 2026-11-20) — BL-027a:
+  Did: - docs/adr/0011-evaluation-budget.md (Proposed) + README row; PRD-001 NFR-4…NFR-7 + open questions.
+       - Decision: one deterministic, cumulative per-evaluation budget `MAX_EVAL_BYTES = 256 MiB` of
+         Values created (cost = 32 per Value + string/Json bytes), charged at the check_value_depth
+         sites plus object literal, property access, variable read (deep clone today), assignment and
+         each lambda iteration; pre-charge in SUBSTITUTE(M)/.replace, JOIN/.join, SPLIT/.split, JQ
+         matches and Json parsing. Thread-local budget, one walk shared with the depth check.
+         Errors: "Evaluation budget exceeded (max 256 MB)", "Evaluation timed out (max 10 s)".
+       - Servers: 10 s deadline checked every 256 charges inside the evaluator (no thread kill, no
+         CLI flag/env var), HTTP 400 like other eval errors; LRU cache skips entries > 64 KiB.
+       - Library: constants by default; additive `EvalLimits` + `with_limits(limits, f)` (nested
+         scopes can only tighten) — justified by servers needing a deadline and in-process datasets
+         beyond the 1 MB HTTP cap. No default deadline in the library / `sk`.
+  Evidence: in-process measurements (release, counting allocator, scratch harness outside the repo):
+       realistic max 23 ms / 46 MB allocated (100k nums, 4-step chain, ~40 MB charged by the model);
+       10k-row filter/map 10 ms / 23 MB. Attacks: reduce([:acc,:acc]) 20 items 96 MB peak;
+       MERGE doubling 20 items 80 MB (flat — depth limit does not catch it); CONCAT doubling 22 items;
+       object doubling 16 items 41 MB; SUBSTITUTE 4000×4000 → 16 MB in one call; JQ "$..*" ~120×.
+       Example table (P1–P12 pass, A1–A12 fail, T1–T2 timeout, C1–C6 cost-model boundaries) in ADR-0011.
+       No src/ changes; no test changes.
+  Risks/Follow-ups:
+       - Behaviour change (documented in ADR): quadratic patterns at size fail — reduce(MERGE(:acc,[:x]))
+         above ~2.9k items, `:rows.map(... :rows.length())` above ~2.3k rows. No existing test affected.
+       - Biggest real DoS is NOT memory: lambdas clone the whole variable map per inner method call.
+         `:nums.map(:x.abs()).sum()` on 100k nums (589 KB, under the HTTP cap) = 14.6 s, 305 GB
+         churn; 10k-row `:rows.map(:x.price.round(1))` = 1.7 s. Budget can't charge it without
+         rejecting normal formulas; servers rely on the deadline. Filed BL-030 (P1).
+       - Existing: cache keys embed Debug of all vars (≤1 MB each × 1000 entries) — covered by the
+         64 KiB entry cap in ADR-0011 §4.
+       - BL-018 interrupt handler should reuse the same thread-local deadline.
+       - BL-028 (docs) should add the budget, timeout and the two rewrite patterns.
+  ADR: ADR-0011 proposed (maintainer to accept before BL-027b).
+
 ### BL-028 · Document the nesting depth limit · P3 · `todo` · docs-engineer
 BL-017b added `MAX_NESTING_DEPTH = 128` (`skillet::MAX_NESTING_DEPTH`) and the error
 "Expression nested too deeply (max 128)". It applies to expression nesting (parens, brackets,
@@ -475,3 +508,13 @@ After BL-017, depth 128 still overflows a default 2 MB thread in **debug** build
 down to 1 MB). Affects embedders spawning threads in debug and in-process tests. Fix by folding the
 binary precedence levels into one precedence-climbing loop and shrinking `parse_atom`'s frame;
 measure stack per level before/after.
+
+### BL-030 · Lambdas clone the whole variable map per call (CPU/alloc DoS) · P1 · `todo` · rust-engineer (+ performance-engineer for numbers)
+Found in BL-027a. Every method/function call inside a lambda runs `context.clone_variables()` and the
+lambda helpers `base_vars.cloned()`, so cost is O(items × size of all vars). Measured (release):
+`:nums.map(:x.abs()).sum()` over 100k numbers (589 KB JSON) = 14.6 s and 305 GB allocated;
+10k rows `:rows.map(:x.price.round(1)).sum()` = 1.7 s / 10 GB (vs ~10 ms without the inner call).
+Fix: a layered scope (borrowed parent map + small local bindings for `:x`/`:acc`) or shared values,
+so lambda calls do not copy the parent environment. ADR-0011's server deadline covers this until fixed;
+the library/CLI have no protection. Acceptance: both formulas above within 2× of their no-inner-call
+equivalents; ./harness/check.sh green; no result changes.

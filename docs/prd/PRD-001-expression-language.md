@@ -43,7 +43,14 @@ spreadsheet cell references (`A1`).
 | NFR-1 | Typical expression evaluates in well under 1 ms in-process (to be measured, BL-005) |
 | NFR-2 | No panics on any user input (fuzzing target, PRD-003) |
 | NFR-3 | Library builds without plugins (`--no-default-features`) |
+| NFR-4 | Nesting depth of expressions and runtime-built arrays is at most `MAX_NESTING_DEPTH = 128`; deeper input returns `Expression nested too deeply (max 128)` (BL-017, `tests/security_limits.rs`) |
+| NFR-5 | Each evaluation has a deterministic budget of `MAX_EVAL_BYTES = 256 MiB` of values created (cost model in ADR-0011); exceeding it returns `Evaluation budget exceeded (max 256 MB)`. Embedders may tighten or raise it with `with_limits` (ADR-0011, BL-027) |
+| NFR-6 | Builtins whose output can exceed their input (`SUBSTITUTE(M)`, `.replace`, `JOIN`/`.join`, `SPLIT`/`.split`, `JQ`, JSON parsing) charge the budget before or while allocating, so no single call overshoots it (ADR-0011) |
+| NFR-7 | `sk_http_server` and `sk_server` stop any evaluation after 10 s wall clock with `Evaluation timed out (max 10 s)` (HTTP 400) and free the worker; the library has no deadline unless set via `with_limits`. Result-cache entries are at most 64 KiB (ADR-0011) |
 
 ## Open questions
 - Exact currency math (ADR-0003)? Native object values (ADR-0004 / BL-011)?
 - Canonical form when both a function and a method exist (`SUM(:a)` vs `:a.sum()`).
+- Evaluation budget (ADR-0011): may the variable-read charge be dropped once reads are O(1) (BL-030)?
+  Should a server timeout map to HTTP 503/504 instead of 400 (wire-format change)? Is 256 MiB right
+  for embedders, or should the default scale with input size?
