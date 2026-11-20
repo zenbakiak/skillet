@@ -76,6 +76,9 @@ Performance owns `benches/`; QA owns `tests/`. Language Designer specifies, Rust
 No role given? Act as **Orchestrator**: read `harness/BACKLOG.md`, pick the top `ready`
 item, and follow the role it names.
 
+Shortcut: `/orchestrate [BL-id or goal]` in Claude Code or Cursor. In other tools (Codex, Aider, …)
+say "follow harness/prompts/orchestrate.md".
+
 ## 6. Shared protocol (all roles)
 
 0. **Git setup (once per clone)**: `git config core.hooksPath .githooks`. Rules: [ADR-0009](docs/adr/0009-gitflow-branching-and-commits.md).
