@@ -291,7 +291,7 @@ Brief (orchestrator, 2026-11-20):
   Branch: bugfix/bl-017-nesting-depth-limit. Two steps, sequential.
   Decision (orchestrator): one constant `MAX_NESTING_DEPTH = 256` (AST depth), no config knob.
         Error message: "Expression nested too deeply (max 256)". Real formulas are far below this.
-  BL-017a · security-reviewer (Claude Opus 5.5) · `review`
+  BL-017a · security-reviewer (Claude Opus 5.5) · `done`
     Do: enumerate every vector, write `tests/security_limits.rs` that runs the built `sk` binary as a
         subprocess (an abort kills the test process, so in-process tests can't pin the bug) and asserts
         it exits normally and prints an error, not "stack overflow"/signal. Cover at least: deep parens,
@@ -302,7 +302,22 @@ Brief (orchestrator, 2026-11-20):
         Also a positive test: depth 200 of each shape still evaluates.
         Mark tests that currently crash `#[ignore = "BL-017 crash"]` so the gate stays green; list them.
     Out of scope: src/ changes.
-  BL-017b · rust-engineer · `todo` (blocked by 017a)
+  REVISED after 017a (orchestrator, 2026-11-20):
+    - Limit is 128, not 256: debug parens overflow ~250 on the 8 MB main thread, and 128 matches
+      serde_json's existing cap, so text and JSON inputs share one number. Message:
+      "Expression nested too deeply (max 128)". Positive tests move from depth 200 to 128
+      (objects/property stay at 100); this is a contract decision, not a weakened test.
+    - "Depth" = parser recursion levels (parens add no AST node, so AST depth alone isn't enough)
+      plus chain length in the iterative binary/postfix loops. Pick the simplest counter that
+      bounds both parser stack and resulting AST depth.
+    - Server worker threads: build both pools with `threadpool::Builder` and an explicit
+      `thread_stack_size` of 16 MB (sk_http_server.rs:165, sk_server.rs:515), so the limit has
+      headroom in debug builds on worker threads too.
+    - Runtime-built deep values (`.reduce([:acc], 0)`, chained `:a := [:a]` sequences) bypass the
+      parser: enforce the same 128 depth when the evaluator constructs an Array value from evaluated
+      elements, returning the same error. Keep it O(1) per construction (e.g. track depth, don't
+      re-walk), and report the overhead on one array-heavy expression.
+  BL-017b · rust-engineer · `in-progress`
     Do: enforce the limit at parse time (depth counter in recursive descent AND in the iterative
         binary/postfix loops so left-deep trees are bounded too). If 017a shows the evaluator or
         `Drop` can still overflow at depth 256 on a 2 MB thread, fix that too. Un-ignore 017a tests.
@@ -376,3 +391,9 @@ always return arrays; breaking change needs an ADR.
 `src/runtime/statistical.rs` range check uses `p < 0.0 || p > 1.0`, which lets NaN through (kept by
 BL-003 with `#[allow(clippy::manual_range_contains)]`). Decide: error on NaN (likely), then use
 `!(0.0..=1.0).contains(&p)` and drop the allow.
+
+### BL-027 · Exponential value growth and evaluation budget · P2 · `todo` · security-reviewer → language-designer → rust-engineer
+Found in BL-017a: `[1,…].reduce([:acc, :acc], 0)` doubles per item (20 items → 1M elements, 175 MB;
+~26 items → ~11 GB). Needs a total-size/step budget per evaluation (and a server-side timeout).
+Language Designer decides the limits and error; Rust implements; Security re-tests.
+Related perf note: lambdas clone the whole variable map per item (`clone_variables`) — O(items × vars).
