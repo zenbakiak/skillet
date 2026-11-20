@@ -7,7 +7,7 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
     Arc,
 };
-use threadpool::ThreadPool;
+use threadpool::Builder as ThreadPoolBuilder;
 
 use http_server::auth::TokenConfig;
 use http_server::daemon::{setup_signal_handlers, write_pid_file};
@@ -161,8 +161,12 @@ fn main() {
     let server_token = Arc::new(auth_token.clone());
     let server_admin_token = Arc::new(admin_token.clone());
 
-    // Create thread pool
-    let pool = ThreadPool::new(thread_count);
+    // Create thread pool. Workers get a 16 MB stack (default 2 MB) so expressions up to
+    // MAX_NESTING_DEPTH have headroom in debug builds too (BL-017).
+    let pool = ThreadPoolBuilder::new()
+        .num_threads(thread_count)
+        .thread_stack_size(16 * 1024 * 1024)
+        .build();
 
     // Print startup messages
     print_startup_messages(
