@@ -1,6 +1,6 @@
 use crate::ast::Expr;
 use crate::error::Error;
-use crate::runtime::evaluation::{eval, eval_with_vars};
+use crate::runtime::evaluator::{eval, eval_with_vars};
 use crate::types::Value;
 use std::collections::{BTreeSet, HashMap};
 

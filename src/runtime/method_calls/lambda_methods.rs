@@ -1,7 +1,7 @@
 use crate::ast::Expr;
 use crate::custom::FunctionRegistry;
 use crate::error::Error;
-use crate::runtime::evaluation::{eval_with_vars, eval_with_vars_and_custom};
+use crate::runtime::evaluator::{eval_with_vars, eval_with_vars_and_custom};
 use crate::types::Value;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
