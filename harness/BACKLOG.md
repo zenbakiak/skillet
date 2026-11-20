@@ -4,7 +4,7 @@ Single source of truth for work. Statuses: `todo` → `ready` (has brief) → `i
 → `review` → `done`. Priority P1 (now) · P2 (next) · P3 (later). Only the Orchestrator reorders.
 
 Seeded 2026-11-20 from a codebase audit: 153 tracked files, ~16k LOC, all tests green,
-12 compiler warnings, 95 clippy warnings, `cargo fmt --check` reports ~970 diffs.
+12 compiler warnings, 113 clippy warnings, `cargo fmt --check` reports ~970 diffs.
 
 ---
 
@@ -32,9 +32,14 @@ Brief (orchestrator, 2026-11-20):
     Acceptance: cargo test --test evaluator_parity green; divergence list in handoff.
   BL-001b · rust-engineer · `todo` (blocked by 001a)
     Scope: src/runtime/, src/lib.rs (call sites only).
-    Do: keep runtime/evaluation/, turn runtime/evaluator.rs into a thin re-export (pub items keep
-        their paths and signatures), delete the duplicated code.
-    Contract for divergences: the public-API path (evaluator.rs) wins, because tests/ pin it.
+    Do: REVISED after 001a (orchestrator): keep runtime/evaluator.rs. It is self-contained and
+        matches all 64 parity divergences on the contract side; evaluation/ is the incomplete copy
+        (no JQ/DIG, broken REDUCE :acc default, ignores param names on the custom path).
+        Point all callers (runtime/mod.rs re-exports, method_calls/*) at evaluator.rs; replace
+        runtime/evaluation/{core,assignments}.rs with a thin re-export module so pub paths keep
+        compiling; move anything evaluator.rs still needs from higher_order.rs, delete the rest.
+        Splitting evaluator.rs into modules is a later, separate refactor.
+    Contract for divergences: evaluator.rs behavior wins, because tests/ pin it.
         Any divergence where that is unclear goes back to the orchestrator, not decided in code.
     Acceptance: ./harness/check.sh green; parity tests un-ignored and green; clippy count not up;
         `wc -l src/runtime/evaluator.rs` shrinks to a re-export.
@@ -161,3 +166,7 @@ Create root `CHANGELOG.md` (Keep a Changelog) back-filled from git tags, and run
 ### BL-022 · GitHub branch protection for `main`/`develop` · P1 · `todo` · release-engineer (human applies)
 Client-side hooks (ADR-0009) can be bypassed. Require PR review and a passing CI check on
 `main` and `develop`; block force-push. Depends on BL-004 for the CI check.
+
+### BL-023 · `NULL == NULL` evaluates to `false` · P2 · `todo` · language-designer → rust-engineer
+Found by BL-001a parity tests (public API). Decide intended semantics (likely `true`; Excel has no
+null, SQL says unknown) and the rule for `NULL != NULL`; ADR if it changes results.

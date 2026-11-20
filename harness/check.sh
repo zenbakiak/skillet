@@ -28,7 +28,7 @@ if [[ "$STRICT" == "1" ]]; then
   cargo fmt --check
 else
   n=$(cargo clippy --all-targets --quiet 2>&1 | grep -c '^warning' || true)
-  echo "clippy warnings: $n (baseline 2026-11: 95; must not increase)"
+  echo "clippy warnings: $n (baseline 2026-11: 113; must not increase)"
 fi
 
 step "OK"
