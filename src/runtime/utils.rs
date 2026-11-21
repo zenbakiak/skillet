@@ -86,3 +86,19 @@ pub fn values_equal(a: &Value, b: &Value) -> bool {
         _ => false,
     }
 }
+
+/// Sorts numbers ascending (`descending` flips the comparator), or returns an error if any is
+/// NaN. NaN has no order, so sorting it either panics or gives an arbitrary result. For NaN-free
+/// data the comparator is `partial_cmp` as before, so equal values (`-0.0`, `0.0`) keep their order.
+pub(crate) fn sort_numbers(nums: &mut [f64], descending: bool) -> Result<(), Error> {
+    if nums.iter().any(|n| n.is_nan()) {
+        return Err(Error::new("Cannot sort NaN values", None));
+    }
+    let cmp = |a: &f64, b: &f64| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal);
+    if descending {
+        nums.sort_by(|a, b| cmp(b, a));
+    } else {
+        nums.sort_by(cmp);
+    }
+    Ok(())
+}

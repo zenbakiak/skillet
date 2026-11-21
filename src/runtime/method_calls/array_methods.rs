@@ -66,11 +66,7 @@ pub fn exec_array_method(
                 }
             }
 
-            if desc {
-                nums.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
-            } else {
-                nums.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-            }
+            crate::runtime::utils::sort_numbers(&mut nums, desc)?;
             Ok(Value::Array(nums.into_iter().map(Value::Number).collect()))
         }
 

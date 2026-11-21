@@ -98,7 +98,7 @@ pub fn exec_array(name: &str, args: &[Value]) -> Result<Value, Error> {
                         return Err(Error::new("SORT expects numeric array", None));
                     }
                 }
-                nums.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                crate::runtime::utils::sort_numbers(&mut nums, false)?;
                 if desc {
                     nums.reverse();
                 }
