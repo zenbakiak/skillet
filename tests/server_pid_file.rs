@@ -24,6 +24,8 @@ fn sk_server_daemon_does_not_write_the_pid_file_through_a_symlink() {
         .env("SKILLET_HOOKS_DIR", dir.path().join("no-hooks"))
         .env("SKILLET_BIND_HOST", "127.0.0.1")
         .env_remove("SKILLET_AUTH_TOKEN")
+        .env_remove("SKILLET_ADMIN_TOKEN")
+        .env_remove("SKILLET_CORS_ORIGIN")
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status()

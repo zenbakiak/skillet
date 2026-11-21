@@ -17,6 +17,37 @@ info:
     
     Tokens are passed via the `Authorization` header.
 
+    ## Server configuration (`sk_http_server`)
+    | Flag | Environment variable | Meaning |
+    |---|---|---|
+    | `--token` | `SKILLET_AUTH_TOKEN` | Eval token |
+    | `--admin-token` | `SKILLET_ADMIN_TOKEN` | Admin token (JS management, `DELETE /cache`) |
+    | `--cors-origin` | `SKILLET_CORS_ORIGIN` | `Access-Control-Allow-Origin` value |
+
+    The flag wins over the environment variable. An empty value is refused at start-up.
+    If only one token is set, the other one inherits it.
+
+    ## Cross-origin requests (CORS)
+    `Access-Control-Allow-Origin` is the configured origin (any value, `*` included). Without
+    one, it is `*` when a token is configured, and absent in development mode (no token), so
+    pages on other origins cannot read responses. `OPTIONS` (preflight) answers 200 with the
+    same `Access-Control-Allow-Origin`, `Access-Control-Allow-Methods: GET, POST, PUT,
+    DELETE, OPTIONS` and `Access-Control-Allow-Headers: Authorization, Content-Type`, or with
+    no CORS headers in development mode. See ADR-0019.
+
+    ## Request bodies
+    A request with a body (`Content-Length` over 0) other than `GET`/`OPTIONS` must send
+    `Content-Type: application/json` (parameters such as `; charset=utf-8` are allowed; the
+    media type is case-insensitive). Otherwise the server answers HTTP 415 with
+    `"error": "Content-Type must be application/json"`, before checking tokens.
+    `/upload-js` and `/update-js` also accept `multipart/form-data`.
+
+    ## Browser requests in development mode
+    With no admin token configured, the admin endpoints (`/upload-js`, `/update-js`,
+    `/delete-js`, `/list-js`, `/reload-hooks`, `DELETE /cache`) answer HTTP 403 to any request
+    with an `Origin` header, whatever its method and body, with an error that says to set an
+    admin token.
+
     ## Request limits
     - A request (headers + body) may be at most 1 MB (1,048,576 bytes). A larger request, or a
       `Content-Length` over 1 MB, gets HTTP 400 with `"error": "413 Payload Too Large"`.
@@ -184,6 +215,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
 
     get:
       tags: [evaluation]
@@ -348,6 +381,8 @@ paths:
               example:
                 success: false
                 error: "JavaScript plugins are not enabled in this build"
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
 
   /update-js:
     put:
@@ -411,6 +446,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/UpdateJSResponse'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
 
   /delete-js:
     delete:
@@ -457,6 +494,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/DeleteJSResponse'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
 
   /list-js:
     get:
@@ -551,6 +590,8 @@ paths:
               example:
                 success: false
                 error: "JavaScript plugins are not enabled in this build"
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
 
   /cache:
     delete:
@@ -578,17 +619,29 @@ paths:
                   message: "Expression cache cleared successfully"
 
 components:
+  responses:
+    UnsupportedMediaType:
+      description: |
+        The request has a body but its `Content-Type` is not `application/json` (or, on
+        `/upload-js` and `/update-js`, `multipart/form-data`). See "Request bodies".
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error: "Content-Type must be application/json"
   securitySchemes:
     evalToken:
       type: apiKey
       in: header
       name: Authorization
-      description: Token for expression evaluation endpoints (if enabled)
+      description: Token for expression evaluation endpoints, if enabled (`--token` or `SKILLET_AUTH_TOKEN`)
     adminToken:
       type: apiKey
       in: header
       name: Authorization
-      description: Admin token for JavaScript function management endpoints
+      description: Admin token for JavaScript function management endpoints and `DELETE /cache` (`--admin-token` or `SKILLET_ADMIN_TOKEN`)
 
   schemas:
     EvalRequest:
