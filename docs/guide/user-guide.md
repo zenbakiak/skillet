@@ -815,6 +815,8 @@ sk "=AVERAGE(10, 20, 30, 40, 50)"              # 30
 sk "=MAX(15, 8, 23, 4, 16)"                    # 23
 sk "=MIN(15, 8, 23, 4, 16)"                    # 4
 sk "=COUNT(1, 2, 3, \"text\", 4)"              # 4 (counts numbers only)
+sk "=COUNTA(1, \"text\", NULL)"                 # 2 (counts non-NULL values)
+sk "=AVERAGE()"                                # Error: AVERAGE of no numbers (#DIV/0!)
 
 # Advanced statistics
 sk "=STDEV.P(2, 4, 4, 4, 5, 5, 7, 9)"         # 2 (population standard deviation)
@@ -871,8 +873,11 @@ sk "=CONCAT(:name.upper(), ' ', :age)" name="alice" age=25  # "ALICE (25)"
 ```bash
 # Current date/time
 sk "=NOW()"                                    # Current Unix timestamp
+sk "=TODAY()"                                  # Today, midnight
 sk "=DATE(2023, 12, 25)"                      # Unix timestamp for Dec 25, 2023
-sk "=TIME(14, 30, 0)"                         # Seconds since midnight for 2:30 PM
+sk "=DATE(2024, 2 + 1, 0)"                    # 2024-02-29: months and days roll over like Excel
+sk "=TIME(14, 30, 0)"                         # 0.6041666666666666, 2:30 PM as a fraction of a day
+sk "=TIME(25, 0, 0)"                          # 0.041666666666666664 (wraps at 24 hours, as in Excel)
 
 # Date extraction
 sk "=YEAR(NOW())"                              # Current year
@@ -885,6 +890,10 @@ sk "=DATEADD(NOW(), 2, 'months')"                     # 2 month from now
 sk "=DATEADD(NOW(), 2, 'weeks')"                     # 2 weeks from now
 sk "=DATEADD(NOW(), 2, 'minutes')"                     # 2 minutes from now
 sk "=DATEDIFF(NOW(), DATEADD(NOW(), 7, \"days\"), \"days\")"       # Days between dates
+
+# Excel-style arithmetic in days
+sk "=DATE(2026, 1, 31) + 1"                    # 2026-02-01
+sk "=DATE(2026, 3, 1) - DATE(2026, 2, 1)"      # 28 (days)
 
 # Practical examples
 sk "=YEAR(DATE(2023, 6, 15))"                 # 2023
@@ -926,10 +935,16 @@ sk "=(17).between(10, 20)"                     # true (method form)
 # Basic math
 sk "=ABS(-5)"                                  # 5
 sk "=ROUND(3.14159, 2)"                       # 3.14
+sk "=ROUND(1234.567, -2)"                     # 1200
 sk "=CEILING(3.2)"                            # 4
+sk "=CEILING(2.1, 0.5)"                       # 2.5
 sk "=FLOOR(3.8)"                              # 3
+sk "=FLOOR(7, 5)"                             # 5
 sk "=INT(3.9)"                                # 3
+sk "=INT(-3.9)"                               # -4 (rounds down)
 sk "=MOD(10, 3)"                              # 1
+sk "=MOD(-10, 3)"                             # 2 (sign of the divisor, as in Excel)
+sk "=SQRT(-1)"                                # Error: SQRT of a negative number (#NUM!)
 sk "=POWER(2, 8)"                             # 256
 
 # Trigonometric (if extended)
@@ -1022,22 +1037,28 @@ sk "=:sales * IF(:sales > 100000, 0.08, IF(:sales > 50000, 0.06, 0.04))" sales=7
 - `AVERAGE(...)`, `AVG(...)` - Average of arguments
 - `MAX(...)` - Maximum value
 - `MIN(...)` - Minimum value
-- `COUNT(...)` - Count of numeric arguments
+- `COUNT(...)` - Count of numbers (arrays flattened)
+- `COUNTA(...)` - Count of non-NULL values
 - `ABS(number)` - Absolute value
-- `ROUND(number, digits)` - Round to specified digits
-- `CEILING(number)` - Round up to nearest integer
-- `FLOOR(number)` - Round down to nearest integer
-- `INT(number)` - Integer part
-- `MOD(dividend, divisor)` - Modulo operation
+- `ROUND(number, [digits])` - Round half away from zero; negative digits round left of the point
+- `CEILING(number, [significance])` - Round up to a multiple of `significance` (default 1)
+- `FLOOR(number, [significance])` - Round down to a multiple of `significance` (default 1)
+- `INT(number)` - Round down to an integer (`INT(-3.9)` is -4)
+- `MOD(number, divisor)` - Remainder with the sign of the divisor
 - `POWER(base, exponent)` - Exponentiation
+
+These follow Excel: where Excel returns `#DIV/0!`, `#NUM!` or `#VALUE!` (for example `SQRT(-1)`,
+`MOD(5, 0)`, `AVERAGE()` of no numbers, `ABS("x")`), Skillet returns an error. `MAX` and `MIN`
+of no numbers are 0, as in Excel. The operators follow the same rule: `1 / 0`, `0 / 0` and `5 % 0`
+are `Division by zero`, and a result that overflows (`10 ^ 400`) is a `#NUM!` error.
 
 ### Statistical Functions
 - `STDEV.P(...)` - Population standard deviation
 - `VAR.P(...)` - Population variance
 - `MEDIAN(...)` - Median value
-- `MODE.SNGL(...)` - Most frequent value
-- `PERCENTILE.INC(array, k)` - k-th percentile
-- `QUARTILE.INC(array, quart)` - Quartile value
+- `MODE.SNGL(...)`, `MODE(...)` - Most frequent value (error when no value repeats)
+- `PERCENTILE.INC(array, k)`, `PERCENTILE(array, k)` - k-th percentile
+- `QUARTILE.INC(array, quart)`, `QUARTILE(array, quart)` - Quartile value
 
 ### Logical Functions
 - `IF(condition, true_value, false_value)` - Conditional
@@ -1048,21 +1069,26 @@ sk "=:sales * IF(:sales > 100000, 0.08, IF(:sales > 50000, 0.06, 0.04))" sales=7
 - `XOR(...)` - Logical XOR
 
 ### Text Functions
-- `LEN(text)` - Length of string
+- `LEN(text)` - Length of string (Excel: numbers count as their text, NULL is 0)
+- `TEXTJOIN(delimiter, ignore_empty, text1, ...)` - Join texts with a delimiter (Excel)
+- `FIND(find_text, within_text, [start_num])` - 1-based, case-sensitive position (Excel); error when not found
 - `CONCAT(...)` - Concatenate strings
 - `SUBSTRING(text, start, length)` - Extract substring
 - `LEFT(text, [num_chars])` - Leftmost characters (default 1)
 - `RIGHT(text, [num_chars])` - Rightmost characters (default 1)
 - `MID(text, start, [num_chars])` - Substring from 1-based start
-- `SUBSTITUTE(text, substr, replacement)` - Replace all occurrences of a substring
+- `SUBSTITUTE(text, old_text, new_text, [instance_num])` - Replace all occurrences, or only the `instance_num`-th
+- `TRIM(text)` - Remove leading and trailing spaces and collapse inner runs of spaces (Excel); the `.trim()` method keeps inner spaces
 - `REPLACE(old_text, start_num, num_chars, new_text)` - Excel-style positional replace (1-based start)
 - `ISNUMBER(value)` - Check if numeric
 - `ISTEXT(value)` - Check if text
 
 ### Date/Time Functions
 - `NOW()` - Current timestamp
-- `DATE(year, month, day)` - Create date
-- `TIME(hour, minute, second)` - Seconds since midnight (`hour*3600 + minute*60 + second`); `TIME()` is the current local time in seconds since midnight
+- `DATE(year, month, day)` - Create date (Excel rules: months and days roll over, years 0-1899 get 1900 added)
+- `TODAY()` - Today's local date at midnight (same as `DATE()`)
+- `TIME(hour, minute, second)` - Time as a fraction of a day, as in Excel (`TIME(12, 0, 0)` is 0.5; parts truncated, wrapped at 24 hours); `TIME()` is the current local time in the same unit
+- `date + days`, `date - days`, `date - date` - Excel-style date arithmetic in days
 - `YEAR(date)` - Extract year
 - `MONTH(date)` - Extract month
 - `DAY(date)` - Extract day
@@ -1071,12 +1097,13 @@ sk "=:sales * IF(:sales > 100000, 0.08, IF(:sales > 50000, 0.06, 0.04))" sales=7
 
 ### Array Functions
 - `FILTER(array, expression)` - Filter array elements
-- `FIND(array, expression)` - Find first element matching expression (returns element or Null)
+- `FIND(array, expression)` - Find first element matching expression (returns element or Null); with text first it is Excel's text `FIND`
 - `MAP(array, expression)` - Transform array elements
 - `REDUCE(array, expression, initial)` - Reduce array to single value
-- `SUMIF(array, condition [, sum_array])` - Conditional sum (supports lambda and Excel-style criteria)
-- `AVGIF(array, condition)` - Conditional average
-- `COUNTIF(array, condition)` - Conditional count
+- `SUMIF(range, criteria, [sum_range])` - Conditional sum
+- `AVERAGEIF(range, criteria, [average_range])`, `AVGIF` - Conditional average (error when nothing matches)
+- `COUNTIF(range, criteria)` - Conditional count
+  - `criteria` is an Excel criterion (`">2"`, `5`, `"<>a"`, `"a*"`; text is case-insensitive, with `*`, `?` and `~` wildcards) or a lambda over `:x` that returns a boolean. See [api.md](../reference/api.md).
 - `BETWEEN(min, max, value)` - Check if value is within range (inclusive)
 
 ### Financial Functions
@@ -1086,6 +1113,9 @@ sk "=:sales * IF(:sales > 100000, 0.08, IF(:sales > 50000, 0.06, 0.04))" sales=7
   - `pv`: Present value (loan amount)
   - `fv`: Future value (optional, default 0)
   - `type`: Payment timing (optional, 0=end of period, 1=beginning)
+- `PPMT(rate, per, nper, pv, [fv], [type])` - Principal part of payment `per` (Excel)
+- `PV(rate, nper, pmt, [fv], [type])` - Present value of a series of payments (Excel)
+- `NPV(rate, value1, ...)` - Net present value of periodic cash flows (Excel)
 
 ### Type Conversion Methods (Available on All Types)
 - `to_s()`, `to_string()` - Convert to string
