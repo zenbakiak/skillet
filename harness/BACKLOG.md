@@ -434,11 +434,70 @@ always return arrays; breaking change needs an ADR.
 BL-003 with `#[allow(clippy::manual_range_contains)]`). Decide: error on NaN (likely), then use
 `!(0.0..=1.0).contains(&p)` and drop the allow.
 
-### BL-027 · Exponential value growth and evaluation budget · P2 · `todo` · security-reviewer → language-designer → rust-engineer
+### BL-027 · Exponential value growth and evaluation budget · P1 · `in-progress` · security-reviewer → language-designer → rust-engineer
 Found in BL-017a: `[1,…].reduce([:acc, :acc], 0)` doubles per item (20 items → 1M elements, 175 MB;
 ~26 items → ~11 GB). Needs a total-size/step budget per evaluation (and a server-side timeout).
 Language Designer decides the limits and error; Rust implements; Security re-tests.
 Related perf note: lambdas clone the whole variable map per item (`clone_variables`) — O(items × vars).
+
+Raised to P1 by maintainer, 2026-11-20 (same DoS class as BL-017: one request can OOM a shared server).
+Brief (orchestrator, 2026-11-20):
+  Goal: no expression can make one evaluation allocate unbounded memory or run unbounded time;
+        it returns an Error instead. Servers additionally bound wall-clock time per request.
+  Branch: bugfix/bl-027-evaluation-budget (stacked on bugfix/bl-017-nesting-depth-limit, PR #44;
+        retarget to develop after #44 merges).
+  BL-027a · language-designer (Claude Opus 5.5) · `done`
+    Do: write ADR-0011 (Proposed) + PRD-001 NFR rows defining the evaluation budget:
+      - what is counted (e.g. total Value cells created per evaluation incl. string bytes; and/or max
+        single array length / string length; lambda iteration steps), with concrete default numbers;
+      - error text(s), consistent in style with "Expression nested too deeply (max 128)";
+      - per-request wall-clock timeout for sk_http_server/sk_server (default, and whether it is a
+        CLI flag/env var — only add a knob if a real deployment needs to tune it);
+      - whether library users get a way to change limits (ponytail: constants unless justified).
+      Base the numbers on evidence: run realistic formulas from tests/ and docs (largest JSON/array
+      workloads in tests/sk_performance.rs, benches) to show they stay far below the limits, and show
+      the attacks (`.reduce([:acc, :acc], 0)` on arrays; string doubling via CONCAT/`+` in REDUCE;
+      `SUBSTITUTE`-style growth; huge ranges if any builtin creates arrays from numbers) exceed them.
+      Do NOT run inputs that would allocate more than ~500 MB on this machine.
+      Output: example table (expression → expected Value or Error) for QA/Rust.
+    Out of scope: src/ changes.
+  Decision (maintainer, 2026-11-20): ADR-0011 accepted with amendment: BL-030 first, then 027b
+    without the variable-read charge (A12 must pass). A11 behaviour change accepted.
+  BL-027b · rust-engineer · `ready` (BL-030 done)
+  BL-027c · security-reviewer · `todo` (re-attack after 027b)
+
+Handoff (language-designer, Claude Opus 5.5, 2026-11-20) — BL-027a:
+  Did: - docs/adr/0011-evaluation-budget.md (Proposed) + README row; PRD-001 NFR-4…NFR-7 + open questions.
+       - Decision: one deterministic, cumulative per-evaluation budget `MAX_EVAL_BYTES = 256 MiB` of
+         Values created (cost = 32 per Value + string/Json bytes), charged at the check_value_depth
+         sites plus object literal, property access, variable read (deep clone today), assignment and
+         each lambda iteration; pre-charge in SUBSTITUTE(M)/.replace, JOIN/.join, SPLIT/.split, JQ
+         matches and Json parsing. Thread-local budget, one walk shared with the depth check.
+         Errors: "Evaluation budget exceeded (max 256 MB)", "Evaluation timed out (max 10 s)".
+       - Servers: 10 s deadline checked every 256 charges inside the evaluator (no thread kill, no
+         CLI flag/env var), HTTP 400 like other eval errors; LRU cache skips entries > 64 KiB.
+       - Library: constants by default; additive `EvalLimits` + `with_limits(limits, f)` (nested
+         scopes can only tighten) — justified by servers needing a deadline and in-process datasets
+         beyond the 1 MB HTTP cap. No default deadline in the library / `sk`.
+  Evidence: in-process measurements (release, counting allocator, scratch harness outside the repo):
+       realistic max 23 ms / 46 MB allocated (100k nums, 4-step chain, ~40 MB charged by the model);
+       10k-row filter/map 10 ms / 23 MB. Attacks: reduce([:acc,:acc]) 20 items 96 MB peak;
+       MERGE doubling 20 items 80 MB (flat — depth limit does not catch it); CONCAT doubling 22 items;
+       object doubling 16 items 41 MB; SUBSTITUTE 4000×4000 → 16 MB in one call; JQ "$..*" ~120×.
+       Example table (P1–P12 pass, A1–A12 fail, T1–T2 timeout, C1–C6 cost-model boundaries) in ADR-0011.
+       No src/ changes; no test changes.
+  Risks/Follow-ups:
+       - Behaviour change (documented in ADR): quadratic patterns at size fail — reduce(MERGE(:acc,[:x]))
+         above ~2.9k items, `:rows.map(... :rows.length())` above ~2.3k rows. No existing test affected.
+       - Biggest real DoS is NOT memory: lambdas clone the whole variable map per inner method call.
+         `:nums.map(:x.abs()).sum()` on 100k nums (589 KB, under the HTTP cap) = 14.6 s, 305 GB
+         churn; 10k-row `:rows.map(:x.price.round(1))` = 1.7 s. Budget can't charge it without
+         rejecting normal formulas; servers rely on the deadline. Filed BL-030 (P1).
+       - Existing: cache keys embed Debug of all vars (≤1 MB each × 1000 entries) — covered by the
+         64 KiB entry cap in ADR-0011 §4.
+       - BL-018 interrupt handler should reuse the same thread-local deadline.
+       - BL-028 (docs) should add the budget, timeout and the two rewrite patterns.
+  ADR: ADR-0011 proposed (maintainer to accept before BL-027b).
 
 ### BL-028 · Document the nesting depth limit · P3 · `todo` · docs-engineer
 BL-017b added `MAX_NESTING_DEPTH = 128` (`skillet::MAX_NESTING_DEPTH`) and the error
@@ -451,3 +510,93 @@ After BL-017, depth 128 still overflows a default 2 MB thread in **debug** build
 down to 1 MB). Affects embedders spawning threads in debug and in-process tests. Fix by folding the
 binary precedence levels into one precedence-climbing loop and shrinking `parse_atom`'s frame;
 measure stack per level before/after.
+
+### BL-030 · Lambdas clone the whole variable map per call (CPU/alloc DoS) · P1 · `done` · rust-engineer (+ performance-engineer for numbers)
+Found in BL-027a. Every method/function call inside a lambda runs `context.clone_variables()` and the
+lambda helpers `base_vars.cloned()`, so cost is O(items × size of all vars). Measured (release):
+`:nums.map(:x.abs()).sum()` over 100k numbers (589 KB JSON) = 14.6 s and 305 GB allocated;
+10k rows `:rows.map(:x.price.round(1)).sum()` = 1.7 s / 10 GB (vs ~10 ms without the inner call).
+Fix: a layered scope (borrowed parent map + small local bindings for `:x`/`:acc`) or shared values,
+so lambda calls do not copy the parent environment. ADR-0011's server deadline covers this until fixed;
+the library/CLI have no protection. Acceptance: both formulas above within 2× of their no-inner-call
+equivalents; ./harness/check.sh green; no result changes.
+
+Brief (orchestrator, 2026-11-20):
+  Goal: evaluating inside lambdas (and method calls inside them) never copies the parent variable
+        environment; variable reads are cheap enough that ADR-0011 does not need to charge them.
+  Branch: bugfix/bl-030-shared-lambda-scope (stacked: develop ← #44 BL-017 ← bl-027 ADR commits ← this).
+  Scope: src/runtime/evaluator.rs, src/runtime/method_calls/*, src/runtime/function_dispatch.rs or
+        wherever `clone_variables` / `base_vars.cloned()` live. No public signature changes; no
+        `Value` enum changes (that would be an ADR).
+  Approach: Rust engineer's choice; simplest that meets the numbers (e.g. a layered scope: borrowed
+        parent `&HashMap` + small local map for `:x`/`:acc`/custom param names, looked up local-first).
+        Variable reads may still clone the *value* read; if `:rows.length()` per item stays slow
+        because of that, avoid the clone for method-call targets (evaluate by reference).
+  Acceptance:
+    - ./harness/check.sh (full) green; evaluator_parity + security_limits unchanged and green.
+    - Release, median of 5, same machine, before → after:
+        `:nums.map(:x.abs()).sum()` (100k nums) — 14.6 s → within 2× of `:nums.map(:x * 1).sum()`;
+        `:rows.map(:x.price.round(1)).sum()` (10k rows) — 1.7 s → within 2× of `:rows.map(:x.price).sum()`;
+        `:rows.map(:x.price / :rows.length()).sum()` (10k rows, ADR-0011 A12) — 3.5 s → report.
+      Put the harness that builds these inputs in benches/ (script or #[ignore] test) so BL-005 can reuse it.
+    - Peak/total allocation for the first case reported if easy (counting allocator in a scratch bin is fine).
+
+Handoff (rust-engineer, Claude Opus 5.5, 2026-11-20):
+  Did: - benches/lambda_scope.rs + `[[bench]] harness = false` (std only, no new dependency):
+         `cargo bench --bench lambda_scope` (RUNS=n optional) builds the 100k-nums / 10k-rows
+         inputs in-process (vars shaped like evaluate_with_json_custom, incl. `arguments`), prints
+         median/p95 and the result of each formula. Library layer; avoids the argv size limit.
+       - `runtime::evaluator::Scope`: local bindings (item/acc) over a borrowed `&dyn EvaluationContext`,
+         local-first lookup. Used by method lambdas, FILTER/MAP/FIND/REDUCE/SUMIF/AVGIF/COUNTIF and
+         plain method arguments (`eval_arg`). Method/property targets that are plain variables are
+         borrowed, not cloned (fixes the `:rows.length()` per-item copy). No `clone_variables` call
+         left on any evaluation path; the 8 lambda methods (plain + _with_custom) collapse into 4.
+       - Custom-registry visibility kept exactly: lambdas in methods see the caller's registry;
+         plain method arguments and FILTER()-style builtin lambdas do not (as before).
+  Evidence: ./harness/check.sh (full, strict) green; tests/ untouched (evaluator_parity +
+         security_limits green). New unit tests in evaluator.rs: a context whose clone_variables()
+         panics evaluates lambda/method/builtin cases (fails on the old code); shadowing and
+         reduce same-name (acc wins) unchanged.
+         Release, median of 5 (p95), MacBook 11 cores, macOS 27.0.1, rustc 1.81, `cargo bench --bench
+         lambda_scope`; before = efaeed5, after = fix commit. Results identical before/after.
+         | Formula                                        | before            | after          |
+         |------------------------------------------------|-------------------|----------------|
+         | `:nums.map(:x * 1).sum()` (100k, 700 KB)       | 6.02 (7.44) ms    | 2.82 (3.04) ms |
+         | `:nums.map(:x.abs()).sum()`                    | 15444 (15675) ms  | 4.63 (5.24) ms |
+         | `:rows.map(:x.price).sum()` (10k, 449 KB)      | 4.13 (4.72) ms    | 2.68 (2.88) ms |
+         | `:rows.map(:x.price.round(1)).sum()`           | 2027 (2033) ms    | 3.12 (3.20) ms |
+         | `:rows.map(:x.price / :rows.length()).sum()`   | 3996 (3997) ms    | 3.26 (3.38) ms |
+         Acceptance: abs case 1.6x of `:x * 1`; round case 1.2x of `:x.price`; A12 now 3.3 ms.
+         Total allocation, `:nums.map(:x.abs()).sum()` (counting allocator, scratch bin outside the
+         repo): before 390 GB total / 18 MB peak, 15.9 s; after 3.8 MB total / 3.2 MB peak.
+  Risks/Follow-ups:
+       - `skillet::runtime::method_calls` is a pub module: sub-handler signatures changed
+         (`exec_filter/map/find/reduce`, `exec_string_method`, `exec_array_method` now take
+         `&dyn EvaluationContext`; `exec_*_with_custom` removed). `exec_method` /
+         `exec_method_with_custom`, the `EvaluationContext` trait and everything in src/lib.rs are
+         unchanged. Not part of the AGENTS §7 contract, but flag for the changelog.
+       - Pre-existing inconsistency, kept as is (Language Designer to decide): custom functions are
+         not visible in plain method arguments (`:s.contains(MYFN())`) nor in FILTER()/MAP()-style
+         builtin lambdas, but are visible in `.map()`/`.filter()` lambdas.
+       - Variable reads elsewhere still clone the value (`SUM(:rows)`, `:rows[0]`); only method and
+         property targets are borrowed. ADR-0011 amendment (no read charge) holds for A12.
+       - Flaky gate note: tests/sk_concurrency.rs runs `cargo run --release` in parallel; if the release
+         `sk` is stale, concurrent rebuilds make 1–2 runs fail. `cargo build --release --bin sk`
+         first avoids it (QA item worth filing).
+       - BL-027b is unblocked.
+  ADR: none
+
+Review (orchestrator, 2026-11-20): accepted. Re-ran `cargo bench --bench lambda_scope` (RUNS=3):
+  all five formulas 2.6–5.0 ms (abs 15.4 s → 5 ms; A12 4.0 s → 3.2 ms); results identical; tests/
+  untouched; no remaining clone_variables() call sites. Changelog note: `runtime::method_calls`
+  handler signatures changed (`&dyn EvaluationContext`), `exec_*_with_custom` removed; lib.rs API
+  unchanged. Follow-ups: BL-031, BL-032.
+
+### BL-031 · Custom functions not visible in method args and builtin lambdas · P3 · `todo` · language-designer
+Found in BL-030 (pre-existing, preserved): custom functions work inside `.map()/.filter()` lambdas but
+not in plain method arguments (`:s.contains(MYFN())`) or in `FILTER()/MAP()`-style builtin lambdas.
+Decide whether that is intended; likely not (one evaluator, one function namespace).
+
+### BL-032 · `sk_concurrency` flakes when the release `sk` is stale · P2 · `todo` · qa-engineer
+`tests/sk_concurrency.rs` runs `cargo run --release` from parallel tests; if the release binary is out
+of date they rebuild concurrently and some fail. Build once up front (or use `CARGO_BIN_EXE_*`).

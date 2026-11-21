@@ -4,7 +4,7 @@ use crate::error::Error;
 use crate::limits::check_value_depth;
 use crate::runtime::{
     function_dispatch::exec_builtin_fast,
-    method_calls::{exec_method, exec_method_with_custom},
+    method_calls::exec_method_in,
     type_casting::cast_value,
     utils::{index_array, slice_array},
 };
@@ -93,6 +93,68 @@ impl<'a> EvaluationContext for VariableContext<'a> {
     }
 }
 
+/// Local bindings (lambda item/accumulator) layered over a borrowed parent context.
+///
+/// Lookups check the locals first, then the parent, so lambdas never copy the caller's
+/// variables (BL-030). `registry` is explicit because some call sites deliberately do not
+/// expose custom functions (plain method arguments, `FILTER(...)`-style builtins).
+pub(crate) struct Scope<'a> {
+    parent: &'a dyn EvaluationContext,
+    locals: Vec<(String, Value)>,
+    registry: Option<&'a Arc<RwLock<FunctionRegistry>>>,
+}
+
+impl<'a> Scope<'a> {
+    pub(crate) fn new(
+        parent: &'a dyn EvaluationContext,
+        registry: Option<&'a Arc<RwLock<FunctionRegistry>>>,
+    ) -> Self {
+        Self {
+            parent,
+            locals: Vec::new(),
+            registry,
+        }
+    }
+
+    /// Bind `name` to `value`, replacing an earlier local binding of the same name.
+    pub(crate) fn set(&mut self, name: &str, value: Value) {
+        match self.locals.iter_mut().find(|(n, _)| n == name) {
+            Some(slot) => slot.1 = value,
+            None => self.locals.push((name.to_string(), value)),
+        }
+    }
+}
+
+impl EvaluationContext for Scope<'_> {
+    fn get_variable(&self, name: &str) -> Option<&Value> {
+        match self.locals.iter().find(|(n, _)| n == name) {
+            Some((_, v)) => Some(v),
+            None => self.parent.get_variable(name),
+        }
+    }
+
+    fn get_custom_registry(&self) -> Option<&Arc<RwLock<FunctionRegistry>>> {
+        self.registry
+    }
+
+    fn clone_variables(&self) -> HashMap<String, Value> {
+        let mut vars = self.parent.clone_variables();
+        for (n, v) in &self.locals {
+            vars.insert(n.clone(), v.clone());
+        }
+        vars
+    }
+}
+
+/// Evaluate a plain (non-lambda) method argument: caller's variables, no custom functions.
+pub(crate) fn eval_arg(expr: &Expr, ctx: &dyn EvaluationContext) -> Result<Value, Error> {
+    Evaluator::eval(expr, &Scope::new(ctx, None))
+}
+
+fn missing_variable(name: &str) -> Error {
+    Error::new(format!("Missing variable: :{}", name), None)
+}
+
 /// Unified evaluator that handles all expression types efficiently
 pub struct Evaluator;
 
@@ -118,42 +180,25 @@ impl Evaluator {
             Expr::Variable(name) => context
                 .get_variable(name)
                 .cloned()
-                .ok_or_else(|| Error::new(format!("Missing variable: :{}", name), None)),
+                .ok_or_else(|| missing_variable(name)),
 
-            Expr::PropertyAccess { target, property } => {
-                let target_value = Self::eval(target, context)?;
-                Self::eval_property_access(target_value, property, false)
-            }
+            Expr::PropertyAccess { target, property } => Self::with_target(target, context, |v| {
+                Self::eval_property_access(v, property, false)
+            }),
 
             Expr::SafePropertyAccess { target, property } => {
-                let target_value = Self::eval(target, context)?;
-                Self::eval_property_access(target_value, property, true)
+                Self::with_target(target, context, |v| {
+                    Self::eval_property_access(v, property, true)
+                })
             }
 
             Expr::SafeMethodCall { target, name, args } => {
-                let target_value = Self::eval(target, context)?;
-                if matches!(target_value, Value::Null) {
-                    return Ok(Value::Null);
-                }
-                let result = if let Some(registry) = context.get_custom_registry() {
-                    exec_method_with_custom(
-                        name,
-                        false,
-                        &target_value,
-                        args,
-                        Some(&context.clone_variables()),
-                        registry,
-                    )
-                } else {
-                    exec_method(
-                        name,
-                        false,
-                        &target_value,
-                        args,
-                        Some(&context.clone_variables()),
-                    )
-                };
-                result.and_then(check_value_depth)
+                Self::with_target(target, context, |recv| {
+                    if matches!(recv, Value::Null) {
+                        return Ok(Value::Null);
+                    }
+                    exec_method_in(name, false, recv, args, context).and_then(check_value_depth)
+                })
             }
 
             Expr::Array(items) => {
@@ -217,28 +262,9 @@ impl Evaluator {
                 name,
                 args,
                 predicate,
-            } => {
-                let recv = Self::eval(target, context)?;
-                let result = if let Some(registry) = context.get_custom_registry() {
-                    exec_method_with_custom(
-                        name,
-                        *predicate,
-                        &recv,
-                        args,
-                        Some(&context.clone_variables()),
-                        registry,
-                    )
-                } else {
-                    exec_method(
-                        name,
-                        *predicate,
-                        &recv,
-                        args,
-                        Some(&context.clone_variables()),
-                    )
-                };
-                result.and_then(check_value_depth)
-            }
+            } => Self::with_target(target, context, |recv| {
+                exec_method_in(name, *predicate, recv, args, context).and_then(check_value_depth)
+            }),
 
             Expr::Spread(_) => Err(Error::new("Spread not allowed here", None)),
 
@@ -357,15 +383,30 @@ impl Evaluator {
         }
     }
 
+    /// Run `f` on the value of a method/property target. A plain variable is borrowed
+    /// instead of cloned, so `:rows.length()` inside a lambda does not copy `:rows`.
+    fn with_target<C: EvaluationContext>(
+        target: &Expr,
+        context: &C,
+        f: impl FnOnce(&Value) -> Result<Value, Error>,
+    ) -> Result<Value, Error> {
+        match target {
+            Expr::Variable(name) => f(context
+                .get_variable(name)
+                .ok_or_else(|| missing_variable(name))?),
+            _ => f(&Self::eval(target, context)?),
+        }
+    }
+
     /// Evaluate property access (both safe and unsafe)
     fn eval_property_access(
-        target_value: Value,
+        target_value: &Value,
         property: &str,
         safe: bool,
     ) -> Result<Value, Error> {
         match target_value {
             Value::Json(json_str) => {
-                let parsed: serde_json::Value = serde_json::from_str(&json_str)
+                let parsed: serde_json::Value = serde_json::from_str(json_str)
                     .map_err(|e| Error::new(format!("Invalid JSON: {}", e), None))?;
                 if let Some(prop_value) = parsed.get(property) {
                     crate::json_to_value(prop_value.clone())
@@ -513,12 +554,10 @@ impl Evaluator {
         match arr_v {
             Value::Array(items) => {
                 let mut out = Vec::with_capacity(items.len());
-                let mut env = context.clone_variables();
+                let mut scope = Scope::new(context, None);
                 for it in items {
-                    env.insert(param_name.clone(), it.clone());
-                    let var_context = VariableContext::with_owned(env);
-                    let matches = matches!(Self::eval(lambda, &var_context)?, Value::Boolean(true));
-                    env = var_context.into_variables();
+                    scope.set(&param_name, it.clone());
+                    let matches = matches!(Self::eval(lambda, &scope)?, Value::Boolean(true));
                     if matches {
                         out.push(it);
                     }
@@ -547,12 +586,10 @@ impl Evaluator {
 
         match arr_v {
             Value::Array(items) => {
-                let mut env = context.clone_variables();
+                let mut scope = Scope::new(context, None);
                 for it in items {
-                    env.insert(param_name.clone(), it.clone());
-                    let var_context = VariableContext::with_owned(env);
-                    let matches = matches!(Self::eval(lambda, &var_context)?, Value::Boolean(true));
-                    env = var_context.into_variables();
+                    scope.set(&param_name, it.clone());
+                    let matches = matches!(Self::eval(lambda, &scope)?, Value::Boolean(true));
                     if matches {
                         return Ok(it);
                     }
@@ -582,12 +619,10 @@ impl Evaluator {
         match arr_v {
             Value::Array(items) => {
                 let mut out = Vec::with_capacity(items.len());
-                let mut env = context.clone_variables();
+                let mut scope = Scope::new(context, None);
                 for it in items {
-                    env.insert(param_name.clone(), it);
-                    let var_context = VariableContext::with_owned(env);
-                    let result = Self::eval(lambda, &var_context)?;
-                    env = var_context.into_variables();
+                    scope.set(&param_name, it);
+                    let result = Self::eval(lambda, &scope)?;
                     out.push(result);
                 }
                 Ok(Value::Array(out))
@@ -624,13 +659,11 @@ impl Evaluator {
 
         match arr_v {
             Value::Array(items) => {
-                let mut env = context.clone_variables();
+                let mut scope = Scope::new(context, None);
                 for it in items {
-                    env.insert(val_param.clone(), it);
-                    env.insert(acc_param.clone(), acc);
-                    let var_context = VariableContext::with_owned(env);
-                    acc = Self::eval(lambda, &var_context)?;
-                    env = var_context.into_variables();
+                    scope.set(&val_param, it);
+                    scope.set(&acc_param, acc);
+                    acc = Self::eval(lambda, &scope)?;
                 }
                 Ok(acc)
             }
@@ -676,15 +709,11 @@ impl Evaluator {
         match arr_v {
             Value::Array(items) => {
                 let mut acc = 0.0;
-                let mut env = context.clone_variables();
+                let mut scope = Scope::new(context, None);
                 for it in items {
-                    env.insert("x".into(), it.clone());
-                    let var_context = VariableContext::with_owned(env);
-                    let matches = matches!(
-                        Self::eval(criteria_expr, &var_context)?,
-                        Value::Boolean(true)
-                    );
-                    env = var_context.into_variables();
+                    scope.set("x", it.clone());
+                    let matches =
+                        matches!(Self::eval(criteria_expr, &scope)?, Value::Boolean(true));
                     if matches {
                         match it {
                             Value::Number(n) | Value::Currency(n) => acc += n,
@@ -839,12 +868,10 @@ impl Evaluator {
             Value::Array(items) => {
                 let mut acc = 0.0;
                 let mut count = 0usize;
-                let mut env = context.clone_variables();
+                let mut scope = Scope::new(context, None);
                 for it in items {
-                    env.insert("x".into(), it.clone());
-                    let var_context = VariableContext::with_owned(env);
-                    let matches = matches!(Self::eval(lambda, &var_context)?, Value::Boolean(true));
-                    env = var_context.into_variables();
+                    scope.set("x", it.clone());
+                    let matches = matches!(Self::eval(lambda, &scope)?, Value::Boolean(true));
                     if matches {
                         match it {
                             Value::Number(n) | Value::Currency(n) => {
@@ -875,12 +902,10 @@ impl Evaluator {
         match arr_v {
             Value::Array(items) => {
                 let mut count = 0usize;
-                let mut env = context.clone_variables();
+                let mut scope = Scope::new(context, None);
                 for it in items {
-                    env.insert("x".into(), it);
-                    let var_context = VariableContext::with_owned(env);
-                    let matches = matches!(Self::eval(lambda, &var_context)?, Value::Boolean(true));
-                    env = var_context.into_variables();
+                    scope.set("x", it);
+                    let matches = matches!(Self::eval(lambda, &scope)?, Value::Boolean(true));
                     if matches {
                         count += 1;
                     }
@@ -969,5 +994,68 @@ fn eval_with_assignments_context(
         }
         // For all other expressions, delegate to unified evaluator
         _ => Evaluator::eval(expr, context),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parser::Parser;
+
+    /// Context that fails the test if anything copies the whole variable map (BL-030).
+    struct NoCopyContext(HashMap<String, Value>);
+
+    impl EvaluationContext for NoCopyContext {
+        fn get_variable(&self, name: &str) -> Option<&Value> {
+            self.0.get(name)
+        }
+        fn get_custom_registry(&self) -> Option<&Arc<RwLock<FunctionRegistry>>> {
+            None
+        }
+        fn clone_variables(&self) -> HashMap<String, Value> {
+            panic!("variable map copied")
+        }
+    }
+
+    fn eval_no_copy(src: &str) -> Result<Value, Error> {
+        let mut vars = HashMap::new();
+        vars.insert(
+            "nums".to_string(),
+            Value::Array(vec![Value::Number(-1.5), Value::Number(2.0)]),
+        );
+        vars.insert("x".to_string(), Value::Number(100.0));
+        let expr = Parser::new(src).parse()?;
+        Evaluator::eval(&expr, &NoCopyContext(vars))
+    }
+
+    #[test]
+    fn lambdas_and_inner_calls_do_not_copy_variables() {
+        let cases = [
+            (":nums.map(:x.abs()).sum()", Value::Number(3.5)),
+            (":nums.map(:x / :nums.length()).sum()", Value::Number(0.25)),
+            (":nums.filter(:x.round(0) > 0).length()", Value::Number(1.0)),
+            (":nums.reduce(:acc + :x.abs(), 0)", Value::Number(3.5)),
+            ("MAP(:nums, :x.abs()).sum()", Value::Number(3.5)),
+            ("REDUCE(:nums, :acc + :x, 0)", Value::Number(0.5)),
+            ("COUNTIF(:nums, :x.abs() > 1)", Value::Number(2.0)),
+            ("FIND(:nums, :x > 0)", Value::Number(2.0)),
+        ];
+        for (src, want) in cases {
+            assert_eq!(eval_no_copy(src).ok(), Some(want), "{}", src);
+        }
+    }
+
+    #[test]
+    fn scope_locals_shadow_parent_and_rebind() {
+        // `:x` is a top-level variable (100) shadowed by the item inside the lambda only.
+        assert_eq!(
+            eval_no_copy(":nums.map(:x).sum() + :x").ok(),
+            Some(Value::Number(100.5))
+        );
+        // Same name for item and accumulator: accumulator binding wins, as before BL-030.
+        assert_eq!(
+            eval_no_copy(":nums.reduce(:x, 7, \"x\", \"x\")").ok(),
+            Some(Value::Number(7.0))
+        );
     }
 }

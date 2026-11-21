@@ -74,3 +74,8 @@ path = "src/bin/sk_http_server.rs"
 name = "sk_http_bench"
 path = "src/bin/sk_http_bench.rs"
 
+
+# Benchmarks (std only, run with `cargo bench --bench <name>`)
+[[bench]]
+name = "lambda_scope"
+harness = false

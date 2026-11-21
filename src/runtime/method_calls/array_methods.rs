@@ -1,15 +1,15 @@
 use crate::ast::Expr;
 use crate::error::Error;
-use crate::runtime::evaluator::{eval, eval_with_vars};
+use crate::runtime::evaluator::{eval_arg, EvaluationContext};
 use crate::types::Value;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::BTreeSet;
 
 /// Handle array method calls
 pub fn exec_array_method(
     name: &str,
     recv: &Value,
     args_expr: &[Expr],
-    base_vars: Option<&HashMap<String, Value>>,
+    ctx: &dyn EvaluationContext,
 ) -> Result<Value, Error> {
     let recv_array = match recv {
         Value::Array(a) => a,
@@ -49,11 +49,7 @@ pub fn exec_array_method(
 
         "sort" => {
             let desc = if !args_expr.is_empty() {
-                let order_val = if let Some(vars) = base_vars {
-                    eval_with_vars(&args_expr[0], vars)?
-                } else {
-                    eval(&args_expr[0])?
-                };
+                let order_val = eval_arg(&args_expr[0], ctx)?;
                 match order_val {
                     Value::String(s) => s.to_uppercase() == "DESC",
                     _ => false,
@@ -157,11 +153,7 @@ pub fn exec_array_method(
 
         "join" => {
             let separator = if !args_expr.is_empty() {
-                let sep_val = if let Some(vars) = base_vars {
-                    eval_with_vars(&args_expr[0], vars)?
-                } else {
-                    eval(&args_expr[0])?
-                };
+                let sep_val = eval_arg(&args_expr[0], ctx)?;
                 match sep_val {
                     Value::String(s) => s,
                     _ => ",".to_string(),
@@ -190,11 +182,7 @@ pub fn exec_array_method(
             if args_expr.is_empty() {
                 return Err(Error::new("contains method expects 1 argument", None));
             }
-            let search_val = if let Some(vars) = base_vars {
-                eval_with_vars(&args_expr[0], vars)?
-            } else {
-                eval(&args_expr[0])?
-            };
+            let search_val = eval_arg(&args_expr[0], ctx)?;
 
             let found = recv_array.contains(&search_val);
             Ok(Value::Boolean(found))
@@ -227,11 +215,7 @@ pub fn exec_array_method(
             // Estimate capacity: receiver + all arguments
             let mut capacity = recv_array.len();
             for arg_expr in args_expr {
-                let arg_val = if let Some(vars) = base_vars {
-                    eval_with_vars(arg_expr, vars)?
-                } else {
-                    eval(arg_expr)?
-                };
+                let arg_val = eval_arg(arg_expr, ctx)?;
                 capacity += match &arg_val {
                     Value::Array(items) => items.len(),
                     _ => 1,
@@ -242,11 +226,7 @@ pub fn exec_array_method(
             result.extend_from_slice(recv_array);
 
             for arg_expr in args_expr {
-                let arg_val = if let Some(vars) = base_vars {
-                    eval_with_vars(arg_expr, vars)?
-                } else {
-                    eval(arg_expr)?
-                };
+                let arg_val = eval_arg(arg_expr, ctx)?;
 
                 match arg_val {
                     Value::Array(items) => result.extend(items),

@@ -1,15 +1,14 @@
 use crate::ast::Expr;
 use crate::error::Error;
-use crate::runtime::evaluator::{eval, eval_with_vars};
+use crate::runtime::evaluator::{eval_arg, EvaluationContext};
 use crate::types::Value;
-use std::collections::HashMap;
 
 /// Handle string method calls
 pub fn exec_string_method(
     name: &str,
     recv: &Value,
     args_expr: &[Expr],
-    base_vars: Option<&HashMap<String, Value>>,
+    ctx: &dyn EvaluationContext,
 ) -> Result<Value, Error> {
     let recv_string = match recv {
         Value::String(s) => s.clone(),
@@ -33,11 +32,7 @@ pub fn exec_string_method(
             if args_expr.is_empty() {
                 return Err(Error::new("includes method expects 1 argument", None));
             }
-            let substr_val = if let Some(vars) = base_vars {
-                eval_with_vars(&args_expr[0], vars)?
-            } else {
-                eval(&args_expr[0])?
-            };
+            let substr_val = eval_arg(&args_expr[0], ctx)?;
             let substr = match substr_val {
                 Value::String(s) => s,
                 _ => return Err(Error::new("includes method expects string argument", None)),
@@ -49,11 +44,7 @@ pub fn exec_string_method(
             if args_expr.is_empty() {
                 return Err(Error::new("starts_with method expects 1 argument", None));
             }
-            let prefix_val = if let Some(vars) = base_vars {
-                eval_with_vars(&args_expr[0], vars)?
-            } else {
-                eval(&args_expr[0])?
-            };
+            let prefix_val = eval_arg(&args_expr[0], ctx)?;
             let prefix = match prefix_val {
                 Value::String(s) => s,
                 _ => {
@@ -70,11 +61,7 @@ pub fn exec_string_method(
             if args_expr.is_empty() {
                 return Err(Error::new("ends_with method expects 1 argument", None));
             }
-            let suffix_val = if let Some(vars) = base_vars {
-                eval_with_vars(&args_expr[0], vars)?
-            } else {
-                eval(&args_expr[0])?
-            };
+            let suffix_val = eval_arg(&args_expr[0], ctx)?;
             let suffix = match suffix_val {
                 Value::String(s) => s,
                 _ => return Err(Error::new("ends_with method expects string argument", None)),
@@ -86,11 +73,7 @@ pub fn exec_string_method(
             if args_expr.is_empty() {
                 return Err(Error::new("split method expects 1 argument", None));
             }
-            let delimiter_val = if let Some(vars) = base_vars {
-                eval_with_vars(&args_expr[0], vars)?
-            } else {
-                eval(&args_expr[0])?
-            };
+            let delimiter_val = eval_arg(&args_expr[0], ctx)?;
             let delimiter = match delimiter_val {
                 Value::String(s) => s,
                 _ => return Err(Error::new("split method expects string argument", None)),
@@ -106,16 +89,8 @@ pub fn exec_string_method(
             if args_expr.len() < 2 {
                 return Err(Error::new("replace method expects 2 arguments", None));
             }
-            let from_val = if let Some(vars) = base_vars {
-                eval_with_vars(&args_expr[0], vars)?
-            } else {
-                eval(&args_expr[0])?
-            };
-            let to_val = if let Some(vars) = base_vars {
-                eval_with_vars(&args_expr[1], vars)?
-            } else {
-                eval(&args_expr[1])?
-            };
+            let from_val = eval_arg(&args_expr[0], ctx)?;
+            let to_val = eval_arg(&args_expr[1], ctx)?;
             let (from, to) = match (from_val, to_val) {
                 (Value::String(f), Value::String(t)) => (f, t),
                 _ => return Err(Error::new("replace method expects string arguments", None)),
@@ -130,11 +105,7 @@ pub fn exec_string_method(
                     None,
                 ));
             }
-            let start_val = if let Some(vars) = base_vars {
-                eval_with_vars(&args_expr[0], vars)?
-            } else {
-                eval(&args_expr[0])?
-            };
+            let start_val = eval_arg(&args_expr[0], ctx)?;
             let start = match start_val {
                 Value::Number(n) => n as usize,
                 _ => return Err(Error::new("substring start must be number", None)),
@@ -142,11 +113,7 @@ pub fn exec_string_method(
 
             let chars: Vec<char> = recv_string.chars().collect();
             let result = if args_expr.len() >= 2 {
-                let len_val = if let Some(vars) = base_vars {
-                    eval_with_vars(&args_expr[1], vars)?
-                } else {
-                    eval(&args_expr[1])?
-                };
+                let len_val = eval_arg(&args_expr[1], ctx)?;
                 let len = match len_val {
                     Value::Number(n) => n as usize,
                     _ => return Err(Error::new("substring length must be number", None)),

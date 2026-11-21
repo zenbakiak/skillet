@@ -1,87 +1,52 @@
+//! Higher-order array methods (`filter`, `map`, `find`, `reduce`).
+//!
+//! Lambda bodies run in a [`Scope`]: the item (and accumulator) are local bindings over the
+//! borrowed caller context, so no variable map is copied per call or per item (BL-030).
+
 use crate::ast::Expr;
-use crate::custom::FunctionRegistry;
 use crate::error::Error;
-use crate::runtime::evaluator::{eval_with_vars, eval_with_vars_and_custom};
+use crate::runtime::evaluator::{EvaluationContext, Evaluator, Scope};
 use crate::types::Value;
-use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+
+fn recv_items<'v>(recv: &'v Value, method: &str) -> Result<&'v [Value], Error> {
+    match recv {
+        Value::Array(a) => Ok(a),
+        _ => Err(Error::new(format!("{} called on non-array", method), None)),
+    }
+}
+
+/// Parameter name given as a string literal at `idx`, else `default`.
+fn param_name(args_expr: &[Expr], idx: usize, default: &str) -> String {
+    match args_expr.get(idx) {
+        Some(Expr::StringLit(s)) => s.clone(),
+        _ => default.to_string(),
+    }
+}
+
+fn lambda_scope(ctx: &dyn EvaluationContext) -> Scope<'_> {
+    Scope::new(ctx, ctx.get_custom_registry())
+}
 
 /// Handle FILTER method call (higher-order function)
 pub fn exec_filter(
     recv: &Value,
     args_expr: &[Expr],
-    base_vars: Option<&HashMap<String, Value>>,
+    ctx: &dyn EvaluationContext,
 ) -> Result<Value, Error> {
-    let recv_array = match recv {
-        Value::Array(a) => a,
-        _ => return Err(Error::new("filter called on non-array", None)),
-    };
+    let items = recv_items(recv, "filter")?;
+    let lambda_expr = args_expr
+        .first()
+        .ok_or_else(|| Error::new("filter expects lambda expression", None))?;
+    let param = param_name(args_expr, 1, "x");
 
-    if args_expr.is_empty() {
-        return Err(Error::new("filter expects lambda expression", None));
-    }
-
-    let lambda_expr = &args_expr[0];
-    let param_name = if args_expr.len() > 1 {
-        match &args_expr[1] {
-            Expr::StringLit(s) => s.clone(),
-            _ => "x".to_string(),
-        }
-    } else {
-        "x".to_string()
-    };
-
-    let mut filtered = Vec::with_capacity(recv_array.len());
-    let mut vars = base_vars.cloned().unwrap_or_default();
-
-    for item in recv_array {
-        vars.insert(param_name.clone(), item.clone());
-        let result = eval_with_vars(lambda_expr, &vars)?;
-        if let Value::Boolean(true) = result {
+    let mut scope = lambda_scope(ctx);
+    let mut filtered = Vec::with_capacity(items.len());
+    for item in items {
+        scope.set(&param, item.clone());
+        if let Value::Boolean(true) = Evaluator::eval(lambda_expr, &scope)? {
             filtered.push(item.clone());
         }
     }
-
-    Ok(Value::Array(filtered))
-}
-
-/// Handle FILTER method call with custom function support
-pub fn exec_filter_with_custom(
-    recv: &Value,
-    args_expr: &[Expr],
-    base_vars: Option<&HashMap<String, Value>>,
-    custom_registry: &Arc<RwLock<FunctionRegistry>>,
-) -> Result<Value, Error> {
-    let recv_array = match recv {
-        Value::Array(a) => a,
-        _ => return Err(Error::new("filter called on non-array", None)),
-    };
-
-    if args_expr.is_empty() {
-        return Err(Error::new("filter expects lambda expression", None));
-    }
-
-    let lambda_expr = &args_expr[0];
-    let param_name = if args_expr.len() > 1 {
-        match &args_expr[1] {
-            Expr::StringLit(s) => s.clone(),
-            _ => "x".to_string(),
-        }
-    } else {
-        "x".to_string()
-    };
-
-    let mut filtered = Vec::with_capacity(recv_array.len());
-    let mut vars = base_vars.cloned().unwrap_or_default();
-
-    for item in recv_array {
-        vars.insert(param_name.clone(), item.clone());
-        let result = eval_with_vars_and_custom(lambda_expr, &vars, custom_registry)?;
-        if let Value::Boolean(true) = result {
-            filtered.push(item.clone());
-        }
-    }
-
     Ok(Value::Array(filtered))
 }
 
@@ -89,74 +54,20 @@ pub fn exec_filter_with_custom(
 pub fn exec_map(
     recv: &Value,
     args_expr: &[Expr],
-    base_vars: Option<&HashMap<String, Value>>,
+    ctx: &dyn EvaluationContext,
 ) -> Result<Value, Error> {
-    let recv_array = match recv {
-        Value::Array(a) => a,
-        _ => return Err(Error::new("map called on non-array", None)),
-    };
+    let items = recv_items(recv, "map")?;
+    let lambda_expr = args_expr
+        .first()
+        .ok_or_else(|| Error::new("map expects lambda expression", None))?;
+    let param = param_name(args_expr, 1, "x");
 
-    if args_expr.is_empty() {
-        return Err(Error::new("map expects lambda expression", None));
+    let mut scope = lambda_scope(ctx);
+    let mut mapped = Vec::with_capacity(items.len());
+    for item in items {
+        scope.set(&param, item.clone());
+        mapped.push(Evaluator::eval(lambda_expr, &scope)?);
     }
-
-    let lambda_expr = &args_expr[0];
-    let param_name = if args_expr.len() > 1 {
-        match &args_expr[1] {
-            Expr::StringLit(s) => s.clone(),
-            _ => "x".to_string(),
-        }
-    } else {
-        "x".to_string()
-    };
-
-    let mut mapped = Vec::with_capacity(recv_array.len());
-    let mut vars = base_vars.cloned().unwrap_or_default();
-
-    for item in recv_array {
-        vars.insert(param_name.clone(), item.clone());
-        let result = eval_with_vars(lambda_expr, &vars)?;
-        mapped.push(result);
-    }
-
-    Ok(Value::Array(mapped))
-}
-
-/// Handle MAP method call with custom function support
-pub fn exec_map_with_custom(
-    recv: &Value,
-    args_expr: &[Expr],
-    base_vars: Option<&HashMap<String, Value>>,
-    custom_registry: &Arc<RwLock<FunctionRegistry>>,
-) -> Result<Value, Error> {
-    let recv_array = match recv {
-        Value::Array(a) => a,
-        _ => return Err(Error::new("map called on non-array", None)),
-    };
-
-    if args_expr.is_empty() {
-        return Err(Error::new("map expects lambda expression", None));
-    }
-
-    let lambda_expr = &args_expr[0];
-    let param_name = if args_expr.len() > 1 {
-        match &args_expr[1] {
-            Expr::StringLit(s) => s.clone(),
-            _ => "x".to_string(),
-        }
-    } else {
-        "x".to_string()
-    };
-
-    let mut mapped = Vec::with_capacity(recv_array.len());
-    let mut vars = base_vars.cloned().unwrap_or_default();
-
-    for item in recv_array {
-        vars.insert(param_name.clone(), item.clone());
-        let result = eval_with_vars_and_custom(lambda_expr, &vars, custom_registry)?;
-        mapped.push(result);
-    }
-
     Ok(Value::Array(mapped))
 }
 
@@ -164,76 +75,21 @@ pub fn exec_map_with_custom(
 pub fn exec_find(
     recv: &Value,
     args_expr: &[Expr],
-    base_vars: Option<&HashMap<String, Value>>,
+    ctx: &dyn EvaluationContext,
 ) -> Result<Value, Error> {
-    let recv_array = match recv {
-        Value::Array(a) => a,
-        _ => return Err(Error::new("find called on non-array", None)),
-    };
+    let items = recv_items(recv, "find")?;
+    let lambda_expr = args_expr
+        .first()
+        .ok_or_else(|| Error::new("find expects lambda expression", None))?;
+    let param = param_name(args_expr, 1, "x");
 
-    if args_expr.is_empty() {
-        return Err(Error::new("find expects lambda expression", None));
-    }
-
-    let lambda_expr = &args_expr[0];
-    let param_name = if args_expr.len() > 1 {
-        match &args_expr[1] {
-            Expr::StringLit(s) => s.clone(),
-            _ => "x".to_string(),
-        }
-    } else {
-        "x".to_string()
-    };
-
-    let mut vars = base_vars.cloned().unwrap_or_default();
-
-    for item in recv_array {
-        vars.insert(param_name.clone(), item.clone());
-        let result = eval_with_vars(lambda_expr, &vars)?;
-        if let Value::Boolean(true) = result {
+    let mut scope = lambda_scope(ctx);
+    for item in items {
+        scope.set(&param, item.clone());
+        if let Value::Boolean(true) = Evaluator::eval(lambda_expr, &scope)? {
             return Ok(item.clone());
         }
     }
-
-    Ok(Value::Null)
-}
-
-/// Handle FIND method call with custom function support
-pub fn exec_find_with_custom(
-    recv: &Value,
-    args_expr: &[Expr],
-    base_vars: Option<&HashMap<String, Value>>,
-    custom_registry: &Arc<RwLock<FunctionRegistry>>,
-) -> Result<Value, Error> {
-    let recv_array = match recv {
-        Value::Array(a) => a,
-        _ => return Err(Error::new("find called on non-array", None)),
-    };
-
-    if args_expr.is_empty() {
-        return Err(Error::new("find expects lambda expression", None));
-    }
-
-    let lambda_expr = &args_expr[0];
-    let param_name = if args_expr.len() > 1 {
-        match &args_expr[1] {
-            Expr::StringLit(s) => s.clone(),
-            _ => "x".to_string(),
-        }
-    } else {
-        "x".to_string()
-    };
-
-    let mut vars = base_vars.cloned().unwrap_or_default();
-
-    for item in recv_array {
-        vars.insert(param_name.clone(), item.clone());
-        let result = eval_with_vars_and_custom(lambda_expr, &vars, custom_registry)?;
-        if let Value::Boolean(true) = result {
-            return Ok(item.clone());
-        }
-    }
-
     Ok(Value::Null)
 }
 
@@ -241,97 +97,26 @@ pub fn exec_find_with_custom(
 pub fn exec_reduce(
     recv: &Value,
     args_expr: &[Expr],
-    base_vars: Option<&HashMap<String, Value>>,
+    ctx: &dyn EvaluationContext,
 ) -> Result<Value, Error> {
-    let recv_array = match recv {
-        Value::Array(a) => a,
-        _ => return Err(Error::new("reduce called on non-array", None)),
-    };
-
+    let items = recv_items(recv, "reduce")?;
     if args_expr.len() < 2 {
         return Err(Error::new(
             "reduce expects lambda expression and initial value",
             None,
         ));
     }
-
     let lambda_expr = &args_expr[0];
-    let mut vars = base_vars.cloned().unwrap_or_default();
-    let mut accumulator = eval_with_vars(&args_expr[1], &vars)?;
+    let mut scope = lambda_scope(ctx);
+    let mut accumulator = Evaluator::eval(&args_expr[1], &scope)?;
+    let val_param = param_name(args_expr, 2, "x");
+    let acc_param = param_name(args_expr, 3, "acc");
 
-    let val_param = if args_expr.len() > 2 {
-        match &args_expr[2] {
-            Expr::StringLit(s) => s.clone(),
-            _ => "x".to_string(),
-        }
-    } else {
-        "x".to_string()
-    };
-
-    let acc_param = if args_expr.len() > 3 {
-        match &args_expr[3] {
-            Expr::StringLit(s) => s.clone(),
-            _ => "acc".to_string(),
-        }
-    } else {
-        "acc".to_string()
-    };
-
-    for item in recv_array {
-        vars.insert(val_param.clone(), item.clone());
-        vars.insert(acc_param.clone(), accumulator);
-        accumulator = eval_with_vars(lambda_expr, &vars)?;
+    for item in items {
+        // Same order as before: when both names are equal the accumulator wins.
+        scope.set(&val_param, item.clone());
+        scope.set(&acc_param, accumulator);
+        accumulator = Evaluator::eval(lambda_expr, &scope)?;
     }
-
-    Ok(accumulator)
-}
-
-/// Handle REDUCE method call with custom function support
-pub fn exec_reduce_with_custom(
-    recv: &Value,
-    args_expr: &[Expr],
-    base_vars: Option<&HashMap<String, Value>>,
-    custom_registry: &Arc<RwLock<FunctionRegistry>>,
-) -> Result<Value, Error> {
-    let recv_array = match recv {
-        Value::Array(a) => a,
-        _ => return Err(Error::new("reduce called on non-array", None)),
-    };
-
-    if args_expr.len() < 2 {
-        return Err(Error::new(
-            "reduce expects lambda expression and initial value",
-            None,
-        ));
-    }
-
-    let lambda_expr = &args_expr[0];
-    let mut vars = base_vars.cloned().unwrap_or_default();
-    let mut accumulator = eval_with_vars_and_custom(&args_expr[1], &vars, custom_registry)?;
-
-    let val_param = if args_expr.len() > 2 {
-        match &args_expr[2] {
-            Expr::StringLit(s) => s.clone(),
-            _ => "x".to_string(),
-        }
-    } else {
-        "x".to_string()
-    };
-
-    let acc_param = if args_expr.len() > 3 {
-        match &args_expr[3] {
-            Expr::StringLit(s) => s.clone(),
-            _ => "acc".to_string(),
-        }
-    } else {
-        "acc".to_string()
-    };
-
-    for item in recv_array {
-        vars.insert(val_param.clone(), item.clone());
-        vars.insert(acc_param.clone(), accumulator);
-        accumulator = eval_with_vars_and_custom(lambda_expr, &vars, custom_registry)?;
-    }
-
     Ok(accumulator)
 }
