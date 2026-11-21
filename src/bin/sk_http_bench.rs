@@ -224,11 +224,9 @@ fn run_warmup(config: &BenchConfig) {
     }
 }
 
-fn run_expression_tests(config: &BenchConfig) {
-    println!("📊 Expression Performance Tests");
-    println!("===============================");
-
-    let test_cases = [
+/// Expressions timed by `run_expression_tests`; each must evaluate successfully.
+fn expression_cases() -> [TestCase; 6] {
+    [
         TestCase {
             name: "Simple arithmetic",
             expression: "2+2",
@@ -250,8 +248,11 @@ fn run_expression_tests(config: &BenchConfig) {
             expected_complexity: "Medium",
         },
         TestCase {
+            // Skillet has no RANGE function; a 50-item literal is the same workload as 1..50.
             name: "Range operations",
-            expression: "range(1,50).sum()",
+            expression: "[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,\
+                     26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50]\
+                     .sum()",
             expected_complexity: "High",
         },
         TestCase {
@@ -259,7 +260,14 @@ fn run_expression_tests(config: &BenchConfig) {
             expression: "[1,2,3,4,5,6,7,8,9,10].map(:x*2).filter(:x>10).sum()",
             expected_complexity: "High",
         },
-    ];
+    ]
+}
+
+fn run_expression_tests(config: &BenchConfig) {
+    println!("📊 Expression Performance Tests");
+    println!("===============================");
+
+    let test_cases = expression_cases();
 
     for test_case in &test_cases {
         println!(
@@ -521,4 +529,17 @@ fn url_encode(s: &str) -> String {
             c => format!("%{:02X}", c as u8),
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_expression_case_evaluates() {
+        for case in expression_cases() {
+            let result = skillet::evaluate_with_assignments(case.expression, &Default::default());
+            assert!(result.is_ok(), "{}: {:?}", case.name, result);
+        }
+    }
 }
