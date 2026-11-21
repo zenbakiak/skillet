@@ -9,6 +9,7 @@ pub mod string_methods;
 use crate::ast::Expr;
 use crate::custom::FunctionRegistry;
 use crate::error::Error;
+use crate::runtime::evaluator::{eval_arg, EmptyContext, EvaluationContext, VariableContext};
 use crate::types::Value;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
@@ -19,7 +20,7 @@ pub use lambda_methods::{exec_filter, exec_find, exec_map, exec_reduce};
 pub use predicates::exec_predicate;
 pub use string_methods::exec_string_method;
 
-/// Main method dispatch function with improved architecture
+/// Method dispatch over a copy-free variable view (kept for callers outside the evaluator).
 pub fn exec_method(
     name: &str,
     predicate: bool,
@@ -27,45 +28,19 @@ pub fn exec_method(
     args_expr: &[Expr],
     base_vars: Option<&HashMap<String, Value>>,
 ) -> Result<Value, Error> {
-    if predicate {
-        return exec_predicate(name, recv);
-    }
-
-    // Compute lowercase once for all dispatch checks
-    let lname = name.to_lowercase();
-
-    // Check for conversion methods first (available on all types)
-    match lname.as_str() {
-        "to_s" | "to_string" | "to_i" | "to_int" | "to_f" | "to_float" | "to_a" | "to_array"
-        | "to_json" | "to_bool" | "to_boolean" => {
-            return exec_conversion_method(name, recv);
-        }
-        _ => {}
-    }
-
-    // Dispatch to appropriate method handler based on receiver type
-    match recv {
-        Value::String(_) => exec_string_method(name, recv, args_expr, base_vars),
-        Value::Array(_) => {
-            // Check for higher-order functions first
-            match lname.as_str() {
-                "filter" => exec_filter(recv, args_expr, base_vars),
-                "map" => exec_map(recv, args_expr, base_vars),
-                "find" => exec_find(recv, args_expr, base_vars),
-                "reduce" => exec_reduce(recv, args_expr, base_vars),
-                _ => exec_array_method(name, recv, args_expr, base_vars),
-            }
-        }
-        Value::Number(_) => exec_number_method(name, recv, args_expr, base_vars),
-        Value::Json(_) => exec_json_method(name, recv, args_expr, base_vars),
-        _ => Err(Error::new(
-            format!("No methods available for {:?} type", recv),
-            None,
-        )),
+    match base_vars {
+        Some(vars) => exec_method_in(
+            name,
+            predicate,
+            recv,
+            args_expr,
+            &VariableContext::new(vars),
+        ),
+        None => exec_method_in(name, predicate, recv, args_expr, &EmptyContext),
     }
 }
 
-/// Main method dispatch function with custom function support
+/// Method dispatch with custom functions visible inside lambda bodies.
 pub fn exec_method_with_custom(
     name: &str,
     predicate: bool,
@@ -74,6 +49,21 @@ pub fn exec_method_with_custom(
     base_vars: Option<&HashMap<String, Value>>,
     custom_registry: &Arc<RwLock<FunctionRegistry>>,
 ) -> Result<Value, Error> {
+    let empty = HashMap::new();
+    let ctx = VariableContext::with_custom(base_vars.unwrap_or(&empty), custom_registry);
+    exec_method_in(name, predicate, recv, args_expr, &ctx)
+}
+
+/// Method dispatch used by the evaluator. Arguments and lambda bodies are evaluated against
+/// `ctx` without copying it; lambda bodies see `ctx`'s custom registry, plain method
+/// arguments do not (unchanged behaviour, see `eval_arg`).
+pub(crate) fn exec_method_in(
+    name: &str,
+    predicate: bool,
+    recv: &Value,
+    args_expr: &[Expr],
+    ctx: &dyn EvaluationContext,
+) -> Result<Value, Error> {
     if predicate {
         return exec_predicate(name, recv);
     }
@@ -92,39 +82,19 @@ pub fn exec_method_with_custom(
 
     // Dispatch to appropriate method handler based on receiver type
     match recv {
-        Value::String(_) => exec_string_method(name, recv, args_expr, base_vars),
+        Value::String(_) => exec_string_method(name, recv, args_expr, ctx),
         Value::Array(_) => {
             // Check for higher-order functions first
             match lname.as_str() {
-                "filter" => lambda_methods::exec_filter_with_custom(
-                    recv,
-                    args_expr,
-                    base_vars,
-                    custom_registry,
-                ),
-                "map" => lambda_methods::exec_map_with_custom(
-                    recv,
-                    args_expr,
-                    base_vars,
-                    custom_registry,
-                ),
-                "find" => lambda_methods::exec_find_with_custom(
-                    recv,
-                    args_expr,
-                    base_vars,
-                    custom_registry,
-                ),
-                "reduce" => lambda_methods::exec_reduce_with_custom(
-                    recv,
-                    args_expr,
-                    base_vars,
-                    custom_registry,
-                ),
-                _ => exec_array_method(name, recv, args_expr, base_vars),
+                "filter" => exec_filter(recv, args_expr, ctx),
+                "map" => exec_map(recv, args_expr, ctx),
+                "find" => exec_find(recv, args_expr, ctx),
+                "reduce" => exec_reduce(recv, args_expr, ctx),
+                _ => exec_array_method(name, recv, args_expr, ctx),
             }
         }
-        Value::Number(_) => exec_number_method(name, recv, args_expr, base_vars),
-        Value::Json(_) => exec_json_method(name, recv, args_expr, base_vars),
+        Value::Number(_) => exec_number_method(name, recv, args_expr, ctx),
+        Value::Json(_) => exec_json_method(name, recv, args_expr, ctx),
         _ => Err(Error::new(
             format!("No methods available for {:?} type", recv),
             None,
@@ -137,7 +107,7 @@ fn exec_number_method(
     name: &str,
     recv: &Value,
     args_expr: &[Expr],
-    base_vars: Option<&HashMap<String, Value>>,
+    ctx: &dyn EvaluationContext,
 ) -> Result<Value, Error> {
     let num = match recv {
         Value::Number(n) => *n,
@@ -155,12 +125,7 @@ fn exec_number_method(
             if args_expr.is_empty() {
                 Ok(Value::Number(num.round()))
             } else {
-                use crate::runtime::evaluator::{eval, eval_with_vars};
-                let precision_val = if let Some(vars) = base_vars {
-                    eval_with_vars(&args_expr[0], vars)?
-                } else {
-                    eval(&args_expr[0])?
-                };
+                let precision_val = eval_arg(&args_expr[0], ctx)?;
                 let precision = match precision_val {
                     Value::Number(p) => p as i32,
                     _ => return Err(Error::new("round precision must be number", None)),
@@ -192,18 +157,8 @@ fn exec_number_method(
             if args_expr.len() != 2 {
                 return Err(Error::new("between expects 2 arguments: min, max", None));
             }
-
-            use crate::runtime::evaluator::{eval, eval_with_vars};
-            let min_val = if let Some(vars) = base_vars {
-                eval_with_vars(&args_expr[0], vars)?
-            } else {
-                eval(&args_expr[0])?
-            };
-            let max_val = if let Some(vars) = base_vars {
-                eval_with_vars(&args_expr[1], vars)?
-            } else {
-                eval(&args_expr[1])?
-            };
+            let min_val = eval_arg(&args_expr[0], ctx)?;
+            let max_val = eval_arg(&args_expr[1], ctx)?;
 
             let min = match min_val {
                 Value::Number(n) => n,
@@ -227,7 +182,7 @@ fn exec_json_method(
     name: &str,
     recv: &Value,
     args_expr: &[Expr],
-    base_vars: Option<&HashMap<String, Value>>,
+    ctx: &dyn EvaluationContext,
 ) -> Result<Value, Error> {
     let json_str = match recv {
         Value::Json(s) => s,
@@ -268,13 +223,7 @@ fn exec_json_method(
             if args_expr.is_empty() {
                 return Err(Error::new("has_key method expects 1 argument", None));
             }
-
-            use crate::runtime::evaluator::{eval, eval_with_vars};
-            let key_val = if let Some(vars) = base_vars {
-                eval_with_vars(&args_expr[0], vars)?
-            } else {
-                eval(&args_expr[0])?
-            };
+            let key_val = eval_arg(&args_expr[0], ctx)?;
             let key = match key_val {
                 Value::String(s) => s,
                 _ => return Err(Error::new("has_key method expects string argument", None)),
@@ -298,18 +247,9 @@ fn exec_json_method(
                     None,
                 ));
             }
-            use crate::runtime::evaluator::{eval, eval_with_vars};
-            let path_val = if let Some(vars) = base_vars {
-                eval_with_vars(&args_expr[0], vars)?
-            } else {
-                eval(&args_expr[0])?
-            };
+            let path_val = eval_arg(&args_expr[0], ctx)?;
             let default_val = if args_expr.len() > 1 {
-                Some(if let Some(vars) = base_vars {
-                    eval_with_vars(&args_expr[1], vars)?
-                } else {
-                    eval(&args_expr[1])?
-                })
+                Some(eval_arg(&args_expr[1], ctx)?)
             } else {
                 None
             };
