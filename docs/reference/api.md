@@ -40,6 +40,17 @@ admin-token check. Details: [limits](../guide/limits.md#server-request-limits-1-
 - `^` - Exponentiation
 - `=` - Equals prefix (Excel-style)
 
+The arithmetic operators never produce NaN or infinity (BL-054, ADR-0018). Division or `%` by 0
+and `0 ^` a negative number are `Error: Division by zero (#DIV/0!)`; `0 ^ 0` and any result that
+is not a finite number (overflow, a non-real power) are a `#NUM!` error.
+```bash
+7 / 2                        # 3.5
+1 / 0                        # Error: Division by zero (#DIV/0!)
+0 / 0                        # Error: Division by zero (#DIV/0!)
+10 ^ 400                     # Error: Result is not a finite number (#NUM!)
+0 ^ 0                        # Error: 0 ^ 0 is undefined (#NUM!)
+```
+
 ### Comparison Operators
 - `>` - Greater than
 - `<` - Less than
@@ -216,11 +227,12 @@ Median value.
 MEDIAN(1, 2, 3, 4, 5)        # 3
 MEDIAN(1, 2, 3, 4)           # 2.5
 MEDIAN()                     # Error: MEDIAN of no numbers (#NUM!)
-MEDIAN(1, 0/0, 3)            # Error: Cannot sort NaN values
+MEDIAN(:data)                # Error: Cannot sort NaN values, when :data holds a NaN
 ```
 
 `MEDIAN`, `PERCENTILE_INC`, `QUARTILE_INC`, `SORT` and `.sort()` sort their data first. If the data
-contains NaN (for example from `0/0`), they return the error `Cannot sort NaN values`.
+contains NaN, they return the error `Cannot sort NaN values`. Expressions cannot make NaN (`0/0` is
+an error), but a host program can pass one in a variable.
 
 #### `MODE.SNGL(...)`
 Most frequently occurring value; the first one seen wins a tie. If no value repeats, it is an
@@ -373,19 +385,18 @@ DATE(2023, 12, 25)           # Unix timestamp for Dec 25, 2023
 ```
 
 #### `TIME()`, `TIME(hour, minute, second)`
-Seconds since midnight (Skillet works in seconds where Excel returns a fraction of a day). With
-three arguments it follows Excel's rules: each part is truncated, a part above 32767 is an error,
-a negative minute or second is allowed while the total is not negative, and the total wraps at 24
-hours. With no arguments it returns the current local time as seconds since midnight. One or two
-arguments are an error.
+The time as a fraction of a day, as in Excel (ADR-0018): `TIME(12, 0, 0)` is 0.5. Each part is
+truncated, a part above 32767 is an error, a negative minute or second is allowed while the total
+is not negative, and the total wraps at 24 hours. With no arguments it returns the current local
+time in the same unit. One or two arguments are an error. Multiply by 86400 for seconds.
 ```bash
-TIME(14, 30, 0)              # 52200 (2:30 PM in seconds)
-TIME(1, 2, 3)                # 3723
-TIME(25, 0, 0)               # 3600 (wraps to 1:00)
-TIME(0, 750, 0)              # 45000 (750 minutes = 12:30)
-TIME(1, -30, 0)              # 1800
+TIME(14, 30, 0)              # 0.6041666666666666 (2:30 PM)
+TIME(12, 0, 0)               # 0.5
+TIME(25, 0, 0)               # 0.041666666666666664 (wraps to 1:00)
+TIME(0, 750, 0)              # 0.5208333333333334 (750 minutes = 12:30)
 TIME(0, -1, 0)               # Error: TIME is before midnight (#NUM!)
-TIME()                       # current local time, e.g. 81236 (22:33:56)
+TIME(14, 30, 0) * 86400      # 52200 (seconds since midnight)
+TIME()                       # current local time, e.g. 0.9402 (22:33:56)
 TIME(14, 30)                 # Error: TIME expects either no arguments or three arguments (hour, minute, second)
 ```
 

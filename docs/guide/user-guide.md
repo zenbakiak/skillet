@@ -850,8 +850,8 @@ sk "=CONCAT(:name.upper(), ' ', :age)" name="alice" age=25  # "ALICE (25)"
 # Current date/time
 sk "=NOW()"                                    # Current Unix timestamp
 sk "=DATE(2023, 12, 25)"                      # Unix timestamp for Dec 25, 2023
-sk "=TIME(14, 30, 0)"                         # 52200, seconds since midnight for 2:30 PM
-sk "=TIME(25, 0, 0)"                          # 3600 (wraps at 24 hours, as in Excel)
+sk "=TIME(14, 30, 0)"                         # 0.6041666666666666, 2:30 PM as a fraction of a day
+sk "=TIME(25, 0, 0)"                          # 0.041666666666666664 (wraps at 24 hours, as in Excel)
 
 # Date extraction
 sk "=YEAR(NOW())"                              # Current year
@@ -1019,7 +1019,8 @@ sk "=:sales * IF(:sales > 100000, 0.08, IF(:sales > 50000, 0.06, 0.04))" sales=7
 
 These follow Excel: where Excel returns `#DIV/0!`, `#NUM!` or `#VALUE!` (for example `SQRT(-1)`,
 `MOD(5, 0)`, `AVERAGE()` of no numbers, `ABS("x")`), Skillet returns an error. `MAX` and `MIN`
-of no numbers are 0, as in Excel.
+of no numbers are 0, as in Excel. The operators follow the same rule: `1 / 0`, `0 / 0` and `5 % 0`
+are `Division by zero`, and a result that overflows (`10 ^ 400`) is a `#NUM!` error.
 
 ### Statistical Functions
 - `STDEV.P(...)` - Population standard deviation
@@ -1053,7 +1054,7 @@ of no numbers are 0, as in Excel.
 ### Date/Time Functions
 - `NOW()` - Current timestamp
 - `DATE(year, month, day)` - Create date
-- `TIME(hour, minute, second)` - Seconds since midnight (`hour*3600 + minute*60 + second`, parts truncated, wrapped at 24 hours as in Excel); `TIME()` is the current local time in seconds since midnight
+- `TIME(hour, minute, second)` - Time as a fraction of a day, as in Excel (`TIME(12, 0, 0)` is 0.5; parts truncated, wrapped at 24 hours); `TIME()` is the current local time in the same unit
 - `YEAR(date)` - Extract year
 - `MONTH(date)` - Extract month
 - `DAY(date)` - Extract day
