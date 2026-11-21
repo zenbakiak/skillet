@@ -225,15 +225,15 @@ Review (orchestrator, 2026-11-20): accepted. fmt commit verified as pure `cargo 
   on parent, identical tree); 239 tests pass before and after; clippy 92 → 0; strict gate default.
   Follow-ups: BL-025 (bins without plugins), BL-026 (PERCENTILE NaN). `style` type added to ADR-0009 hook.
 
-### BL-004 · CI parity with the harness gate · P1 · `todo` · release-engineer (QA defines checks)
+### BL-004 · CI parity with the harness gate · P1 · `review` (PR #50) · release-engineer (QA defines checks)
 `.github/workflows/rust.yml` only runs build/test on `main`. Run `./harness/check.sh` on push/PR
 to `main` and `develop`, add cargo cache, and a `--no-default-features` job.
 
-### BL-005 · Performance baseline · P1 · `todo` · performance-engineer
+### BL-005 · Performance baseline · P1 · `done` (PR #48) · performance-engineer
 Pick 10 representative expressions (arithmetic, string, array lambda, JQ, JSON vars, financial)
 and record eval latency (lib, CLI, HTTP) in `benches/BASELINE.md`. All perf items depend on this.
 
-### BL-006 · Fix false or broken documentation · P1 · `todo` · docs-engineer
+### BL-006 · Fix false or broken documentation · P1 · `done` (PR #49) · docs-engineer
 - `Cargo.toml` `include` lists `DAEMON_DEPLOYMENT_GUIDE.md`, `DAEMON_FLAG_GUIDE.md` (deleted).
 - `docs/README.md` links `performance-optimization.prd.md` (missing).
 - `docs/DEVELOPMENT_GUIDE.md` claims lexer string interning and AST memory pooling — not true in code.
@@ -244,11 +244,11 @@ and record eval latency (lib, CLI, HTTP) in `benches/BASELINE.md`. All perf item
 ### BL-007 · Rustdoc for the public API · P2 · `todo` · docs-engineer
 Every `pub fn` in `src/lib.rs` gets docs + runnable doctest; fix `parse` docstring ("arithmetic").
 
-### BL-008 · De-duplicate `lib.rs` entry points · P2 · `todo` · rust-engineer
+### BL-008 · De-duplicate `lib.rs` entry points · P2 · `done` (PR #47) · rust-engineer
 `evaluate_with_json` and `evaluate_with_json_custom` copy the same JSON→vars block. Extract one
 private helper. Consider an `Engine`/builder API via ADR (keep old fns as thin wrappers).
 
-### BL-009 · Consolidate docs into `docs/` tree · P2 · `todo` · docs-engineer
+### BL-009 · Consolidate docs into `docs/` tree · P2 · `done` (PR #49) · docs-engineer
 11 root-level `.md` files overlap (`ALPINE_*` ×3, `DOCUMENTATION.md` vs `API_REFERENCE.md`
 vs `docs/DEVELOPMENT_GUIDE.md`). Move to layout in `harness/roles/docs-engineer.md`.
 
@@ -267,11 +267,11 @@ Servers re-parse identical expressions per request; `Rc<Expr>` blocks sharing ac
 Gate `libc` daemon code behind `#[cfg(unix)]` (`src/bin/http_server/daemon.rs`, `sk_server.rs`).
 Re-add Windows target to `release-binaries.yml`.
 
-### BL-014 · Toolchain modernization · P3 · `todo` · release-engineer (needs ADR)
+### BL-014 · Toolchain modernization · P3 · `in-progress` (MSRV decided: ADR-0012, PR #50; edition 2024 and LazyLock still open) · release-engineer (needs ADR)
 Rust 1.81 → current stable, edition 2024, `lazy_static`/`once_cell` → `std::sync::LazyLock`,
 `cargo update` + `cargo outdated` review.
 
-### BL-015 · Repo hygiene · P3 · `todo` · docs-engineer
+### BL-015 · Repo hygiene · P3 · `done` (PR #49) · docs-engineer
 Remove or relocate `test_js_upload.py`, `test_large_request.py`, `performance_results/*.log`,
 `SETUP_COMPLETE.md`; check `.DS_Store`, `dist/`, `.env` are ignored.
 
@@ -394,12 +394,12 @@ Review (orchestrator, 2026-11-20): accepted. Verified in release: 20k parens, 50
   tests/security_limits.rs edited; strict clippy clean (both feature sets). Parser refactor is
   bigger than briefed but covered by parity + full suite. Known gap → BL-029.
 
-### BL-018 · QuickJS resource limits + constant-time token compare · P1 · `todo` · security-reviewer → rust-engineer
+### BL-018 · QuickJS resource limits + constant-time token compare · P1 · `in-progress` (constant-time tokens in PR #51; QuickJS limits need a decision) · security-reviewer → rust-engineer
 `src/js_plugin.rs` sets no memory limit or interrupt handler (an uploaded `while(true){}` pins a
 worker forever). `src/bin/http_server/auth.rs` compares tokens with `!=`. Write the threat model
 `docs/security/THREAT_MODEL.md` as part of this item.
 
-### BL-019 · Fuzzing + `cargo audit` in CI · P2 · `todo` · security-reviewer + release-engineer
+### BL-019 · Fuzzing + `cargo audit` in CI · P2 · `in-progress` (cargo audit in PR #50; fuzzing needs a dependency decision) · security-reviewer + release-engineer
 `cargo fuzz` target over `parse` and `evaluate_with_json` (PRD-003 FR-8); `cargo audit` job in CI.
 
 ### BL-020 · Excel-compatibility audit of shared function names · P2 · `todo` · language-designer
@@ -407,7 +407,7 @@ For each builtin that shares an Excel name: argument order and edge cases match,
 is documented. Output is a table QA turns into tests. Also decide the canonical form
 (`SUM(:a)` vs `:a.sum()`) and string → DateTime cast formats.
 
-### BL-021 · `CHANGELOG.md` + release checklist dry run · P2 · `todo` · release-engineer
+### BL-021 · `CHANGELOG.md` + release checklist dry run · P2 · `review` (PR #50) · release-engineer
 Create root `CHANGELOG.md` (Keep a Changelog) back-filled from git tags, and run
 `cargo publish --dry-run` / `cargo package --list` (expected to catch the BL-006 `include` issue).
 
@@ -424,7 +424,7 @@ null, SQL says unknown) and the rule for `NULL != NULL`; ADR if it changes resul
 `.map(JQ(:x, "$.a[*]").sum())` fails on rows with one element. Decide whether wildcard paths
 always return arrays; breaking change needs an ADR.
 
-### BL-025 · Binaries don't build with `--no-default-features` · P2 · `todo` · release-engineer + rust-engineer
+### BL-025 · Binaries don't build with `--no-default-features` · P2 · `review` (PR #50) · release-engineer + rust-engineer
 `src/bin/*` import `JSPluginLoader`/`js_plugin` unconditionally. Gate those imports on
 `#[cfg(feature = "plugins")]` (preferred: servers still work without JS) or set
 `required-features = ["plugins"]` per bin. Then extend `harness/check.sh` to build all targets without plugins.
@@ -877,13 +877,13 @@ Review (orchestrator, 2026-11-20): BL-027 accepted. 027b budget, 027c/e re-attac
   Changelog "Added": MAX_EVAL_BYTES, EvalLimits, with_limits; "Changed": copying-read charge,
   A11 boundary, server 10 s deadline, 64 KiB cache cap, oversized-response rejection.
 
-### BL-028 · Document the nesting depth limit · P3 · `todo` · docs-engineer
+### BL-028 · Document the nesting depth limit · P3 · `done` (PR #49) · docs-engineer
 BL-017b added `MAX_NESTING_DEPTH = 128` (`skillet::MAX_NESTING_DEPTH`) and the error
 "Expression nested too deeply (max 128)". It applies to expression nesting (parens, brackets,
 calls, unary/ternary, operator and `.`/`[]` chains) and to arrays built at runtime. Add it to
 `DOCUMENTATION.md` / `API_REFERENCE.md` (limits section) and the HTTP error docs.
 
-### BL-029 · Debug-build parser stack use (~20 KB per nesting level) · P3 · `todo` · performance-engineer → rust-engineer
+### BL-029 · Debug-build parser stack use (~20 KB per nesting level) · P3 · `done` (PR #48) · performance-engineer → rust-engineer
 After BL-017, depth 128 still overflows a default 2 MB thread in **debug** builds (release is fine
 down to 1 MB). Affects embedders spawning threads in debug and in-process tests. Fix by folding the
 binary precedence levels into one precedence-climbing loop and shrinking `parse_atom`'s frame;
@@ -975,17 +975,17 @@ Found in BL-030 (pre-existing, preserved): custom functions work inside `.map()/
 not in plain method arguments (`:s.contains(MYFN())`) or in `FILTER()/MAP()`-style builtin lambdas.
 Decide whether that is intended; likely not (one evaluator, one function namespace).
 
-### BL-032 · `sk_concurrency` flakes when the release `sk` is stale · P2 · `todo` · qa-engineer
+### BL-032 · `sk_concurrency` flakes when the release `sk` is stale · P2 · `review` (PR #50) · qa-engineer
 `tests/sk_concurrency.rs` runs `cargo run --release` from parallel tests; if the release binary is out
 of date they rebuild concurrently and some fail. Build once up front (or use `CARGO_BIN_EXE_*`).
 
-### BL-033 · sk_server reads request lines without a size cap or read timeout · P1 · `todo` · rust-engineer
+### BL-033 · sk_server reads request lines without a size cap or read timeout · P1 · `done` (PR #51) · rust-engineer
 Found in BL-027c (pre-existing). `handle_client` uses `BufReader::lines()` on the raw socket: one
 connection sending a 300 MB line without `\n` grew the process to 308 MB RSS (linear in input; no
 cap like sk_http_server's 1 MB, no read timeout). One client can OOM the server. Fix: bounded line
 reader (e.g. 1 MB, same as HTTP) + `set_read_timeout`; regression test with an oversized line.
 
-### BL-034 · sk_http_server truncates large responses · P3 · `todo` · rust-engineer
+### BL-034 · sk_http_server truncates large responses · P3 · `done` (PR #51) · rust-engineer
 Found in BL-027c. A 20 MB string result: headers say `Content-Length: 20000086`, curl receives
 ~327 KB and the connection closes. Probably the write path/close sequence in
 `http_server/utils.rs::send_http_response`. Not a memory issue; correctness for large results.
@@ -1004,7 +1004,7 @@ Making values shared (`Rc`/`Arc` inside `Value`, or a borrowed-read evaluation p
 O(1), remove the ADR-0011 Amendment 2 read charge, and speed up every formula over large variables.
 Changes the core `Value` type, so it needs an ADR and a characterization pass first.
 
-### BL-037 · sk_http_server: no total deadline for reading a request (slowloris) · P2 · `todo` · rust-engineer
+### BL-037 · sk_http_server: no total deadline for reading a request (slowloris) · P2 · `done` (PR #51) · rust-engineer
 Found in BL-027e (pre-existing on Linux; reachable on macOS since 58cc5b7 made accepted sockets
 blocking). The 30 s read timeout is per `read`, so a client sending one byte every < 30 s holds a
 worker until it has sent 1 MB. Measured, 1 worker: an idle client delays the next request 29.7 s.
@@ -1015,3 +1015,55 @@ regression test with a trickling client. Same fix shape as BL-033 for sk_server.
 BL-027 added a per-operation deadline tick and charge calls; `lambda_scope` shows +6–11% vs
 develop bf7c20a. Profile and trim (e.g. batch ticks per lambda iteration instead of per op, cheaper
 fast path in `check_value`). BL-036 (shared values) would also remove the copying-read charge.
+
+---
+Parallel lanes, 2026-11-20 (orchestrator). Five worktrees, one PR each: #47 (BL-008), #48 (BL-005,
+BL-029), #49 (BL-006, BL-028, BL-009, BL-015), #50 (BL-004, BL-032, BL-025, BL-019 audit, BL-021,
+ADR-0012), #51 (BL-033, BL-037, BL-034, BL-018 tokens). Follow-ups found by the lanes:
+
+### BL-039 · HTTP latency floor from the 1 ms accept-loop sleep · P2 · `todo` · performance-engineer → rust-engineer
+BL-005: every request (even `/health`, cached or not) costs ~1.25 ms because `sk_http_server`'s
+non-blocking accept loop sleeps 1 ms when `accept` would block. Use a blocking accept (shutdown via
+a wake-up connection or flag) or a much shorter wait; re-measure with `benches/baseline.rs`.
+
+### BL-040 · Profile CLI start-up (~2 ms above process start) · P3 · `todo` · performance-engineer
+BL-005: one `sk` call is ~2.9 ms vs ~0.9 ms for `/usr/bin/true`. Suspect QuickJS runtime creation
+and hooks loading. Profile before changing anything.
+
+### BL-041 · `sk_http_bench` "Range operations" case always fails · P3 · `todo` · qa-engineer
+Uses `range(1,50).sum()`; there is no RANGE function. Fix or drop the case.
+
+### BL-042 · Remove or feature-gate `scalar-doc` · P2 · `todo` · release-engineer (dependency decision)
+Most `cargo audit` warnings (anyhow, rand, chrono-tz, the fixed crossbeam-epoch) and the edition-2024
+MSRV pressure come through `scalar-doc` → `tera`, used only for the `/docs` page.
+
+### BL-043 · Bump `lru` 0.16 → 0.18+ (RUSTSEC-2026-0253, unsound `pop()`) · P2 · `todo` · rust-engineer
+Direct dependency; `http_server/cache.rs` calls `LruCache::pop()`. `Cargo.toml` change.
+
+### BL-044 · Release workflows use floating `stable` without `--locked` · P2 · `todo` · release-engineer
+`release-binaries.yml`, `crate-release.yml`: pin the toolchain (ADR-0012) and build `--locked`.
+
+### BL-045 · `documentation.html` read from the working directory at runtime · P3 · `todo` · rust-engineer
+`load_html_file` in `http_server/utils.rs`; installed binaries serve the fallback page. Use `include_str!`.
+
+### BL-046 · sk_server: deadline resets on non-work lines · P2 · `todo` · security-reviewer → rust-engineer
+Lane 1 review: blank, invalid-JSON and wrong-token lines reset the 30 s deadline, so an
+unauthenticated client can keep a worker by sending `\n` every 29 s (develop: forever by sending
+nothing). Don't reset on non-work lines / close after auth failure; add idle and per-connection limits.
+
+### BL-047 · No total deadline for writing responses (slow-read) · P3 · `todo` · rust-engineer
+Both servers: `WRITE_TIMEOUT` is per write syscall. Add a `DeadlineWriter` mirroring the reader.
+
+### BL-048 · Empty token silently disables auth · P2 · `todo` · rust-engineer
+`SKILLET_AUTH_TOKEN=""` / `--token ""` / `--admin-token ""` give `Some("")`, so tokenless requests
+pass while the server prints "Token auth: enabled". Reject empty tokens at start-up.
+
+### BL-049 · sk_http_server: real 408/413 status codes, drain before close · P3 · `todo` · rust-engineer
+All read errors are sent as HTTP 400 (the code is only in the body); on 413 it closes with unread
+input, so a TCP reset can drop the error. Reuse sk_server's bounded drain.
+
+### BL-050 · Docs/tooling leftovers from lane 5 · P3 · `todo` · docs-engineer
+`.gitignore` `*.prd.*` hides future docs; ADR-0002 consequences are stale after BL-001/BL-030 (add a
+status note); bench scripts still mention copy-on-write / buffer pooling; `Dockerfile.alpine-builder`
+builds only aarch64 (release-engineer to decide x86_64); `Cargo.toml` has no `repository` field;
+document the 404 for JS endpoints in plugin-free builds and the server request limits (1 MB, 30 s).
