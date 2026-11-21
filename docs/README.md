@@ -1,77 +1,38 @@
-# Skillet Documentation Index
+# Skillet documentation index
 
-Welcome to the Skillet documentation! Here you'll find everything you need to get started with the high-performance expression engine.
+One topic, one home. Start with the [README](../README.md) for the pitch, install and examples.
 
-## 📚 Documentation Structure
+## Guide (`docs/guide/`)
+- [User guide](guide/user-guide.md) — CLI, Rust library, JSON, plugins, language walkthrough
+- [Installation](guide/installation.md) — prebuilt binaries, install script, build from source
+- [Servers](guide/servers.md) — `sk_server` / `sk_client` (TCP) usage and clients in other languages
+- [Limits](guide/limits.md) — nesting depth, evaluation budget, server deadline, `with_limits`
 
-### 🚀 **Getting Started**
-- **[README.md](../README.md)** - Quick overview, installation, and examples
-- **[DOCUMENTATION.md](../DOCUMENTATION.md)** - Complete user guide and tutorials
+## Reference (`docs/reference/`)
+- [Functions, methods and operators](reference/api.md)
+- HTTP API: [`openapi.yml`](../openapi.yml) (also served by `sk_http_server` at `/openapi.yml`)
 
-### 📖 **Reference Materials**
-- **[API_REFERENCE.md](../API_REFERENCE.md)** - Complete function and method reference
-- **[Built-in Functions Reference](../DOCUMENTATION.md#built-in-functions-reference)** - Quick function overview
+## Operations (`docs/ops/`)
+- [Docker](ops/docker.md) — container deployment
+- [Alpine / musl](ops/alpine.md) — static builds and adding Skillet to Alpine images
+- [Binaries](ops/binaries.md) — packaging and distributing release binaries, systemd
 
-### 🔧 **Deployment & Operations**
-- **[SERVER_USAGE_GUIDE.md](../SERVER_USAGE_GUIDE.md)** - HTTP and TCP server setup
-- **[DOCKER_DEPLOYMENT_GUIDE.md](../DOCKER_DEPLOYMENT_GUIDE.md)** - Container deployment
-- **[BINARY_DISTRIBUTION_GUIDE.md](../BINARY_DISTRIBUTION_GUIDE.md)** - Binary distribution
+## Decisions and requirements
+- [ADRs](adr/README.md) — architecture decisions
+- [PRDs](prd/README.md) — product requirements
+- [Development guide](DEVELOPMENT_GUIDE.md) — architecture and contributor guide
 
-### ⚡ **Performance & Architecture**  
-- **[performance-optimization.prd.md](../performance-optimization.prd.md)** - Performance optimization details
+## Where the old root files went (BL-009)
 
----
+| Old path | New path |
+|---|---|
+| `DOCUMENTATION.md` | [`docs/guide/user-guide.md`](guide/user-guide.md) |
+| `API_REFERENCE.md` | [`docs/reference/api.md`](reference/api.md) |
+| `SERVER_USAGE_GUIDE.md` | [`docs/guide/servers.md`](guide/servers.md) |
+| `INSTALLATION.md` | [`docs/guide/installation.md`](guide/installation.md) |
+| `DOCKER_DEPLOYMENT_GUIDE.md` | [`docs/ops/docker.md`](ops/docker.md) |
+| `BINARY_DISTRIBUTION_GUIDE.md` | [`docs/ops/binaries.md`](ops/binaries.md) |
+| `ALPINE_INTEGRATION_GUIDE.md`, `ALPINE_BUILD_README.md`, `QUICK_ALPINE_SETUP.md` | [`docs/ops/alpine.md`](ops/alpine.md) (merged) |
+| `SETUP_COMPLETE.md` | removed (BL-015); still-useful content is in [`docs/ops/alpine.md`](ops/alpine.md) |
 
-## ✨ What's New
-
-### 🛡️ **Null Safety Features**
-- **Ruby-style Conversion Methods**: `null.to_s()`, `"123".to_i()`, etc.
-- **Safe Navigation Operator**: `obj&.property&.method()` 
-- **Enhanced Error Prevention**: Handle null values gracefully
-
-### 🚀 **Performance Improvements**
-- **100x+ Speed Increase**: From 300ms to ~3ms evaluation time
-- **Memory Optimizations**: String interning, AST pooling, copy-on-write
-- **Parser Enhancements**: Lookahead buffering, optimized lexing
-
-### 🎯 **Language Enhancements**
-- **Safe Method Calls**: Chain methods without null errors
-- **Type Conversions**: Ruby-style `to_*()` methods on all types
-- **Improved Error Handling**: Better error messages and recovery
-
----
-
-## 🏃‍♂️ Quick Start
-
-1. **Install Skillet:**
-   ```bash
-   cargo add skillet
-   ```
-
-2. **Try the new features:**
-   ```bash
-   # Null-safe operations
-   cargo run --bin sk -- "null.to_s().length()"  # 0 (no error!)
-   
-   # Safe navigation
-   cargo run --bin sk -- ":obj := {\"name\": null}; :obj&.name&.length()"  # null
-   
-   # Type conversions
-   cargo run --bin sk -- "\"123\".to_i() + 10"  # 133
-   ```
-
-3. **Read the docs:**
-   - Start with [DOCUMENTATION.md](../DOCUMENTATION.md) for tutorials
-   - Reference [API_REFERENCE.md](../API_REFERENCE.md) for complete function list
-
----
-
-## 🤝 Need Help?
-
-- **Issues**: Report bugs or request features on [GitHub Issues](https://github.com/anthropics/claude-code/issues)
-- **Documentation**: All features are documented with examples
-- **Performance**: See optimization guide for tuning tips
-
----
-
-**Happy coding with Skillet! 🍳⚡**
+Root keeps only `README.md`, `AGENTS.md`, `CLAUDE.md`, `CHANGELOG.md` and the licence files.

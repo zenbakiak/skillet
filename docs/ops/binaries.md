@@ -43,6 +43,8 @@ cargo build --release --bin sk_http_server
 
 ### 3. Cross-compilation for Different Platforms
 
+> Windows targets do not build today: the daemon code uses `libc` unconditionally (BL-013).
+
 Build for multiple platforms from a single machine:
 
 ```bash
@@ -73,9 +75,7 @@ mkdir -p dist
 cp target/release/sk_http_server dist/
 
 # Copy documentation
-cp DOCUMENTATION.md dist/
-cp SERVER_USAGE_GUIDE.md dist/
-cp DAEMON_DEPLOYMENT_GUIDE.md dist/
+cp docs/guide/user-guide.md docs/guide/servers.md docs/guide/limits.md dist/
 
 # Create startup script
 cat > dist/start_server.sh << 'EOF'
@@ -116,7 +116,7 @@ cat > dist/hooks/README.md << 'EOF'
 Place your custom JavaScript functions in this directory.
 They will be automatically loaded when the server starts.
 
-See DOCUMENTATION.md for details on creating custom functions.
+See user-guide.md for details on creating custom functions.
 EOF
 ```
 
@@ -130,10 +130,7 @@ mkdir -p skillet-http-server
 cp target/release/sk_http_server skillet-http-server/
 
 # Copy documentation
-cp DOCUMENTATION.md skillet-http-server/
-cp SERVER_USAGE_GUIDE.md skillet-http-server/
-cp DAEMON_DEPLOYMENT_GUIDE.md skillet-http-server/
-cp DAEMON_FLAG_GUIDE.md skillet-http-server/
+cp docs/guide/user-guide.md docs/guide/servers.md docs/guide/limits.md skillet-http-server/
 
 # Create hooks directory
 mkdir -p skillet-http-server/hooks
@@ -193,14 +190,13 @@ A high-performance mathematical and logical expression evaluation server.
 ## Custom Functions
 
 Place JavaScript files in the `hooks/` directory to add custom functions.
-See DOCUMENTATION.md for details.
+See user-guide.md for details.
 
 ## Documentation
 
-- `DOCUMENTATION.md` - Complete language and API reference
-- `SERVER_USAGE_GUIDE.md` - HTTP server usage examples
-- `DAEMON_DEPLOYMENT_GUIDE.md` - Production deployment guide
-- `DAEMON_FLAG_GUIDE.md` - Command-line options reference
+- `user-guide.md` - Language and library guide
+- `servers.md` - Server usage examples
+- `limits.md` - Evaluation limits, server deadline and error texts
 EOF
 
 # Create archive

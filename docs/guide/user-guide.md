@@ -15,7 +15,7 @@
 
 **📚 Language Reference:**
 6. [Excel Formula Examples](#excel-formula-examples)
-7. [Built-in Functions Reference](#built-in-functions-reference) → See [API_REFERENCE.md](API_REFERENCE.md) for complete reference
+7. [Built-in Functions Reference](#built-in-functions-reference) → See [the API reference](../reference/api.md) for complete reference
 8. [JSON Integration](#json-integration)
    - [JSONPath Queries](#jsonpath-queries-jq-function) ⭐ **NEW**
 
@@ -25,6 +25,7 @@
 
 **⚡ Advanced:**
 11. [Advanced Features](#advanced-features)
+12. [Limits](limits.md) (nesting depth, evaluation budget, server deadline)
 
 ---
 
@@ -108,8 +109,8 @@ sk "=IF(:config.enabled, :config.price * :config.quantity, 0)" --json '{
 
 ```bash
 # Syntax errors
-sk "2 + + 3"
-# Output: Error: Unexpected token
+sk "2 * )"
+# Output: Error: Unexpected token: RParen at position 4
 
 # Missing variables
 sk "=:missing_var + 5"
@@ -117,8 +118,18 @@ sk "=:missing_var + 5"
 
 # Type errors
 sk "=5 + \"hello\""
-# Output: Error: Cannot add number and string
+# Output: Error: Arithmetic op on non-number
 ```
+
+Errors go to stderr and `sk` exits with code 2.
+
+### Limits
+
+Every evaluation is limited: nesting depth 128, a 256 MiB budget of values created, and (servers
+only) a 10 s deadline. Going over a limit returns an error such as
+`Expression nested too deeply (max 128)` or `Evaluation budget exceeded (max 256 MB)`.
+See [limits.md](limits.md) for the cost model, the server behaviour, the
+`EvalLimits`/`with_limits` API, and how to rewrite formulas that hit the budget.
 
 ---
 

@@ -12,11 +12,12 @@ keywords = ["excel", "formula", "expression", "language", "eval"]
 # Keep the published crate small and clean
 include = [
   "Cargo.toml",
-  "README.md",
-  "DOCUMENTATION.md",
-  "SERVER_USAGE_GUIDE.md",
-  "DAEMON_DEPLOYMENT_GUIDE.md",
-  "DAEMON_FLAG_GUIDE.md",
+  "/README.md",
+  "/CHANGELOG.md",
+  "LICENSE-MIT",
+  "LICENSE-APACHE",
+  "docs/guide/**",
+  "docs/reference/**",
   "openapi.yml",
   "src/**",
   "tests/**"

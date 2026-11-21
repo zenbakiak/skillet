@@ -13,4 +13,8 @@ Secrets*.toml
 .env.prd
 *.prd.*
 dist/
-skill-publish.claude/settings.local.json
+skill-publish/
+.claude/settings.local.json
+
+# Output of scripts/run_performance_suite.sh
+performance_results/

@@ -454,4 +454,8 @@ ping localhost
 echo '{"expression": "=your_expression", "variables": null}' | nc localhost 8080
 ```
 
+`Expression nested too deeply (max 128)`, `Evaluation budget exceeded (max 256 MB)` and
+`Evaluation timed out (max 10 s)` are limit errors, not bugs. See
+[limits](limits.md) for what they mean and how to rewrite the formula.
+
 This server architecture provides a foundation for building high-performance applications that require fast mathematical and logical expression evaluation at scale.

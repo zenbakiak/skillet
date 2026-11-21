@@ -1,7 +1,7 @@
 #!/bin/bash
 
 echo "=== Skillet Phase 1 Performance Benchmark ==="
-echo "Testing optimized lexer, parser, and AST memory pooling"
+echo "Testing lexer, parser and evaluator end to end (whole sk process per run)"
 echo
 
 SKILLET_HOOKS_DIR=/nonexistent
@@ -39,9 +39,4 @@ done
 
 echo "=== Benchmark Complete ==="
 echo "Key optimizations applied:"
-echo "1. ✅ Lexer string interning for keywords (TRUE, FALSE, NULL)"
-echo "2. ✅ Optimized number parsing (direct byte-to-number for integers)"
-echo "3. ✅ AST memory optimization (Box<Expr> → Rc<Expr>)"
-echo "4. ✅ Parser lookahead buffering improvements"
-echo
-echo "Expected improvement: 30-50% faster parsing for typical expressions"
+echo "Note: times include process start-up. Measured baseline: benches/BASELINE.md (BL-005)."

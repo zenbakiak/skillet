@@ -149,7 +149,11 @@ paths:
                     execution_time_ms: 2.15
                     request_id: 43
         '400':
-          description: Invalid expression or request format
+          description: |
+            Invalid expression or request format, or an evaluation limit was hit:
+            `Expression nested too deeply (max 128)`, `Evaluation budget exceeded (max 256 MB)`
+            (also returned when the serialized result would exceed the budget), or
+            `Evaluation timed out (max 10 s)`. See docs/guide/limits.md.
           content:
             application/json:
               schema:
@@ -220,7 +224,9 @@ paths:
                 type: string
                 example: "14"
         '400':
-          description: Missing or invalid expression
+          description: |
+            Missing or invalid expression, or an evaluation limit was hit (same texts as
+            POST /eval). See docs/guide/limits.md.
           content:
             application/json:
               schema:

@@ -2,7 +2,7 @@
 
 - Status: Baseline (retroactive — describes v0.6.3 behavior)
 - Owner: Orchestrator
-- Related: ADR-0007, ADR-0008, `openapi.yml`, `SERVER_USAGE_GUIDE.md`
+- Related: ADR-0007, ADR-0008, `openapi.yml`, `docs/guide/servers.md`
 
 ## Problem
 Skillet must be usable from Rust directly and from other runtimes (Ruby/Rails, Node, shell)

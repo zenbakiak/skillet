@@ -265,7 +265,7 @@ install_daemon() {
             print_success "PM2 service installed"
             ;;
         supervisor)
-            print_error "Supervisor installation requires manual setup. See DAEMON_DEPLOYMENT_GUIDE.md"
+            print_error "Supervisor installation requires manual setup. See the systemd section in docs/ops/binaries.md"
             exit 1
             ;;
         unknown)
