@@ -1,5 +1,7 @@
 //! `sk_http_server` accept loop (BL-039): no per-request polling delay, and Ctrl-C still
-//! stops a server that is blocked in `accept`. Servers run on 127.0.0.1 only.
+//! stops a server that is blocked in `accept`. Also the embedded `GET /` page (BL-045).
+//! Servers run on 127.0.0.1 only, from the temp directory (not the repo), like an installed
+//! binary.
 
 use std::io::{Read, Write};
 use std::net::TcpStream;
@@ -21,6 +23,7 @@ impl Server {
             .port();
         let hooks = std::env::temp_dir().join("skillet-http-accept-no-hooks");
         let child = Command::new(env!("CARGO_BIN_EXE_sk_http_server"))
+            .current_dir(std::env::temp_dir())
             .args([port.to_string(), "--threads".into(), "2".into()])
             .env("SKILLET_HOOKS_DIR", hooks)
             .env("SKILLET_BIND_HOST", "127.0.0.1")
@@ -116,4 +119,19 @@ fn sigint_stops_idle_server() {
         .read_to_string(&mut stderr)
         .unwrap();
     assert!(stderr.contains("Server shutdown complete."), "{}", stderr);
+}
+
+/// `GET /` serves the embedded documentation page, byte for byte, even when the working
+/// directory has no `src/bin/http_server/documentation.html`.
+#[test]
+fn root_page_is_embedded() {
+    let server = Server::spawn();
+    let resp = server.get("/").expect("root request");
+    let (head, body) = resp.split_once("\r\n\r\n").expect("header/body split");
+    assert!(head.starts_with("HTTP/1.1 200"), "{}", head);
+    assert!(head.contains("Content-Type: text/html"), "{}", head);
+    assert_eq!(
+        body,
+        include_str!("../src/bin/http_server/documentation.html")
+    );
 }

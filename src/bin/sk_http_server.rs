@@ -130,8 +130,7 @@ fn handle_js_disabled(
 }
 
 fn handle_root(stream: &mut TcpStream) {
-    let html = load_html_file();
-    send_http_response(stream, 200, "text/html", &html);
+    send_http_response(stream, 200, "text/html", load_html_file());
 }
 
 fn handle_api_docs(stream: &mut TcpStream) {
