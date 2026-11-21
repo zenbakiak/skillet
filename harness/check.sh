@@ -10,8 +10,8 @@ step() { printf '\n==> %s\n' "$*"; }
 step "build (default features)"
 cargo build --all-targets --quiet
 
-step "build (no plugins)"
-cargo build --lib --no-default-features --quiet
+step "build (no plugins: lib, bins, tests)"
+cargo build --all-targets --no-default-features --quiet
 
 step "tests"
 if [[ "${1:-}" == "--fast" ]]; then
@@ -27,7 +27,7 @@ STRICT="${STRICT:-1}"
 step "clippy + fmt (strict=$STRICT)"
 if [[ "$STRICT" == "1" ]]; then
   cargo clippy --all-targets --quiet -- -D warnings
-  cargo clippy --lib --no-default-features --quiet -- -D warnings
+  cargo clippy --all-targets --no-default-features --quiet -- -D warnings
   cargo fmt --check
 else
   cargo clippy --all-targets --quiet || true
