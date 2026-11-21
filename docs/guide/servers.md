@@ -146,6 +146,59 @@ Error: --admin-token must not be empty
 
 Both exit with code 1.
 
+`sk_http_server` also reads its tokens from the environment: `SKILLET_AUTH_TOKEN` (eval token)
+and `SKILLET_ADMIN_TOKEN` (admin token, for the JavaScript endpoints and `DELETE /cache`). The
+flag wins over the variable, and an empty variable is refused like an empty flag:
+
+```console
+$ SKILLET_ADMIN_TOKEN= sk_http_server 5611
+Error: SKILLET_ADMIN_TOKEN must not be empty; give a non-empty value or unset it
+```
+
+If only one token is set, the other one inherits it (the banner warns about it).
+
+### Cross-origin requests and request bodies (`sk_http_server`)
+
+Browsers only let a page read a response from another origin when the response allows it
+([ADR-0019](../adr/0019-server-cors-and-development-mode.md)). `sk_http_server` sends
+`Access-Control-Allow-Origin` as follows:
+
+| Configuration | `Access-Control-Allow-Origin` |
+|---|---|
+| `--cors-origin <origin>` or `SKILLET_CORS_ORIGIN` (flag wins) | exactly that value; `*` is allowed |
+| no origin, a token configured | `*` |
+| no origin, no token (development mode) | not sent |
+
+So a server in development mode cannot be read by a page on another origin. Preflight
+`OPTIONS` requests get the same header plus `Access-Control-Allow-Methods: GET, POST, PUT,
+DELETE, OPTIONS` and `Access-Control-Allow-Headers: Authorization, Content-Type`; in
+development mode they get no CORS headers, and the browser drops the request. The banner shows
+the policy, for example `🌍 CORS: Access-Control-Allow-Origin: https://app.example` or
+`🌍 CORS: off (no token, no --cors-origin)`.
+
+A request with a body (other than `GET` and `OPTIONS`) must send `Content-Type:
+application/json`; parameters such as `; charset=utf-8` are allowed and case does not matter.
+Otherwise the answer is HTTP **415**, before any token check. Browsers send a JSON request
+from another origin only after a preflight, so a page cannot post to a local server without the
+server's consent. `/upload-js` and `/update-js` also accept `multipart/form-data`.
+
+In development mode (no admin token) the admin endpoints (`/upload-js`, `/update-js`,
+`/delete-js`, `/list-js`, `/reload-hooks`, `DELETE /cache`) answer HTTP **403** to any request
+with an `Origin` header, which browsers send, telling you to set an admin token. curl and
+scripts, which send no `Origin`, are not affected.
+
+```console
+$ curl -si -X POST localhost:5611/eval -d '{"expression":"=1"}'
+HTTP/1.1 415 Unsupported Media Type
+Content-Type: application/json
+Content-Length: 65
+Connection: close
+
+{"error":"Content-Type must be application/json","success":false}
+```
+
+(`curl -d` sends `application/x-www-form-urlencoded`; add `-H "Content-Type: application/json"`.)
+
 ### JavaScript hook files (`sk_http_server`)
 
 `sk_http_server` loads JavaScript functions from the hooks directory (`SKILLET_HOOKS_DIR`, default
