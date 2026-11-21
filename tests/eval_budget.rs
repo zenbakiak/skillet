@@ -301,6 +301,26 @@ fn a11_quadratic_merge_accumulation_behaviour_change() {
 }
 
 #[test]
+fn copying_a_large_variable_per_item_fails_hoisting_passes() {
+    // ADR-0011 amendment 2: `SUM(:nums)` copies `:nums` (charged 32 + 32 × 5000 bytes) once
+    // per item, ~800 MB in total; hoisting the copy out of the lambda makes it one copy.
+    let vars = nums_vars(5_000);
+    assert_budget_error(
+        "per-item copy",
+        evaluate_with_custom(":nums.map(SUM(:nums)).sum()", &vars),
+    );
+    assert_eq!(
+        evaluate_with_assignments(":t := SUM(:nums); :nums.map(:t).sum()", &vars),
+        Ok(Value::Number(12_497_500.0 * 5_000.0))
+    );
+    // Borrowed reads stay free: the same size passes as a method target.
+    assert_eq!(
+        evaluate_with_custom(":nums.map(:nums.sum()).sum()", &vars),
+        Ok(Value::Number(12_497_500.0 * 5_000.0))
+    );
+}
+
+#[test]
 fn swallowed_budget_error_is_still_reported() {
     // SUMIF tries its criteria as a static value first and ignores errors from that attempt;
     // with a third argument it then fails with an unrelated message. The entry point reports
@@ -436,34 +456,59 @@ fn defaults_and_scope_reset() {
     }
 }
 
-// ---------------------------------------------------------------- T1: server deadline
+// ---------------------------------------------------------------- servers (127.0.0.1 only)
 
-/// T1 against `sk_http_server`. Since BL-030 the ADR's T1 formula (`:nums.map(:x.abs())`) runs
-/// in milliseconds, so this uses work the budget does not count instead: every `SUM(:nums)`
-/// clones the 100k-item variable (reads are not charged), ~100k × clone ≫ 10 s.
-#[test]
-#[ignore = "slow: server timeout (~10 s)"]
-fn t1_server_times_out_and_frees_the_worker() {
-    use std::io::{Read, Write};
-    use std::net::{TcpListener, TcpStream};
+/// A server binary on a free 127.0.0.1 port, killed on drop.
+struct Server {
+    child: std::process::Child,
+    port: u16,
+}
 
-    let port = TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port();
-    let hooks = std::env::temp_dir().join("skillet-eval-budget-no-hooks");
-    let mut server = std::process::Command::new(env!("CARGO_BIN_EXE_sk_http_server"))
-        .args([port.to_string(), "--threads".into(), "1".into()])
-        .env("SKILLET_HOOKS_DIR", hooks)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .expect("spawn sk_http_server");
+impl Server {
+    fn spawn(bin: &str, args: impl Fn(u16) -> Vec<String>) -> Server {
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let hooks = std::env::temp_dir().join("skillet-eval-budget-no-hooks");
+        let child = std::process::Command::new(bin)
+            .args(args(port))
+            .env("SKILLET_HOOKS_DIR", hooks)
+            .env("SKILLET_BIND_HOST", "127.0.0.1")
+            .env_remove("SKILLET_AUTH_TOKEN")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn server");
+        for _ in 0..200 {
+            if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        Server { child, port }
+    }
 
-    let post = |body: String| -> (String, Duration) {
+    /// `sk_http_server` with one worker.
+    fn http() -> Server {
+        Server::spawn(env!("CARGO_BIN_EXE_sk_http_server"), |port| {
+            vec![port.to_string(), "--threads".into(), "1".into()]
+        })
+    }
+
+    /// `sk_server` with one worker.
+    fn line() -> Server {
+        Server::spawn(env!("CARGO_BIN_EXE_sk_server"), |port| {
+            vec![port.to_string(), "1".into()]
+        })
+    }
+
+    /// POST `body` to `/eval`; returns the raw response and the time it took.
+    fn post(&self, body: &str) -> (String, Duration) {
+        use std::io::{Read, Write};
         let start = std::time::Instant::now();
-        let mut s = TcpStream::connect(("127.0.0.1", port)).expect("connect");
+        let mut s = std::net::TcpStream::connect(("127.0.0.1", self.port)).expect("connect");
         s.set_read_timeout(Some(Duration::from_secs(60))).unwrap();
         let req = format!(
             "POST /eval HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -474,35 +519,57 @@ fn t1_server_times_out_and_frees_the_worker() {
         let mut resp = String::new();
         let _ = s.read_to_string(&mut resp);
         (resp, start.elapsed())
-    };
-
-    // Wait for the listener.
-    for _ in 0..100 {
-        if TcpStream::connect(("127.0.0.1", port)).is_ok() {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(50));
     }
 
-    let nums: Vec<String> = (0..100_000).map(|i| i.to_string()).collect();
-    let body = format!(
-        "{{\"expression\":\":nums.map(SUM(:nums)).sum()\",\"arguments\":{{\"nums\":[{}]}}}}",
-        nums.join(",")
-    );
-    let (resp, took) = post(body);
-    let quick = post("{\"expression\":\"2 + 3\"}".to_string());
-    let _ = server.kill();
-    let _ = server.wait();
+    /// Send one newline-delimited request to `sk_server`; returns the response line.
+    fn send_line(&self, body: &str) -> String {
+        use std::io::{BufRead, BufReader, Write};
+        let mut s = std::net::TcpStream::connect(("127.0.0.1", self.port)).expect("connect");
+        s.set_read_timeout(Some(Duration::from_secs(60))).unwrap();
+        s.write_all(format!("{body}\n").as_bytes()).unwrap();
+        let mut line = String::new();
+        let _ = BufReader::new(s).read_line(&mut line);
+        line
+    }
+}
 
-    assert!(
-        resp.starts_with("HTTP/1.1 400"),
-        "{}",
-        &resp[..resp.len().min(200)]
+impl Drop for Server {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+fn head(resp: &str) -> &str {
+    &resp[..resp.len().min(300)]
+}
+
+/// T1 against `sk_http_server`. The ADR's T1 formula (`:nums.map(:x.abs())`) runs in
+/// milliseconds since BL-030, and since BL-027d every copying read is charged, so this uses
+/// work the budget only ticks for: comparing two 400 KB strings borrows them (no copy, no
+/// charge), 1M iterations × 4 comparisons ≫ 10 s.
+#[test]
+#[ignore = "slow: server timeout (~10 s)"]
+fn t1_server_times_out_and_frees_the_worker() {
+    let server = Server::http();
+    let cmp = "((:s == :t) == (:t == :s)) == ((:s == :t) == (:t == :s))";
+    let expr = format!(
+        "{}.map({}.map({cmp}).length()).sum()",
+        ones(1000),
+        ones(1000)
     );
+    let text = "x".repeat(400_000);
+    let body = format!(
+        "{{\"expression\":\"{expr}\",\"arguments\":{{\"s\":\"{text}\",\"t\":\"{text}\"}}}}"
+    );
+    let (resp, took) = server.post(&body);
+    let quick = server.post("{\"expression\":\"2 + 3\"}");
+
+    assert!(resp.starts_with("HTTP/1.1 400"), "{}", head(&resp));
     assert!(
         resp.contains("Evaluation timed out (max 10 s)"),
         "{}",
-        &resp[..resp.len().min(400)]
+        head(&resp)
     );
     assert!(
         took >= Duration::from_secs(10) && took < Duration::from_secs(20),
@@ -511,6 +578,45 @@ fn t1_server_times_out_and_frees_the_worker() {
     // The single worker is free again.
     assert!(quick.0.starts_with("HTTP/1.1 200"), "{}", quick.0);
     assert!(quick.0.contains('5'), "{}", quick.0);
+}
+
+/// F3 (BL-027c): a result whose JSON-escaped response would exceed the budget is rejected
+/// with the budget error instead of being serialized. 46 MB of `\x01` is 276 MB escaped
+/// (`\u0001`, 6 bytes each), over the 256 MiB budget; the value itself is within it.
+#[test]
+fn f3_servers_reject_responses_larger_than_the_budget() {
+    let ctl = |n: usize| {
+        format!(
+            "SUBSTITUTE(SUBSTITUTE(\\\"{}\\\", \\\"a\\\", \\\"{}\\\"), \\\"a\\\", \\\"{}\\\")",
+            "a".repeat(10),
+            "a".repeat(100),
+            "\\u0001".repeat(n)
+        )
+    };
+    let big = ctl(46_000); // 1000 × 46,000 chars
+    let small = ctl(1); // 1000 chars
+
+    let http = Server::http();
+    let (resp, _) = http.post(&format!("{{\"expression\":\"{big}\"}}"));
+    assert!(resp.starts_with("HTTP/1.1 400"), "{}", head(&resp));
+    assert!(resp.contains(BUDGET_ERROR), "{}", head(&resp));
+    // Assigned variables returned with the result count too.
+    let (resp, _) = http.post(&format!(
+        "{{\"expression\":\":s := {big}; 1\",\"include_variables\":true}}"
+    ));
+    assert!(resp.starts_with("HTTP/1.1 400"), "{}", head(&resp));
+    assert!(resp.contains(BUDGET_ERROR), "{}", head(&resp));
+    let (resp, _) = http.post(&format!("{{\"expression\":\"{small}\"}}"));
+    assert!(resp.starts_with("HTTP/1.1 200"), "{}", head(&resp));
+    assert!(resp.contains(&"\\u0001".repeat(1000)), "{}", head(&resp));
+    drop(http);
+
+    let line = Server::line();
+    let resp = line.send_line(&format!("{{\"expression\":\"{big}\"}}"));
+    assert!(resp.contains("\"success\":false"), "{}", head(&resp));
+    assert!(resp.contains(BUDGET_ERROR), "{}", head(&resp));
+    let resp = line.send_line(&format!("{{\"expression\":\"{small}\"}}"));
+    assert!(resp.contains("\"success\":true"), "{}", head(&resp));
 }
 
 // ---------------------------------------------------------------- BL-027c: re-attack
@@ -610,13 +716,12 @@ fn bl027c_lambda_over_uncharged_reads_meets_the_deadline() {
     assert!(took < Duration::from_secs(2), "{took:?}");
 }
 
-/// F1 (blocks): a flat list of reads with no charge in between never reads the clock.
-/// `:s == :s` clones `:s` twice, and binary operators are not charged, so an array literal
-/// of N comparisons does 2N full clones before its single charge. Measured on the release
+/// F1 (fixed in BL-027d): a flat list of reads with no charge in between never read the clock.
+/// `:s == :s` cloned `:s` twice, and binary operators were not charged, so an array literal
+/// of N comparisons did 2N full clones before its single charge. Measured on the release
 /// server with an 80 MB `:s` and N = 4000 (42 KB request): 20.4 s, `success: true`, past the
 /// 10 s deadline; the time grows linearly with N up to the 1 MB request cap (~8 min).
 #[test]
-#[ignore = "open: BL-027d F1, uncharged reads never tick the deadline"]
 fn bl027c_flat_uncharged_reads_meet_the_deadline() {
     let cmps = vec![":s == :s"; 3_000].join(", ");
     let src = format!(":s := {}; [{}].length()", big_string("a", 1000), cmps);
@@ -632,14 +737,13 @@ fn bl027c_flat_uncharged_reads_meet_the_deadline() {
     assert!(took < Duration::from_millis(500), "{took:?}");
 }
 
-/// F2 (blocks): heap allocated before the budget check must stay within ~2× the budget.
-/// Each case fails with the budget error today, but only after allocating far more than the
-/// budget: k uncharged reads in one argument list / literal (CONCAT, MERGE, array and object
+/// F2 (fixed in BL-027d): heap allocated before the budget check must stay within ~2× the
+/// budget. Before the fix each case failed with the budget error only after allocating far
+/// more than the budget: k uncharged reads in one argument list / literal (CONCAT, MERGE, array and object
 /// literals), and builtins that amplify their input and are charged after allocating
 /// (`.to_a()` on a string ≈ 48 real bytes per char, `.to_json()` escaping ≤ 6×,
 /// `::String` on an array via `Debug` escaping ≤ 5×).
 #[test]
-#[ignore = "open: BL-027d F2, charge-after sites allocate past 2x the budget"]
 fn bl027c_peak_heap_stays_within_twice_the_budget() {
     let budget = 4 * MIB;
     let one_mb = big_string("a", 1000);
