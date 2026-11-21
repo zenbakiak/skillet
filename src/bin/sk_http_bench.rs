@@ -22,7 +22,12 @@ struct BenchConfig {
     concurrent: usize,
     requests: usize,
     warmup: usize,
+    /// Expression for the concurrency sweep (`--expr`); `DEFAULT_SWEEP_EXPRESSION` if unset.
+    expression: Option<String>,
 }
+
+/// Expression timed by the concurrency sweep unless `--expr` gives another one.
+const DEFAULT_SWEEP_EXPRESSION: &str = "10*5+sqrt(25)";
 
 #[derive(Debug)]
 struct BenchResult {
@@ -57,6 +62,10 @@ fn main() {
     println!("  Concurrent connections: {}", config.concurrent);
     println!("  Requests per test: {}", config.requests);
     println!("  Warmup requests: {}", config.warmup);
+    println!(
+        "  Sweep expression: {} bytes",
+        sweep_expression(&config).len()
+    );
     println!(
         "  Expression cache: {}",
         if NO_CACHE.load(Ordering::Relaxed) {
@@ -102,6 +111,7 @@ fn parse_args(args: &[String]) -> Result<BenchConfig, String> {
         concurrent: 10,
         requests: 100,
         warmup: 20,
+        expression: None,
     };
 
     let mut i = 2;
@@ -137,6 +147,14 @@ fn parse_args(args: &[String]) -> Result<BenchConfig, String> {
                     return Err("--warmup requires a value".to_string());
                 }
             }
+            "-e" | "--expr" => {
+                if i + 1 < args.len() {
+                    config.expression = Some(args[i + 1].clone());
+                    i += 1;
+                } else {
+                    return Err("--expr requires a value".to_string());
+                }
+            }
             "--no-cache" => NO_CACHE.store(true, Ordering::Relaxed),
             _ => return Err(format!("Unknown argument: {}", args[i])),
         }
@@ -153,6 +171,9 @@ fn print_usage() {
     println!("  -c, --concurrent <num>  Number of concurrent connections (default: 10)");
     println!("  -n, --requests <num>    Number of requests per test (default: 100)");
     println!("  -w, --warmup <num>      Number of warmup requests (default: 20)");
+    println!(
+        "  -e, --expr <text>       Expression for the concurrency sweep (default: 10*5+sqrt(25))"
+    );
     println!("  --no-cache              Add a unique variable per request (always a cache miss)");
     println!();
     println!("Examples:");
@@ -322,7 +343,7 @@ fn run_concurrent_tests(config: &BenchConfig) {
 
         println!("Testing with {} concurrent connections...", concurrent);
 
-        let result = run_concurrent_benchmark(config, concurrent, "10*5+sqrt(25)");
+        let result = run_concurrent_benchmark(config, concurrent, sweep_expression(config));
 
         println!(
             "  📊 Success: {}/{}",
@@ -338,6 +359,13 @@ fn run_concurrent_tests(config: &BenchConfig) {
         println!("  🚀 Throughput: {:.1} req/sec", result.throughput);
         println!();
     }
+}
+
+fn sweep_expression(config: &BenchConfig) -> &str {
+    config
+        .expression
+        .as_deref()
+        .unwrap_or(DEFAULT_SWEEP_EXPRESSION)
 }
 
 fn run_variable_tests(config: &BenchConfig) {
