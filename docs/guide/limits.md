@@ -9,8 +9,12 @@ goes over a limit returns an ordinary `Error`; it never crashes the process or t
 | Evaluation budget | 256 MiB of values created (`skillet::MAX_EVAL_BYTES`) | library, CLI, servers | `Evaluation budget exceeded (max 256 MB)` |
 | Deadline | 10 s per request | servers only | `Evaluation timed out (max 10 s)` |
 | Response size | serialized result must fit the 256 MiB budget | servers only | `Evaluation budget exceeded (max 256 MB)` |
-| Request size | 1 MB | `sk_http_server` | `Request too large (max 1MB)` / `Request body too large (max 1MB)` |
+| Request size | 1 MB (1,048,576 bytes) | both servers | HTTP 400 `413 Payload Too Large` / `Request too large (max 1MB)` (`sk_server`) |
+| Request read time | 30 s for the whole request | both servers | HTTP 400 `408 Request Timeout` / `Request read timed out (max 30 s)` (`sk_server`) |
+| Response write | 10 s per socket write | both servers | none (the connection is dropped) |
 | Cache entry | 64 KiB | `sk_http_server` result cache | none (bigger results are just not cached) |
+
+Request limits are described in [Server request limits](#server-request-limits-1-mb-30-s-10-s).
 
 Decisions and the full cost model: [ADR-0011](../adr/0011-evaluation-budget.md) (budget, deadline,
 cache) and BL-017 (depth). Requirements: PRD-001 NFR-4 to NFR-7.
@@ -173,8 +177,11 @@ clock every 256 charges or ticks, so a request stops shortly after 10 s and the 
 free for the next request. There is no flag or environment variable to change it. The library and
 the `sk` CLI have no deadline unless you set one (see [Library API](#library-api-evallimits-and-with_limits)).
 
-A single builtin that is already running (for example `SORT` on a huge array) finishes before the
-next check, so a request can run slightly past 10 s.
+The deadline is only checked between operations. One builtin call that is already running (for
+example `SORT` or `UNIQUE` on millions of items) runs to completion before the next check, so a
+request can run past 10 s by the time that one call takes. Measured in BL-027c: `SORT`/`UNIQUE` of
+3M items takes about 0.12 s in a release build, so today the overrun is small. A builtin that is
+slower than O(n log n) would make it larger (tracked in BL-035).
 
 Example (HTTP, one worker; the expression does 1M × 4 comparisons of two 400 KB strings passed as
 `arguments`):
@@ -226,9 +233,54 @@ small however big the results are. Errors, including budget and timeout errors, 
 Live memory per evaluation is at most about twice the budget (the budget plus the value that crossed
 it), so plan for roughly `threads × 512 MB` in the worst case and set `--threads` with that in mind.
 
-Known gaps: `sk_server` has no read timeout or line-length cap yet (BL-033), and `sk_http_server`
-holds a worker for a client that sends one byte at a time (BL-037). Memory and CPU used inside a
-JavaScript plugin are not limited yet (BL-018).
+Known gap: memory and CPU used inside a JavaScript plugin are not limited yet (BL-018).
+
+## Server request limits (1 MB, 30 s, 10 s)
+
+Both servers limit how much a client can send and how long it can take, before any evaluation
+starts. The values are constants in `src/bin/http_server/request_limits.rs`; there is no flag or
+environment variable to change them.
+
+| Limit | Value | `sk_http_server` | `sk_server` |
+|---|---|---|---|
+| Request size | 1 MB (1,048,576 bytes) | headers + body; a `Content-Length` over 1 MB is rejected before the body is read | one request line, without the trailing newline |
+| Read deadline | 30 s | for the whole request, from the first read | per request line, from when the server starts reading it |
+| Write timeout | 10 s | per socket write of the response | per socket write of the response |
+
+The read deadline is a total, not a per-read timeout, so a client that sends one byte at a time
+cannot hold a worker thread for longer than 30 s (BL-033, BL-037).
+
+`sk_http_server` answers both limit errors with HTTP status **400** and a JSON body whose `error`
+names the condition. The status code is 400, not 413 or 408 (output of a release build of
+`develop` at d3e6a5d):
+
+```console
+POST /eval  (body: {"expression": "1", "arguments": {"s": "x…(1,100,000)"}})
+400 {"error":"413 Payload Too Large","success":false}
+
+POST /eval  (headers say Content-Length: 100, then 6 bytes, then nothing)
+… 30.0 s later …
+400 {"error":"408 Request Timeout","success":false}
+```
+
+`sk_server` answers with an ordinary error response and then closes the connection, because the
+rest of the stream can no longer be split into lines:
+
+```console
+{"expression": "1", "variables": {"s": "x…(1,100,000)"}}
+{"success":false,"result":null,"error":"Request too large (max 1MB)","execution_time_ms":0.0,"request_id":0}
+
+{"expression": "1        (no newline, then nothing)
+… 30.0 s later …
+{"success":false,"result":null,"error":"Request read timed out (max 30 s)","execution_time_ms":0.0,"request_id":1}
+```
+
+An `sk_server` connection that is idle for 30 s with no bytes of a new request is closed without a
+response. Clients that keep connections open (see the pooling example in
+[servers](servers.md)) must reconnect after that.
+
+If a response write blocks for more than 10 s (the client stopped reading), the server gives up on
+that connection; the client gets no error message.
 
 ## Library API: `EvalLimits` and `with_limits`
 
@@ -266,7 +318,14 @@ Notes (all checked against the code):
   what is left of the outer one) and the earlier deadline. A custom function or plugin cannot raise
   the limits of the evaluation that called it.
 - A custom function that calls `skillet::evaluate` joins the caller's budget; it cannot reset it.
-- The budget is thread-local. Work a custom function moves to another thread is not counted.
+- The budget and the deadline are thread-local. Work a custom function moves to another thread
+  (for example with `std::thread::spawn`, a thread pool, or an async runtime) is outside them: it is
+  not charged, the deadline does not stop it, and a `skillet::evaluate` call made on that other
+  thread opens a new default scope (256 MiB, no deadline) instead of joining the caller's. If a
+  custom function must use other threads, it has to bound that work itself.
+- A custom function's own Rust code is not metered either, on any thread. Only the values it
+  returns are charged, and the deadline is checked only after it returns (same as a long builtin,
+  see [Server deadline](#server-deadline-10-s)).
 - A limit error is reported even if the formula swallowed it (for example inside `SUMIF`).
 
 ## Changes in 0.7.0

@@ -18,6 +18,10 @@ ADRs 0001–0008 are **retroactive**: they record decisions already embodied in 
 | [0010](0010-remove-dead-public-modules-pre-1-0.md) | Remove dead public modules in 0.7.0 without deprecation | Accepted |
 | [0011](0011-evaluation-budget.md) | Per-evaluation budget and server evaluation timeout | Accepted |
 | [0012](0012-msrv-1-85.md) | Minimum supported Rust version 1.85; CI on 1.89 | Accepted |
+| [0013](0013-null-equality.md) | Null equality: `NULL == NULL` is `true` | Proposed |
+| [0014](0014-jq-wildcard-results.md) | `JQ` result shape follows the path, not the match count | Proposed |
+| [0015](0015-percentile-nan.md) | NaN and infinity in statistical builtins | Proposed |
+| [0016](0016-custom-function-visibility.md) | Custom functions are visible in every sub-expression | Proposed |
 
 ## Template
 

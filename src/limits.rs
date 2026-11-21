@@ -23,6 +23,19 @@ use std::time::{Duration, Instant};
 /// and postfix chains). The evaluator applies the same bound to arrays it constructs.
 /// Exceeding it returns an `Error` instead of overflowing the stack. 128 matches
 /// `serde_json`'s recursion limit, so expression text and JSON variables share one number.
+/// The limit is fixed; [`with_limits`] does not change it.
+///
+/// ```rust
+/// assert_eq!(skillet::MAX_NESTING_DEPTH, 128);
+///
+/// let ok = format!("{}1{}", "(".repeat(128), ")".repeat(128));
+/// assert_eq!(skillet::evaluate(&ok).unwrap(), skillet::Value::Number(1.0));
+///
+/// let deep = format!("{}1{}", "(".repeat(129), ")".repeat(129));
+/// let err = skillet::evaluate(&deep).unwrap_err();
+/// assert_eq!(err.message, "Expression nested too deeply (max 128)");
+/// assert_eq!(err.position, Some(129));
+/// ```
 pub const MAX_NESTING_DEPTH: usize = 128;
 
 /// Default per-evaluation budget, in bytes of values created (ADR-0011).
@@ -31,6 +44,15 @@ pub const MAX_NESTING_DEPTH: usize = 128;
 /// cost of its items for `Array`. The count is cumulative (freeing a value gives nothing back)
 /// and deterministic: the same expression with the same variables always passes or always fails.
 /// Exceeding it returns `Evaluation budget exceeded (max 256 MB)`.
+///
+/// ```rust
+/// assert_eq!(skillet::MAX_EVAL_BYTES, 268_435_456); // 256 MiB
+///
+/// // Doubling an array 26 times creates more than 256 MiB of values.
+/// let ones = vec!["1"; 26].join(",");
+/// let err = skillet::evaluate(&format!("[{ones}].reduce([:acc, :acc], 0)")).unwrap_err();
+/// assert_eq!(err.message, "Evaluation budget exceeded (max 256 MB)");
+/// ```
 pub const MAX_EVAL_BYTES: u64 = 256 * 1024 * 1024;
 
 /// Size charged for every value (`size_of::<Value>()`).
@@ -40,6 +62,22 @@ const TICKS_PER_CLOCK_READ: u32 = 256;
 const MIB: u64 = 1024 * 1024;
 
 /// Limits for evaluations run inside [`with_limits`].
+///
+/// The struct is `#[non_exhaustive]`: start from [`EvalLimits::default`] (budget
+/// [`MAX_EVAL_BYTES`], no deadline) and set the fields you need.
+///
+/// ```rust
+/// use std::time::Duration;
+/// use skillet::{EvalLimits, MAX_EVAL_BYTES};
+///
+/// let mut limits = EvalLimits::default();
+/// assert_eq!(limits.max_bytes, MAX_EVAL_BYTES);
+/// assert_eq!(limits.timeout, None);
+///
+/// limits.timeout = Some(Duration::from_secs(10)); // what the servers use
+/// let r = skillet::with_limits(limits, || skillet::evaluate("SUM(1, 2, 3)"));
+/// assert_eq!(r.unwrap(), skillet::Value::Number(6.0));
+/// ```
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EvalLimits {
@@ -64,6 +102,12 @@ impl Default for EvalLimits {
 /// tightened: the budget becomes the smaller of `limits.max_bytes` and what remains of the outer
 /// budget, and the deadline the earlier of the two. Charges made inside `f` still count towards
 /// the outer scope.
+///
+/// All evaluations inside one call share one budget. The budget and the deadline are
+/// thread-local: work that a custom function moves to another thread is not charged and is not
+/// stopped by the deadline, and an evaluation started on that other thread gets a fresh default
+/// scope. The deadline is checked between operations, so one long builtin call (or one custom
+/// function call) runs to completion before the next check.
 ///
 /// ```
 /// let mut limits = skillet::EvalLimits::default();

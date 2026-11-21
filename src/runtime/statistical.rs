@@ -24,7 +24,7 @@ pub fn exec_statistical(name: &str, args: &[Value]) -> Result<Value, Error> {
             if nums.is_empty() {
                 return Ok(Value::Number(0.0));
             }
-            nums.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            crate::runtime::utils::sort_numbers(&mut nums, false)?;
             let len = nums.len();
             Ok(Value::Number(if len % 2 == 0 {
                 (nums[len / 2 - 1] + nums[len / 2]) / 2.0
@@ -158,7 +158,7 @@ pub fn exec_statistical(name: &str, args: &[Value]) -> Result<Value, Error> {
                 return Err(Error::new("Percentile must be between 0 and 1", None));
             }
 
-            nums.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            crate::runtime::utils::sort_numbers(&mut nums, false)?;
             let len = nums.len() as f64;
             let rank = percentile * (len - 1.0);
             let rank_floor = rank.floor() as usize;
@@ -206,7 +206,7 @@ pub fn exec_statistical(name: &str, args: &[Value]) -> Result<Value, Error> {
             }
 
             let percentile = quartile as f64 / 4.0;
-            nums.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            crate::runtime::utils::sort_numbers(&mut nums, false)?;
             let len = nums.len() as f64;
             let rank = percentile * (len - 1.0);
             let rank_floor = rank.floor() as usize;

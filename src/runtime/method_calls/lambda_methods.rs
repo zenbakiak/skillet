@@ -1,7 +1,8 @@
 //! Higher-order array methods (`filter`, `map`, `find`, `reduce`).
 //!
-//! Lambda bodies run in a [`Scope`]: the item (and accumulator) are local bindings over the
-//! borrowed caller context, so no variable map is copied per call or per item (BL-030).
+//! Lambda bodies run in a `Scope` (private, in `runtime::evaluator`): the item (and
+//! accumulator) are local bindings over the borrowed caller context, so no variable map is
+//! copied per call or per item (BL-030).
 
 use crate::ast::Expr;
 use crate::error::Error;
