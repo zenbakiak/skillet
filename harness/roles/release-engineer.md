@@ -32,7 +32,7 @@ Agents prepare steps 1–3; **only a human publishes, tags, or pushes to `main`.
 
 ## Current state (2026-11)
 - Targets: macOS x86_64/arm64, Linux musl x86_64/arm64. Windows dropped (`libc` daemon) → BL-013.
-- `Cargo.toml` `include` lists deleted files (`DAEMON_*.md`) → BL-006.
+- `Cargo.toml` `include` now ships README, licences, `docs/guide/`, `docs/reference/`, `openapi.yml` (BL-006/BL-009; deleted `DAEMON_*.md` entries removed).
 - No `CHANGELOG.md` at root (one exists in `skill-publish/` for the skill only).
 - CI (`rust.yml`) runs only on `main` → BL-004.
 - Git hooks exist (`.githooks/`, ADR-0009), but GitHub branch protection on `main`/`develop`

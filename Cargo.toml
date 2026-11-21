@@ -13,8 +13,11 @@ keywords = ["excel", "formula", "expression", "language", "eval"]
 include = [
   "Cargo.toml",
   "README.md",
-  "DOCUMENTATION.md",
-  "SERVER_USAGE_GUIDE.md",
+  "CHANGELOG.md",
+  "LICENSE-MIT",
+  "LICENSE-APACHE",
+  "docs/guide/**",
+  "docs/reference/**",
   "openapi.yml",
   "src/**",
   "tests/**"

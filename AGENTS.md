@@ -102,6 +102,6 @@ say "follow harness/prompts/orchestrate.md".
 
 - [ ] `./harness/check.sh` green.
 - [ ] New behavior has a test; fixed bug has a regression test.
-- [ ] User-visible change reflected in `DOCUMENTATION.md`/`API_REFERENCE.md` (or a docs backlog item filed).
+- [ ] User-visible change reflected in `docs/guide/`/`docs/reference/` (or a docs backlog item filed).
 - [ ] Performance-sensitive change has before/after numbers in the handoff.
 - [ ] Backlog item updated with handoff note.

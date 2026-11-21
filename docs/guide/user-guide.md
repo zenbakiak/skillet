@@ -15,7 +15,7 @@
 
 **📚 Language Reference:**
 6. [Excel Formula Examples](#excel-formula-examples)
-7. [Built-in Functions Reference](#built-in-functions-reference) → See [API_REFERENCE.md](API_REFERENCE.md) for complete reference
+7. [Built-in Functions Reference](#built-in-functions-reference) → See [the API reference](../reference/api.md) for complete reference
 8. [JSON Integration](#json-integration)
    - [JSONPath Queries](#jsonpath-queries-jq-function) ⭐ **NEW**
 
@@ -25,7 +25,7 @@
 
 **⚡ Advanced:**
 11. [Advanced Features](#advanced-features)
-12. [Limits](docs/guide/limits.md) (nesting depth, evaluation budget, server deadline)
+12. [Limits](limits.md) (nesting depth, evaluation budget, server deadline)
 
 ---
 
@@ -128,7 +128,7 @@ Errors go to stderr and `sk` exits with code 2.
 Every evaluation is limited: nesting depth 128, a 256 MiB budget of values created, and (servers
 only) a 10 s deadline. Going over a limit returns an error such as
 `Expression nested too deeply (max 128)` or `Evaluation budget exceeded (max 256 MB)`.
-See [docs/guide/limits.md](docs/guide/limits.md) for the cost model, the server behaviour, the
+See [limits.md](limits.md) for the cost model, the server behaviour, the
 `EvalLimits`/`with_limits` API, and how to rewrite formulas that hit the budget.
 
 ---

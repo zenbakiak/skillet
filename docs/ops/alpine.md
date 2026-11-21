@@ -1,23 +1,44 @@
-# Alpine Linux Integration Guide
+# Alpine Linux (musl) builds and integration
 
-This guide shows how to integrate Skillet binaries into Alpine Linux containers, specifically for `ruby:3.4.8-alpine` base images.
+How to build statically linked Skillet binaries for Alpine Linux and other musl-based systems, and
+how to add them to another image (examples use `ruby:3.4.8-alpine`).
 
-## Quick Start
+This page merges the former `ALPINE_BUILD_README.md`, `ALPINE_INTEGRATION_GUIDE.md` and
+`QUICK_ALPINE_SETUP.md`. Prebuilt musl binaries for x86_64 and arm64 are also published by the
+release workflow; see [installation](../guide/installation.md).
 
-### 1. Build Alpine Binaries
+## Build files
+
+| File | Purpose |
+|---|---|
+| `Dockerfile.alpine-builder` | Multi-stage build: `builder` (Debian `rust:latest` + `musl-tools`), `binaries` (scratch image with `/binaries/sk*`), `runtime-test` (`ruby:3.4.8-alpine` with the binaries) |
+| `scripts/build_alpine_binaries.sh` | Builds the `binaries` stage and copies the binaries to `dist/alpine/` |
+| `.dockerignore.alpine` | Docker context used by the script (swapped in for `.dockerignore` during the build) |
+| `examples/Dockerfile.ruby-alpine-example` | Full Rails + Skillet example |
+
+## Quick start
+
+### 1. Build Alpine binaries
 
 ```bash
-# Build binaries for Alpine Linux (musl)
 bash scripts/build_alpine_binaries.sh
 ```
 
-This creates static binaries in `dist/alpine/` that work on Alpine Linux and other musl-based systems.
+This creates static binaries in `dist/alpine/`: `sk` (CLI), `sk_server` (TCP server), `sk_client`
+(TCP client), `sk_http_server` (HTTP API) and `sk_http_bench` (benchmark tool).
 
-### 2. Test Binaries
+Note: `Dockerfile.alpine-builder` currently builds for `aarch64-unknown-linux-musl` only, and the
+script tests the result with `--platform linux/arm64`. For x86_64 use the release-workflow
+artifact `skillet-linux-x86_64`, or change the target in the Dockerfile.
+
+### 2. Test binaries
 
 ```bash
-# Test the binaries work on Alpine
 docker run --rm -v $(pwd)/dist/alpine:/test ruby:3.4.8-alpine /test/sk "SUM(1,2,3,4,5)"
+# Number(15.0)
+
+file dist/alpine/sk
+# should report a statically linked ELF executable
 ```
 
 ## Integration Methods
@@ -198,10 +219,17 @@ puts result['result'] # => 6000
 
 Use the `sk` command directly:
 
+`sk` prints the Rust debug form (`Number(600.0)`); pass `--output-json` to get JSON
+(`{"execution_time": "0.02 ms", "result": 600.0, "type": "Number"}`). Never interpolate untrusted
+input into a shell command; pass it as an argument array:
+
 ```ruby
+require 'json'
+require 'open3'
+
 def calculate(expression)
-  result = `sk "#{expression}"`.strip
-  result.to_f if result =~ /^-?\d+(\.\d+)?$/
+  out, status = Open3.capture2('sk', expression, '--output-json')
+  status.success? ? JSON.parse(out)['result'] : nil
 end
 
 # Usage
@@ -326,16 +354,12 @@ ADD https://your-bucket.s3.amazonaws.com/skillet/skillet-alpine-binaries.tar.gz 
 RUN tar -xzf /tmp/skillet-alpine-binaries.tar.gz -C /usr/local/bin/
 ```
 
-## Binary Sizes
+### Option 3: Runtime image
 
-Typical sizes for Alpine/musl binaries:
+The `runtime-test` stage is a `ruby:3.4.8-alpine` image with the binaries already in it:
 
-```
-sk              ~8 MB    (CLI evaluator)
-sk_server       ~9 MB    (TCP server)
-sk_client       ~7 MB    (TCP client)
-sk_http_server  ~10 MB   (HTTP server with all features)
-sk_http_bench   ~8 MB    (HTTP benchmarking tool)
+```bash
+docker build --target runtime-test -f Dockerfile.alpine-builder -t skillet-alpine:latest .
 ```
 
 ## Verification
@@ -346,12 +370,12 @@ Test that binaries work correctly:
 # Basic evaluation
 docker run --rm -v $(pwd)/dist/alpine:/test ruby:3.4.8-alpine \
   /test/sk "SUM(1, 2, 3, 4, 5)"
-# Expected: 15
+# Number(15.0)
 
 # Array operations
 docker run --rm -v $(pwd)/dist/alpine:/test ruby:3.4.8-alpine \
   /test/sk "[10,20,30].filter(:x > 15).sum()"
-# Expected: 50
+# Number(50.0)
 
 # HTTP server
 docker run --rm -p 5074:5074 -v $(pwd)/dist/alpine:/test ruby:3.4.8-alpine \
@@ -389,16 +413,15 @@ RUN apk add --no-cache \
 
 ### Architecture Mismatch
 
-These binaries are built for `x86_64-unknown-linux-musl`. For ARM:
+`Dockerfile.alpine-builder` builds for `aarch64-unknown-linux-musl` (see the note under Quick
+start). Check what you have with `file dist/alpine/sk`; an x86_64 host needs the
+`skillet-linux-x86_64` release artifact or a changed `--target`.
+
+### Build fails
 
 ```bash
-# Build for ARM64 Alpine
-docker buildx build \
-  --platform linux/arm64 \
-  --target binaries \
-  -f Dockerfile.alpine-builder \
-  -t skillet-alpine-arm64 \
-  .
+# Run only the builder stage to see the compiler output
+docker build -f Dockerfile.alpine-builder --target builder .
 ```
 
 ## Best Practices
@@ -428,11 +451,10 @@ HEALTHCHECK --interval=30s --timeout=5s \
 CMD ["sk_http_server", "5074", "--host", "0.0.0.0"]
 ```
 
-## Performance Notes
+## Performance notes
 
-- Alpine binaries are statically linked and have minimal overhead
-- HTTP server typically responds in ~3ms per request
-- TCP server is faster (~1ms) for high-throughput scenarios
-- CLI mode has process startup overhead (~10ms)
-
-For production workloads, use the HTTP or TCP server modes instead of shelling out to the CLI.
+- The CLI starts a new process (and loads JS plugins) for every call; for many evaluations use the
+  HTTP or TCP server instead of shelling out.
+- No latency numbers are published yet; the measured baseline is BL-005 (`benches/BASELINE.md`).
+- Server limits (10 s deadline, 256 MiB budget per evaluation) and memory sizing:
+  [limits](../guide/limits.md).

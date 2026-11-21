@@ -28,7 +28,7 @@ Skillet is a high-performance, embeddable expression engine written in Rust, ins
 **Operations**: Arithmetic, logical, comparisons, method chaining, array operations, lambdas
 **Extensions**: JavaScript plugins, Rust custom functions, HTTP/TCP server modes
 
-📚 **[Full Documentation](DOCUMENTATION.md)** | 📖 **[API Reference](API_REFERENCE.md)** | 🛡️ **[Limits](docs/guide/limits.md)**
+📚 **[Full Documentation](docs/guide/user-guide.md)** | 📖 **[API Reference](docs/reference/api.md)** | 🛡️ **[Limits](docs/guide/limits.md)**
 
 ## Build
 
@@ -307,7 +307,7 @@ Client and benchmarks:
 Scripts:
 - Build + run multi-test benchmark: `bash scripts/benchmark_server.sh [port] [iterations] [threads]`
 
-> take a look at the [Server Usage Guide](SERVER_USAGE_GUIDE.md) for more details about how to use it and consume in different langauages
+> take a look at the [Server Usage Guide](docs/guide/servers.md) for more details about how to use it and consume in different langauages
 
 ## Built-in Functions
 
@@ -347,7 +347,7 @@ cargo test
 
 ## Author
 
-[@zenbakiak](/zenbakiak)
+[@zenbakiak](https://github.com/zenbakiak)
 
 [Github repo](https://github.com/zenbakiak/skillet)
 

@@ -710,7 +710,7 @@ fn test_cube() {
 }
 ```
 
-4. **Document in `API_REFERENCE.md`:**
+4. **Document in `docs/reference/api.md`:**
 ```markdown
 #### `CUBE(number)`
 Cube a number (n³).
@@ -901,8 +901,8 @@ When making changes:
    - Test error messages
 
 4. **Documentation**
-   - Update `DOCUMENTATION.md` for user-facing features
-   - Update `API_REFERENCE.md` for function/method additions
+   - Update `docs/guide/` (e.g. `docs/guide/user-guide.md`) for user-facing features
+   - Update `docs/reference/api.md` for function/method additions
    - Update this `DEVELOPMENT_GUIDE.md` for architecture changes
 
 5. **Error Messages**
