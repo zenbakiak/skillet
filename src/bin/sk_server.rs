@@ -61,6 +61,9 @@ impl ServerStats {
     }
 }
 
+#[path = "http_server/response_size.rs"]
+mod response_size;
+
 /// Wall-clock limit for one evaluation (ADR-0011), same as `sk_http_server`. No flag or env var.
 const SERVER_EVAL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
@@ -182,6 +185,13 @@ fn process_request(req: EvalRequest, request_id: u64) -> EvalResponse {
     });
 
     let execution_time_ms = start_time.elapsed().as_secs_f64() * 1000.0;
+
+    // Size the response before building it: escaping can make it up to 6x the value.
+    let result = result.and_then(|val| {
+        response_size::check(response_size::json_size(&val, true))
+            .map(|()| val)
+            .map_err(|e| skillet::Error::new(e, None))
+    });
 
     match result {
         Ok(val) => {
