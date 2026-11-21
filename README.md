@@ -142,7 +142,7 @@ cargo run --bin sk_http_server 5074 -d --host 0.0.0.0 --token secret123 --admin-
 - `<port>` - Port to bind (required)
 - `-H, --host <addr>` - Bind address (default: 127.0.0.1)
 - `-d, --daemon` - Run as background daemon
-- `--token <value>` - Require token for eval requests
+- `--token <value>` - Require token for eval requests (or set `SKILLET_AUTH_TOKEN`; the flag wins; an empty value is a start-up error)
 - `--admin-token <value>` - Require admin token for JS function management
 - `--pid-file <file>` - PID file for daemon mode
 - `--log-file <file>` - Log file for daemon mode
@@ -204,7 +204,7 @@ cargo run --bin sk_server 8080 8 -d --host 0.0.0.0 --token secret123
 - `[num_threads]` - Worker threads (optional)
 - `-H, --host <addr>` - Bind address (default: 127.0.0.1)
 - `-d, --daemon` - Run as background daemon
-- `--token <value>` - Require authentication token
+- `--token <value>` - Require authentication token (or set `SKILLET_AUTH_TOKEN`; the flag wins; an empty value is a start-up error)
 - `--pid-file <file>` - PID file for daemon mode
 - `--log-file <file>` - Log file for daemon mode
 
