@@ -159,7 +159,7 @@ Each evaluation has a budget of 256 MB of created values, and the servers stop a
 | `sk_http_server` request bodies | parsed as JSON whatever the `Content-Type` | `Content-Type: application/json` is required; anything else gets `415 Unsupported Media Type` |
 | CORS on `sk_http_server` | every response has `Access-Control-Allow-Origin: *` | no CORS header when the server runs without a token (development mode), so web pages cannot drive a local server. Rules in [ADR-0019](../adr/0019-server-cors-and-development-mode.md) |
 | Admin token from the environment | only `--admin-token` | `SKILLET_ADMIN_TOKEN` is read too, like `SKILLET_AUTH_TOKEN` |
-| Docker image without tokens | starts unauthenticated on `0.0.0.0` | refuses to start; set `AUTH_TOKEN` and `ADMIN_TOKEN` ([Docker](../ops/docker.md)) |
+| Docker image without tokens | starts unauthenticated on `0.0.0.0` | refuses to start; set `SKILLET_AUTH_TOKEN` and `SKILLET_ADMIN_TOKEN` (the old `AUTH_TOKEN`/`ADMIN_TOKEN` names are no longer read) ([Docker](../ops/docker.md)) |
 | Empty token (`--token ""`, `--admin-token ""`, empty `SKILLET_AUTH_TOKEN`) | auth silently off | the server exits with code 1 |
 | `sk_server` wrong or missing token | can retry on the same connection | `Unauthorized: invalid token`, then the connection closes |
 | `/upload-js`, `/update-js`, `/delete-js` file names | any path | only `[A-Za-z0-9_-]+.js`, otherwise 400 |
