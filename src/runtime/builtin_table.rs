@@ -188,6 +188,8 @@ pub(crate) static BUILTINS: &[Builtin] = &[
     f("MODE_SNGL", Statistical, 0, ANY, "values…", "Most frequent number (first seen wins a tie); 0 when there are none.", "MODE_SNGL(1, 2, 2, 3)").aliases(&["MODESNGL", "MODE.SNGL"]),
     f("STDEV_P", Statistical, 0, ANY, "values…", "Population standard deviation; 0 when there are none.", "STDEV_P(2, 4, 4, 4, 5, 5, 7, 9)").aliases(&["STDEVP", "STDEV.P"]),
     f("VAR_P", Statistical, 0, ANY, "values…", "Population variance; 0 when there are none.", "VAR_P(1, 2, 3, 4)").aliases(&["VARP", "VAR.P"]),
+    f("STDEV_S", Statistical, 1, ANY, "values…", "Sample standard deviation (divides by n - 1); error with fewer than two numbers.", "STDEV_S(2, 4, 4, 4, 5, 5, 7, 9)").aliases(&["STDEV.S", "STDEV"]),
+    f("VAR_S", Statistical, 1, ANY, "values…", "Sample variance (divides by n - 1); error with fewer than two numbers.", "VAR_S(1, 2, 3, 4)").aliases(&["VAR.S", "VAR"]),
     f("PERCENTILE_INC", Statistical, 2, ANY, "values…, k", "Inclusive percentile `k` (0-1) of the values, interpolated.", "PERCENTILE_INC([1, 2, 3, 4], 0.5)").aliases(&["PERCENTILEINC", "PERCENTILE.INC"]),
     f("QUARTILE_INC", Statistical, 2, ANY, "values…, quart", "Inclusive quartile `quart` (0-4) of the values.", "QUARTILE_INC([1, 2, 3, 4, 5], 1)").aliases(&["QUARTILEINC", "QUARTILE.INC"]),
     f("AVGIF", Statistical, 2, n(2), "array, expr", "Mean of items for which `expr` over `:x` is TRUE.", "AVGIF([1, 3, 5, -1], :x > 0)").evaluator(),
@@ -341,8 +343,8 @@ mod tests {
              file. Examples run with `:obj` = `{\"user\": {\"name\": \"alice\", \"tags\": [\"a\", \"b\"]}}`.\n\
              - **†** marks functions the evaluator runs itself because they take a lambda \
              (`:x` is the item, `:acc` the accumulator) or need unevaluated arguments.\n\
-             - Dotted Excel spellings (`MODE.SNGL`, `STDEV.P`, ...) are registered aliases, but \
-             the parser cannot read a dot in a function name; use the underscore form.\n\n\
+             - Dotted Excel spellings (`STDEV.P(…)`, `MODE.SNGL(…)`, ...) work as written; the \
+             underscore forms are aliases. No spaces around the dot.\n\n\
              Methods (`:arr.sum()`), operators and the rest of the language: [api.md](api.md).\n",
         );
         for (category, title) in SECTIONS {

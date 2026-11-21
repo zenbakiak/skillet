@@ -344,14 +344,31 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Function call: `IDENT '(' args? ')'`
+    /// Function call: `IDENT ('.' IDENT)* '(' args? ')'`. The dotted form is Excel's
+    /// (`STDEV.P(`); the parts must touch (no spaces around the dots). A bare identifier is
+    /// only ever a function name (variables start with `:`), so this cannot clash with
+    /// `:var.method()`.
     #[inline(never)]
     fn parse_function_call(&mut self) -> Parsed {
-        let name = match &self.lookahead {
+        let mut name = match &self.lookahead {
             Token::Identifier(name) => name.to_uppercase(),
             _ => return self.parse_leaf(),
         };
+        let mut end = self.lexer.last_end();
         self.bump()?; // consume ident
+        while matches!(self.lookahead, Token::Dot) && self.look_pos == end {
+            let mut next = self.lexer.clone();
+            match next.next_token()? {
+                Token::Identifier(part) if next.last_start() == end + 1 => {
+                    name.push('.');
+                    name.push_str(&part.to_uppercase());
+                    end = next.last_end();
+                    self.bump()?; // '.'
+                    self.bump()?; // part
+                }
+                _ => break,
+            }
+        }
         match self.lookahead {
             Token::LParen => {
                 self.bump()?; // '('

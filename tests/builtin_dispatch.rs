@@ -11,7 +11,8 @@ use skillet::runtime::function_dispatch::{
 use skillet::Value;
 
 /// Every name in the dispatch sets at d3e6a5d (81 names), grouped by the set it was in, plus
-/// `BETWEEN`, registered later to restore its documented behaviour (82 names).
+/// `BETWEEN`, registered later to restore its documented behaviour, and the six sample
+/// variance names of BL-054 (88 names).
 const DISPATCHED: &[&str] = &[
     // arithmetic (17)
     "SUM",
@@ -101,6 +102,13 @@ const DISPATCHED: &[&str] = &[
     "QUARTILE.INC",
     "QUARTILEINC",
     "QUARTILE_INC",
+    // BL-054: sample variants
+    "STDEV_S",
+    "STDEV.S",
+    "STDEV",
+    "VAR_S",
+    "VAR.S",
+    "VAR",
     // json (1)
     "DIG",
 ];
@@ -127,8 +135,8 @@ const NOT_DISPATCHED: &[&str] = &[
 
 #[test]
 fn every_dispatched_name_resolves() {
-    assert_eq!(DISPATCHED.len(), 82);
-    assert_eq!(builtin_function_count(), 82);
+    assert_eq!(DISPATCHED.len(), 88);
+    assert_eq!(builtin_function_count(), 88);
     for name in DISPATCHED {
         assert!(has_builtin_function(name), "{name} should be a builtin");
         // Zero-arg call must reach the right module: no "Unknown … function" from any layer.
@@ -152,8 +160,8 @@ fn non_dispatched_names_stay_unknown() {
     }
 }
 
-/// Dotted Excel names are in the table but the lexer cannot produce them, so they are only
-/// reachable through `exec_builtin_fast`; they must stay equal to their underscore aliases.
+/// Dotted Excel names must stay equal to their underscore aliases, through dispatch and
+/// (since BL-054) through the parser.
 #[test]
 fn dotted_aliases_match_underscore_forms() {
     let nums = |v: &[f64]| v.iter().map(|n| Value::Number(*n)).collect::<Vec<_>>();
@@ -199,11 +207,10 @@ fn dotted_aliases_match_underscore_forms() {
             );
         }
     }
-    // Through the parser the dotted spelling is a syntax error, not a call.
-    let err = skillet::evaluate("=STDEV.P(1, 3)").unwrap_err();
+    // Through the parser the dotted spelling is a call (BL-054, D-4).
     assert_eq!(
-        err.message,
-        "Unexpected identifier (expected function call)"
+        skillet::evaluate("=STDEV.P(1, 3)").unwrap(),
+        Value::Number(1.0)
     );
 }
 

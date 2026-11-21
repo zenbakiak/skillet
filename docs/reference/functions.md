@@ -7,7 +7,7 @@ Every `UPPERCASE()` builtin. Names are case-insensitive in expressions (the pars
 - **Arity** is the number of arguments the function reads (`2+` = two or more). Functions check their own arguments: some return an error for a wrong count, others use a default for a missing argument and ignore extra ones.
 - **Result** is what the example evaluates to, produced by the test that writes this file. Examples run with `:obj` = `{"user": {"name": "alice", "tags": ["a", "b"]}}`.
 - **†** marks functions the evaluator runs itself because they take a lambda (`:x` is the item, `:acc` the accumulator) or need unevaluated arguments.
-- Dotted Excel spellings (`MODE.SNGL`, `STDEV.P`, ...) are registered aliases, but the parser cannot read a dot in a function name; use the underscore form.
+- Dotted Excel spellings (`STDEV.P(…)`, `MODE.SNGL(…)`, ...) work as written; the underscore forms are aliases. No spaces around the dot.
 
 Methods (`:arr.sum()`), operators and the rest of the language: [api.md](api.md).
 
@@ -116,6 +116,8 @@ Methods (`:arr.sum()`), operators and the rest of the language: [api.md](api.md)
 | `MODE_SNGL`<br>alias `MODESNGL`, `MODE.SNGL` | `MODE_SNGL(values…)` | 0+ | Most frequent number (first seen wins a tie); 0 when there are none. | `MODE_SNGL(1, 2, 2, 3)` | `2` |
 | `STDEV_P`<br>alias `STDEVP`, `STDEV.P` | `STDEV_P(values…)` | 0+ | Population standard deviation; 0 when there are none. | `STDEV_P(2, 4, 4, 4, 5, 5, 7, 9)` | `2` |
 | `VAR_P`<br>alias `VARP`, `VAR.P` | `VAR_P(values…)` | 0+ | Population variance; 0 when there are none. | `VAR_P(1, 2, 3, 4)` | `1.25` |
+| `STDEV_S`<br>alias `STDEV.S`, `STDEV` | `STDEV_S(values…)` | 1+ | Sample standard deviation (divides by n - 1); error with fewer than two numbers. | `STDEV_S(2, 4, 4, 4, 5, 5, 7, 9)` | `2.138089935299395` |
+| `VAR_S`<br>alias `VAR.S`, `VAR` | `VAR_S(values…)` | 1+ | Sample variance (divides by n - 1); error with fewer than two numbers. | `VAR_S(1, 2, 3, 4)` | `1.6666666666666667` |
 | `PERCENTILE_INC`<br>alias `PERCENTILEINC`, `PERCENTILE.INC` | `PERCENTILE_INC(values…, k)` | 2+ | Inclusive percentile `k` (0-1) of the values, interpolated. | `PERCENTILE_INC([1, 2, 3, 4], 0.5)` | `2.5` |
 | `QUARTILE_INC`<br>alias `QUARTILEINC`, `QUARTILE.INC` | `QUARTILE_INC(values…, quart)` | 2+ | Inclusive quartile `quart` (0-4) of the values. | `QUARTILE_INC([1, 2, 3, 4, 5], 1)` | `2` |
 | `AVGIF` † | `AVGIF(array, expr)` | 2 | Mean of items for which `expr` over `:x` is TRUE. | `AVGIF([1, 3, 5, -1], :x > 0)` | `3` |
