@@ -83,8 +83,8 @@ Reference points:
    is non-blocking and sleeps 1 ms whenever `accept` would block (`src/bin/sk_http_server.rs`,
    accept loop). With evaluation at 1–30 µs, the expression cache cannot show a benefit until
    that floor is gone.
-4. **The `sk_http_bench` suite has broken cases**: "Range operations" (`range(1,50).sum()`)
-   fails on every request. Its variable tests send a JSON body without escaping.
+4. **One `sk_http_bench` case is broken**: "Range operations" (`range(1,50).sum()`) fails on
+   every request, because there is no `RANGE` function.
 
 ## The "100x" claim
 
