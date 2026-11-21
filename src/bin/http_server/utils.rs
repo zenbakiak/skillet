@@ -218,20 +218,8 @@ pub fn parse_json_body<T: DeserializeOwned>(request: &str) -> Result<T, String> 
     serde_json::from_str(body).map_err(|e| format!("Invalid JSON: {}", e))
 }
 
-pub fn load_html_file() -> String {
-    match std::fs::read_to_string("src/bin/http_server/documentation.html") {
-        Ok(content) => content,
-        Err(_) => {
-            // Fallback HTML if file not found
-            r#"<!DOCTYPE html>
-<html>
-<head><title>Skillet Expression Server</title></head>
-<body>
-    <h1>🥘 Skillet Expression Server</h1>
-    <p>Documentation file not found. Please ensure documentation.html is available.</p>
-</body>
-</html>"#
-                .to_string()
-        }
-    }
+/// The `GET /` page, embedded at build time so an installed binary serves it from any
+/// working directory (BL-045).
+pub fn load_html_file() -> &'static str {
+    include_str!("documentation.html")
 }

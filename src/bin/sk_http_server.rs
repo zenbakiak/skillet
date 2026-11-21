@@ -11,7 +11,7 @@ use std::sync::{
 use threadpool::Builder as ThreadPoolBuilder;
 
 use http_server::auth::TokenConfig;
-use http_server::daemon::{setup_signal_handlers, write_pid_file};
+use http_server::daemon::{setup_signal_handlers, wake_address, write_pid_file};
 use http_server::eval::{handle_cache_clear, handle_eval_get, handle_eval_post, handle_health};
 #[cfg(feature = "plugins")]
 use http_server::js_management::{
@@ -130,8 +130,7 @@ fn handle_js_disabled(
 }
 
 fn handle_root(stream: &mut TcpStream) {
-    let html = load_html_file();
-    send_http_response(stream, 200, "text/html", &html);
+    send_http_response(stream, 200, "text/html", load_html_file());
 }
 
 fn handle_api_docs(stream: &mut TcpStream) {
@@ -180,14 +179,18 @@ fn main() {
         handle_daemon_mode(port, &bind_host, &pid_file, &token_config, thread_count);
     }
 
-    // Setup signal handlers
-    let running = setup_signal_handlers();
-
     // Load JavaScript functions
     load_js_functions(daemon_mode);
 
-    // Start server
+    // Start server, then the shutdown handler (it needs the bound address to wake `accept`)
     let listener = start_server(port, &bind_host);
+    let running = match listener.local_addr() {
+        Ok(addr) => setup_signal_handlers(wake_address(addr)),
+        Err(e) => {
+            eprintln!("Error: Failed to read the listening address: {}", e);
+            std::process::exit(1);
+        }
+    };
     let stats = Arc::new(ServerStats::new());
     let request_counter = Arc::new(AtomicU64::new(0));
     let server_token = Arc::new(auth_token.clone());
@@ -211,13 +214,15 @@ fn main() {
         thread_count,
     );
 
-    // Accept loop
-    while running.load(Ordering::Relaxed) {
-        match listener.accept() {
+    // Accept loop. `accept` blocks (no polling delay, BL-039); the shutdown handler clears
+    // `running` and connects once to wake it, and that connection is dropped unserved.
+    loop {
+        let accepted = listener.accept();
+        if !running.load(Ordering::SeqCst) {
+            break;
+        }
+        match accepted {
             Ok((stream, _addr)) => {
-                // The listener is non-blocking; on macOS/BSD accepted sockets inherit that, and
-                // a read that finds no data yet would fail instead of waiting.
-                let _ = stream.set_nonblocking(false);
                 let stats = Arc::clone(&stats);
                 let request_counter = Arc::clone(&request_counter);
                 let server_token = Arc::clone(&server_token);
@@ -233,10 +238,8 @@ fn main() {
                     );
                 });
             }
-            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                std::thread::sleep(std::time::Duration::from_millis(1));
-            }
             Err(e) => {
+                // e.g. out of file descriptors: back off instead of spinning
                 if !daemon_mode {
                     eprintln!("Error accepting connection: {}", e);
                 }
@@ -442,17 +445,10 @@ fn load_js_functions(daemon_mode: bool) {
 }
 
 fn start_server(port: u16, bind_host: &str) -> TcpListener {
-    let listener = TcpListener::bind(format!("{}:{}", bind_host, port)).unwrap_or_else(|e| {
+    TcpListener::bind(format!("{}:{}", bind_host, port)).unwrap_or_else(|e| {
         eprintln!("Error: Failed to bind to {}:{}: {}", bind_host, port, e);
         std::process::exit(1);
-    });
-
-    listener.set_nonblocking(true).unwrap_or_else(|e| {
-        eprintln!("Error: Failed to set non-blocking mode: {}", e);
-        std::process::exit(1);
-    });
-
-    listener
+    })
 }
 
 fn print_startup_messages(
