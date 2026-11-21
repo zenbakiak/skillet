@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use skillet::{evaluate_with_assignments, evaluate_with_custom, JSPluginLoader, Value};
 use std::collections::{BTreeMap, HashMap};
-use std::io::{BufRead, BufReader, BufWriter, Write};
+use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
@@ -64,6 +64,10 @@ impl ServerStats {
 #[path = "http_server/response_size.rs"]
 mod response_size;
 
+#[path = "http_server/request_limits.rs"]
+mod request_limits;
+use request_limits::{DeadlineReader, MAX_REQUEST_SIZE, WRITE_TIMEOUT};
+
 /// Wall-clock limit for one evaluation (ADR-0011), same as `sk_http_server`. No flag or env var.
 const SERVER_EVAL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
@@ -73,18 +77,74 @@ fn server_limits() -> skillet::EvalLimits {
     limits
 }
 
+/// One request line read from a connection.
+enum Line {
+    Request(String),
+    /// Connection closed, idle until the deadline, or not UTF-8: close quietly.
+    Closed,
+    /// Over `MAX_REQUEST_SIZE` or timed out part-way: answer with this error, then close (the
+    /// rest of the stream cannot be framed).
+    Rejected(&'static str),
+}
+
+/// Read one `\n`-terminated line of at most `MAX_REQUEST_SIZE` bytes within
+/// `REQUEST_READ_DEADLINE` (BL-033). Memory stays bounded whatever the client sends.
+fn read_request_line(reader: &mut BufReader<DeadlineReader<'_>>, buf: &mut Vec<u8>) -> Line {
+    buf.clear();
+    let limit = MAX_REQUEST_SIZE as u64 + 1; // room for the newline
+    match reader.by_ref().take(limit).read_until(b'\n', buf) {
+        Ok(0) => return Line::Closed,
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::TimedOut && !buf.is_empty() => {
+            return Line::Rejected("Request read timed out (max 30 s)");
+        }
+        Err(_) => return Line::Closed,
+    }
+    if buf.last() == Some(&b'\n') {
+        buf.pop();
+        if buf.last() == Some(&b'\r') {
+            buf.pop();
+        }
+    } else if buf.len() > MAX_REQUEST_SIZE {
+        return Line::Rejected("Request too large (max 1MB)");
+    }
+    match std::str::from_utf8(buf) {
+        Ok(text) => Line::Request(text.to_string()),
+        // As before (`BufRead::lines`): a line that is not UTF-8 ends the connection.
+        Err(_) => Line::Closed,
+    }
+}
+
 fn handle_client(
     stream: TcpStream,
     stats: Arc<ServerStats>,
     request_counter: Arc<AtomicU64>,
     server_token: Arc<Option<String>>,
 ) {
-    let reader = BufReader::new(stream.try_clone().unwrap());
+    let _ = stream.set_write_timeout(Some(WRITE_TIMEOUT));
+    let mut reader = BufReader::new(DeadlineReader::new(&stream));
+    let mut buf = Vec::new();
 
-    for line in reader.lines() {
-        let line = match line {
-            Ok(line) => line,
-            Err(_) => break,
+    loop {
+        // Each request gets the full deadline, counted from when the server starts reading it.
+        *reader.get_mut() = DeadlineReader::new(&stream);
+        let line = match read_request_line(&mut reader, &mut buf) {
+            Line::Request(line) => line,
+            Line::Closed => break,
+            Line::Rejected(message) => {
+                let request_id = request_counter.fetch_add(1, Ordering::Relaxed);
+                let response = EvalResponse {
+                    success: false,
+                    result: None,
+                    error: Some(message.to_string()),
+                    execution_time_ms: 0.0,
+                    request_id,
+                };
+                if write_response(&stream, &response).is_ok() {
+                    close_after_reject(&stream, reader.get_mut());
+                }
+                break;
+            }
         };
 
         if line.trim().is_empty() {
@@ -138,6 +198,15 @@ fn handle_client(
             );
         }
     }
+}
+
+/// After rejecting a request, close so the client still receives the error: closing a socket
+/// with unread input sends a reset, which can discard the response before the client reads it.
+/// Send FIN, then discard input until the client closes or the request deadline passes.
+fn close_after_reject(stream: &TcpStream, reader: &mut DeadlineReader<'_>) {
+    let _ = stream.shutdown(std::net::Shutdown::Write);
+    let mut sink = [0u8; 8192];
+    while matches!(reader.read(&mut sink), Ok(n) if n > 0) {}
 }
 
 fn process_request(req: EvalRequest, request_id: u64) -> EvalResponse {
