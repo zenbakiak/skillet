@@ -329,6 +329,94 @@ fn bl018_servers_accept_only_the_exact_token() {
     }
 }
 
+// ---------------------------------------------------------------- BL-046: non-work lines
+
+/// After a wrong token the error is sent and the connection closed: a later line on the same
+/// connection, even with the right token, gets no answer.
+#[test]
+fn bl046_sk_server_closes_after_an_auth_failure() {
+    let server = Server::spawn(env!("CARGO_BIN_EXE_sk_server"), |port| {
+        vec![port.to_string(), "1".into(), "--token".into(), "tok".into()]
+    });
+    let mut s = server.connect();
+    s.write_all(
+        b"{\"expression\":\"=1\",\"token\":\"bad\"}\n{\"expression\":\"=2\",\"token\":\"tok\"}\n",
+    )
+    .unwrap();
+    let mut reader = BufReader::new(s);
+    let mut first = String::new();
+    reader.read_line(&mut first).unwrap();
+    assert!(first.contains("Unauthorized: invalid token"), "{first}");
+    let mut rest = String::new();
+    let _ = reader.read_to_string(&mut rest);
+    assert_eq!(rest, "");
+
+    // The worker is free again.
+    let resp = server.send_line("{\"expression\":\"=2 + 3\",\"token\":\"tok\"}");
+    assert!(resp.contains("\"success\":true"), "{}", head(&resp));
+}
+
+/// Sends `line` every 10 s on `s` until the server closes; returns how long that took.
+fn keep_sending(mut s: TcpStream, line: &'static [u8]) -> Duration {
+    let start = Instant::now();
+    let mut reader = BufReader::new(s.try_clone().unwrap());
+    let closed = std::thread::spawn(move || {
+        // Drain answers (invalid-JSON errors) until EOF.
+        let mut sink = String::new();
+        while matches!(reader.read_line(&mut sink), Ok(n) if n > 0) {
+            sink.clear();
+        }
+        start.elapsed()
+    });
+    while !closed.is_finished() && start.elapsed() < Duration::from_secs(60) {
+        if s.write_all(line).is_err() {
+            break;
+        }
+        std::thread::sleep(Duration::from_secs(10));
+    }
+    closed.join().unwrap()
+}
+
+/// Blank lines do not reset the 30 s deadline: a client sending only `\n` is closed at 30 s.
+#[test]
+#[ignore = "slow: 30 s request read deadline"]
+fn bl046_sk_server_blank_lines_do_not_keep_a_connection() {
+    let server = Server::line();
+    let took = keep_sending(server.connect(), b"\n");
+    assert!(
+        took >= Duration::from_secs(25) && took < Duration::from_secs(40),
+        "{took:?}"
+    );
+}
+
+/// Invalid-JSON lines are answered but do not reset the deadline either.
+#[test]
+#[ignore = "slow: 30 s request read deadline"]
+fn bl046_sk_server_invalid_lines_do_not_keep_a_connection() {
+    let server = Server::line();
+    let took = keep_sending(server.connect(), b"not json\n");
+    assert!(
+        took >= Duration::from_secs(25) && took < Duration::from_secs(40),
+        "{took:?}"
+    );
+}
+
+/// Real requests still reset the deadline: a connection used every 10 s outlives 30 s.
+#[test]
+#[ignore = "slow: 30 s request read deadline"]
+fn bl046_sk_server_real_requests_keep_a_connection() {
+    let server = Server::line();
+    let mut s = server.connect();
+    let mut reader = BufReader::new(s.try_clone().unwrap());
+    for i in 0..5 {
+        s.write_all(b"{\"expression\":\"=2 + 3\"}\n").unwrap();
+        let mut resp = String::new();
+        reader.read_line(&mut resp).unwrap();
+        assert!(resp.contains("\"success\":true"), "request {i}: {resp}");
+        std::thread::sleep(Duration::from_secs(10));
+    }
+}
+
 // ---------------------------------------------------------------- BL-047: slow readers
 
 /// An expression whose result is about 20 MB, escaped for a JSON string.

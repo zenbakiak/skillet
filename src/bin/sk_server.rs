@@ -127,12 +127,12 @@ fn handle_client(
     request_counter: Arc<AtomicU64>,
     server_token: Arc<Option<String>>,
 ) {
+    // The read deadline counts from the connection start or the end of the last real request.
+    // Blank, invalid-JSON and unauthorized lines are not work and do not reset it (BL-046).
     let mut reader = BufReader::new(DeadlineReader::new(&stream));
     let mut buf = Vec::new();
 
     loop {
-        // Each request gets the full deadline, counted from when the server starts reading it.
-        *reader.get_mut() = DeadlineReader::new(&stream);
         let line = match read_request_line(&mut reader, &mut buf) {
             Line::Request(line) => line,
             Line::Closed => break,
@@ -159,39 +159,21 @@ fn handle_client(
         let request_id = request_counter.fetch_add(1, Ordering::Relaxed);
         let start_time = Instant::now();
 
-        let response = match serde_json::from_str::<EvalRequest>(&line) {
-            Ok(req) => {
-                if let Some(cfg_token) = server_token.as_ref() {
-                    let supplied = req.token.as_deref().unwrap_or("");
-                    if !tokens_match(supplied, cfg_token) {
-                        EvalResponse {
-                            success: false,
-                            result: None,
-                            error: Some("Unauthorized: invalid token".to_string()),
-                            execution_time_ms: 0.0,
-                            request_id,
-                        }
-                    } else {
-                        process_request(req, request_id)
-                    }
-                } else {
-                    process_request(req, request_id)
-                }
-            }
-            Err(e) => EvalResponse {
-                success: false,
-                result: None,
-                error: Some(format!("Invalid JSON request: {}", e)),
-                execution_time_ms: 0.0,
-                request_id,
-            },
-        };
+        let (response, outcome) = answer(&line, request_id, &server_token);
 
         let execution_time = start_time.elapsed();
         stats.record_request(execution_time.as_micros() as u64);
 
         if write_response(&stream, &response).is_err() {
             break;
+        }
+        match outcome {
+            Outcome::Work => *reader.get_mut() = DeadlineReader::new(&stream),
+            Outcome::NotWork => {}
+            Outcome::Unauthorized => {
+                close_after_reject(&stream, reader.get_mut());
+                break;
+            }
         }
 
         // Log request for monitoring
@@ -203,6 +185,41 @@ fn handle_client(
             );
         }
     }
+}
+
+/// What answering a request line means for the connection.
+enum Outcome {
+    /// An authorized request was evaluated: the read deadline starts again.
+    Work,
+    /// Invalid JSON: answered, but the deadline keeps running.
+    NotWork,
+    /// Wrong or missing token: answered, then the connection is closed.
+    Unauthorized,
+}
+
+/// Parse, authorize and evaluate one non-blank request line.
+fn answer(line: &str, request_id: u64, server_token: &Option<String>) -> (EvalResponse, Outcome) {
+    let failure = |error: String| EvalResponse {
+        success: false,
+        result: None,
+        error: Some(error),
+        execution_time_ms: 0.0,
+        request_id,
+    };
+    let req = match serde_json::from_str::<EvalRequest>(line) {
+        Ok(req) => req,
+        Err(e) => {
+            let response = failure(format!("Invalid JSON request: {}", e));
+            return (response, Outcome::NotWork);
+        }
+    };
+    if let Some(cfg_token) = server_token {
+        if !tokens_match(req.token.as_deref().unwrap_or(""), cfg_token) {
+            let response = failure("Unauthorized: invalid token".to_string());
+            return (response, Outcome::Unauthorized);
+        }
+    }
+    (process_request(req, request_id), Outcome::Work)
 }
 
 /// After rejecting a request, close so the client still receives the error: closing a socket
