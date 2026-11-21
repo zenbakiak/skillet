@@ -2,7 +2,9 @@ pub mod auth;
 pub mod cache;
 pub mod daemon;
 pub mod eval;
+#[cfg(feature = "plugins")]
 pub mod js_management;
+#[cfg(feature = "plugins")]
 pub mod multipart;
 pub mod request_limits;
 pub mod response_size;

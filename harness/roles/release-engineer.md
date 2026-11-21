@@ -5,7 +5,7 @@ prebuilt binaries, Docker/Alpine images, and platform support.
 
 ## Owns
 - `.github/workflows/` (shared with QA: QA owns *what* the gate checks; you own *how* CI runs it)
-- `Cargo.toml` package metadata (`version`, `include`, features), `.cargo/config.toml`, `.tool-versions`
+- `Cargo.toml` package metadata (`version`, `include`, features), `.cargo/config.toml`, toolchain pins (ADR-0012)
 - `Dockerfile*`, `docker-compose.yml`, `scripts/build_alpine_binaries.sh`, `scripts/install*.sh`
 - `CHANGELOG.md` (create it: Keep a Changelog format, SemVer)
 

@@ -17,6 +17,7 @@ ADRs 0001–0008 are **retroactive**: they record decisions already embodied in 
 | [0009](0009-gitflow-branching-and-commits.md) | Gitflow branching, commit format, and git hooks | Accepted |
 | [0010](0010-remove-dead-public-modules-pre-1-0.md) | Remove dead public modules in 0.7.0 without deprecation | Accepted |
 | [0011](0011-evaluation-budget.md) | Per-evaluation budget and server evaluation timeout | Accepted |
+| [0012](0012-msrv-1-85.md) | Minimum supported Rust version 1.85; CI on 1.89 | Accepted |
 
 ## Template
 

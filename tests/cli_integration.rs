@@ -1,10 +1,12 @@
 use std::process::Command;
 
+// The `sk` binary Cargo builds for this test run (same profile as the tests).
+// Spawning it directly avoids parallel `cargo run` invocations racing to
+// rebuild a stale binary (BL-032).
+const SK_BIN: &str = env!("CARGO_BIN_EXE_sk");
+
 fn run_sk(args: &[&str]) -> Result<(String, String, i32), Box<dyn std::error::Error>> {
-    let output = Command::new("cargo")
-        .args(["run", "--bin", "sk", "--"])
-        .args(args)
-        .output()?;
+    let output = Command::new(SK_BIN).args(args).output()?;
 
     let stdout = String::from_utf8(output.stdout)?;
     let stderr = String::from_utf8(output.stderr)?;

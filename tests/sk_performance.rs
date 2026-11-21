@@ -1,6 +1,11 @@
 use std::process::Command;
 use std::time::{Duration, Instant};
 
+// The `sk` binary Cargo builds for this test run (same profile as the tests).
+// Spawning it directly avoids parallel `cargo run` invocations racing to
+// rebuild a stale binary (BL-032).
+const SK_BIN: &str = env!("CARGO_BIN_EXE_sk");
+
 /// Performance and concurrency testing for the sk command
 ///
 /// To run these tests:
@@ -29,10 +34,7 @@ impl BenchResult {
 
 fn run_sk_command(args: &[&str]) -> Result<(String, Duration), Box<dyn std::error::Error>> {
     let start = Instant::now();
-    let output = Command::new("cargo")
-        .args(["run", "--release", "--bin", "sk", "--"])
-        .args(args)
-        .output()?;
+    let output = Command::new(SK_BIN).args(args).output()?;
     let duration = start.elapsed();
 
     if !output.status.success() {

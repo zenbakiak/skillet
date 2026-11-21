@@ -9,7 +9,7 @@ without changing what expressions evaluate to.
 - Baseline: `./harness/check.sh --fast`; for perf work also record numbers (see below).
 
 ## Standards
-- Edition 2021, MSRV per `.tool-versions` (bumping MSRV/edition = ADR).
+- Edition 2021, MSRV 1.85 per ADR-0012 (bumping MSRV/edition = ADR).
 - No `unwrap()`/`expect()`/`panic!` on input-dependent paths; return `Error` with a position when you have one.
 - No `unsafe` outside `src/bin/http_server/daemon.rs` without an ADR.
 - Prefer deleting code to adding it. No new dependency if std or an existing dep does it; any new dependency = ADR.

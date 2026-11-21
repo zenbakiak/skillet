@@ -34,7 +34,8 @@ cargo run --bin sk -- "=2 + 3 * 4"   # try an expression
 ./harness/check.sh                   # THE gate. Must pass before any handoff.
 ```
 
-Toolchain: Rust `1.81.0` (`.tool-versions`), edition 2021. Plugins feature is default;
+Toolchain: develop and CI on Rust `1.89.0`; minimum supported version (MSRV) `1.85` (`rust-version` in
+`Cargo.toml`, [ADR-0012](docs/adr/0012-msrv-1-85.md)); edition 2021. Plugins feature is default;
 `--no-default-features` builds without QuickJS.
 
 ## 4. Codebase map (verified 2026-11)

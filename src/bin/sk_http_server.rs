@@ -1,6 +1,7 @@
 mod http_server;
 
 use scalar_doc::Documentation;
+#[cfg(feature = "plugins")]
 use skillet::JSPluginLoader;
 use std::net::{TcpListener, TcpStream};
 use std::sync::{
@@ -12,6 +13,7 @@ use threadpool::Builder as ThreadPoolBuilder;
 use http_server::auth::TokenConfig;
 use http_server::daemon::{setup_signal_handlers, write_pid_file};
 use http_server::eval::{handle_cache_clear, handle_eval_get, handle_eval_post, handle_health};
+#[cfg(feature = "plugins")]
 use http_server::js_management::{
     handle_delete_js, handle_list_js, handle_reload_hooks, handle_update_js, handle_upload_js,
 };
@@ -86,15 +88,45 @@ fn handle_http_request(
         ("GET", "/eval") => {
             handle_eval_get(&mut stream, &request, stats, request_counter, server_token)
         }
+        #[cfg(feature = "plugins")]
         ("POST", "/upload-js") => handle_upload_js(&mut stream, &request, server_admin_token),
+        #[cfg(feature = "plugins")]
         ("PUT", "/update-js") => handle_update_js(&mut stream, &request, server_admin_token),
+        #[cfg(feature = "plugins")]
         ("DELETE", "/delete-js") => handle_delete_js(&mut stream, &request, server_admin_token),
+        #[cfg(feature = "plugins")]
         ("GET", "/list-js") => handle_list_js(&mut stream, &request, server_admin_token),
+        #[cfg(feature = "plugins")]
         ("POST", "/reload-hooks") => handle_reload_hooks(&mut stream, &request, server_admin_token),
+        #[cfg(not(feature = "plugins"))]
+        (_, "/upload-js" | "/update-js" | "/delete-js" | "/list-js" | "/reload-hooks") => {
+            handle_js_disabled(&mut stream, &request, server_admin_token)
+        }
         ("DELETE", "/cache") => handle_cache_clear(&mut stream, &request, server_admin_token),
         ("OPTIONS", _) => handle_cors_preflight(&mut stream),
         _ => send_http_error(&mut stream, 404, "Not Found"),
     }
+}
+
+/// JS management endpoints in a build without the `plugins` feature: same admin
+/// check as the real handlers, then 404 with a message saying why.
+#[cfg(not(feature = "plugins"))]
+fn handle_js_disabled(
+    stream: &mut TcpStream,
+    request: &str,
+    server_admin_token: Arc<Option<String>>,
+) {
+    if let Some(error_response) =
+        http_server::auth::check_admin_authentication(request, &server_admin_token)
+    {
+        send_http_response(stream, 401, "application/json", &error_response);
+        return;
+    }
+    send_http_error(
+        stream,
+        404,
+        "JavaScript plugins are not enabled in this build",
+    );
 }
 
 fn handle_root(stream: &mut TcpStream) {
@@ -387,6 +419,10 @@ fn handle_daemon_mode(
     std::process::exit(1);
 }
 
+#[cfg(not(feature = "plugins"))]
+fn load_js_functions(_daemon_mode: bool) {}
+
+#[cfg(feature = "plugins")]
 fn load_js_functions(daemon_mode: bool) {
     let hooks_dir = std::env::var("SKILLET_HOOKS_DIR").unwrap_or_else(|_| "hooks".to_string());
     let js_loader = JSPluginLoader::new(hooks_dir);

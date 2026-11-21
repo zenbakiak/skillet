@@ -4,6 +4,11 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+// The `sk` binary Cargo builds for this test run (same profile as the tests).
+// Spawning it directly avoids parallel `cargo run` invocations racing to
+// rebuild a stale binary (BL-032).
+const SK_BIN: &str = env!("CARGO_BIN_EXE_sk");
+
 /// Concurrency testing for the sk command
 /// Tests multiple concurrent invocations of the sk binary to ensure:
 /// 1. Thread safety
@@ -23,11 +28,7 @@ struct ConcurrencyTestResult {
 fn run_sk_concurrent(args: &[&str], thread_id: usize) -> ConcurrencyTestResult {
     let start = Instant::now();
 
-    match Command::new("cargo")
-        .args(["run", "--release", "--bin", "sk", "--"])
-        .args(args)
-        .output()
-    {
+    match Command::new(SK_BIN).args(args).output() {
         Ok(output) => {
             let duration = start.elapsed();
             let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
