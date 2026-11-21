@@ -29,9 +29,19 @@ fn null_is_unequal_to_every_non_null_value() {
 
 #[test]
 fn ordering_with_null_is_an_error() {
-    for src in ["NULL < 1", "1 > NULL", "NULL >= NULL", "NULL <= NULL", "NULL < NULL"] {
+    for src in [
+        "NULL < 1",
+        "1 > NULL",
+        "NULL >= NULL",
+        "NULL <= NULL",
+        "NULL < NULL",
+    ] {
         let err = evaluate(src).expect_err(src);
-        assert!(err.message.contains("incompatible"), "{src}: {}", err.message);
+        assert!(
+            err.message.contains("incompatible"),
+            "{src}: {}",
+            err.message
+        );
     }
 }
 
@@ -56,8 +66,14 @@ fn null_variable_compares_equal_to_null() {
     let mut vars = HashMap::new();
     vars.insert("u".to_string(), Value::Null);
     vars.insert("v".to_string(), Value::Number(3.0));
-    assert_eq!(evaluate_with(":u == NULL", &vars).unwrap(), Value::Boolean(true));
-    assert_eq!(evaluate_with(":v == NULL", &vars).unwrap(), Value::Boolean(false));
+    assert_eq!(
+        evaluate_with(":u == NULL", &vars).unwrap(),
+        Value::Boolean(true)
+    );
+    assert_eq!(
+        evaluate_with(":v == NULL", &vars).unwrap(),
+        Value::Boolean(false)
+    );
     assert_eq!(
         evaluate_with(":u == NULL ? 'missing' : 'set'", &vars).unwrap(),
         Value::String("missing".into())
