@@ -329,6 +329,78 @@ fn bl018_servers_accept_only_the_exact_token() {
     }
 }
 
+// ---------------------------------------------------------------- BL-047: slow readers
+
+/// An expression whose result is about 20 MB, escaped for a JSON string.
+fn large_result_expr() -> String {
+    format!(
+        "SUBSTITUTE(SUBSTITUTE(\\\"{}\\\", \\\"a\\\", \\\"{}\\\"), \\\"a\\\", \\\"{}\\\")",
+        "a".repeat(10),
+        "a".repeat(1000),
+        "b".repeat(2000)
+    )
+}
+
+/// Reads 16 KB a second from another thread until the server closes; returns bytes read.
+fn read_slowly(mut s: TcpStream) -> std::thread::JoinHandle<usize> {
+    std::thread::spawn(move || {
+        let start = Instant::now();
+        let mut total = 0;
+        let mut buf = [0u8; 16 * 1024];
+        while start.elapsed() < Duration::from_secs(60) {
+            match s.read(&mut buf) {
+                Ok(n) if n > 0 => total += n,
+                _ => break,
+            }
+            std::thread::sleep(Duration::from_secs(1));
+        }
+        total
+    })
+}
+
+/// A client reading a large response slowly holds the only worker for about 10 s, then the
+/// response is cut off and the next client is served.
+#[test]
+#[ignore = "slow: 10 s response write deadline"]
+fn bl047_sk_server_slow_reader_is_cut_off() {
+    let server = Server::line();
+    let mut slow = server.connect();
+    slow.write_all(format!("{{\"expression\":\"{}\"}}\n", large_result_expr()).as_bytes())
+        .unwrap();
+    let slow = read_slowly(slow);
+    std::thread::sleep(Duration::from_millis(300));
+
+    let start = Instant::now();
+    let resp = server.send_line("{\"expression\":\"=2 + 3\"}");
+    let took = start.elapsed();
+    assert!(resp.contains("\"success\":true"), "{}", head(&resp));
+    assert!(took < Duration::from_secs(30), "{took:?}");
+    assert!(slow.join().unwrap() < 20_000_000);
+}
+
+/// Same for `sk_http_server`.
+#[test]
+#[ignore = "slow: 10 s response write deadline"]
+fn bl047_sk_http_server_slow_reader_is_cut_off() {
+    let server = Server::http();
+    let mut slow = server.connect();
+    let body = format!("{{\"expression\":\"{}\"}}", large_result_expr());
+    let req = format!(
+        "POST /eval HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    slow.write_all(req.as_bytes()).unwrap();
+    let slow = read_slowly(slow);
+    std::thread::sleep(Duration::from_millis(300));
+
+    let start = Instant::now();
+    let resp = server.post("{\"expression\":\"=2 + 3\"}");
+    let took = start.elapsed();
+    assert!(resp.starts_with("HTTP/1.1 200"), "{}", head(&resp));
+    assert!(took < Duration::from_secs(30), "{took:?}");
+    assert!(slow.join().unwrap() < 20_000_000);
+}
+
 // ---------------------------------------------------------------- BL-048: empty tokens
 
 /// Runs a server binary that should refuse to start; returns its stderr.

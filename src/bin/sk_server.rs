@@ -68,7 +68,7 @@ mod response_size;
 
 #[path = "http_server/request_limits.rs"]
 mod request_limits;
-use request_limits::{DeadlineReader, MAX_REQUEST_SIZE, WRITE_TIMEOUT};
+use request_limits::{DeadlineReader, DeadlineWriter, MAX_REQUEST_SIZE};
 
 #[path = "http_server/token_eq.rs"]
 mod token_eq;
@@ -127,7 +127,6 @@ fn handle_client(
     request_counter: Arc<AtomicU64>,
     server_token: Arc<Option<String>>,
 ) {
-    let _ = stream.set_write_timeout(Some(WRITE_TIMEOUT));
     let mut reader = BufReader::new(DeadlineReader::new(&stream));
     let mut buf = Vec::new();
 
@@ -362,9 +361,10 @@ fn scalar_json(val: Value, datetime_text: bool) -> serde_json::Value {
     }
 }
 
-/// Stream one response line to the client, with no copy of the response in memory.
+/// Stream one response line to the client, with no copy of the response in memory. The whole
+/// line must be written within `WRITE_TIMEOUT` (BL-047).
 fn write_response(stream: &TcpStream, response: &EvalResponse) -> std::io::Result<()> {
-    let mut out = BufWriter::new(stream);
+    let mut out = BufWriter::new(DeadlineWriter::new(stream));
     serde_json::to_writer(&mut out, response)?;
     out.write_all(b"\n")?;
     out.flush()
