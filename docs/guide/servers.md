@@ -495,6 +495,27 @@ docker run -p 8080:8080 skillet-server
 echo '{"expression": "=2+3*4", "variables": null}' | nc localhost 8080
 ```
 
+## Parse cache
+
+`sk_server` and `sk_http_server` parse an expression once per worker thread and reuse the parsed
+form when the same text comes again, with any variables. Each request still runs under its own
+budget and 10 s deadline, and the result is the same as without the cache. This saves the parse
+on every repeated request: for a 1.8 KB formula over HTTP, one connection at a time, 190 µs →
+140 µs per request; for short formulas the parse is too small to measure
+([`benches/BASELINE.md`](../../benches/BASELINE.md#bl-012-parse-cache)).
+
+| Bound (per worker thread) | Value |
+|---|---|
+| Expressions kept | 256, least recently used evicted first |
+| Expression text kept, summed | 128 KiB |
+| Longest expression kept | 32 KiB (longer ones are parsed on every request) |
+| Memory, worst case | ~10 MiB (a parsed expression is 31-76 times its text), ~4 MiB typical |
+
+The key is the exact text, so `=1+2` and `= 1 + 2` are two entries. Parse errors are not cached.
+The cache has no setting and no statistics; `DELETE /cache` clears only the result cache of
+`sk_http_server`, which is unchanged and separate. A server with N worker threads holds up to N
+copies. Decision: [ADR-0021](../adr/0021-parsed-expression-api-and-server-cache.md).
+
 ## Performance Monitoring
 
 ### 1. Server Metrics

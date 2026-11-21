@@ -40,7 +40,7 @@ struct Case {
 }
 
 fn cases() -> Vec<Case> {
-    // ~2.6 KB of text, 100 call arguments: parse cost dominates, shallow AST (depth 4).
+    // ~1.8 KB of text (1,796 bytes), 100 call arguments: parse cost dominates, shallow AST (depth 4).
     let long_terms: Vec<String> = (1..=100)
         .map(|i| format!("({} * 2 + {} - 1)", i, i % 7))
         .collect();

@@ -11,6 +11,7 @@ Complete reference for all Skillet functions, methods, and operators.
 5. [Safe Navigation Operator](#safe-navigation-operator)
 6. [Type Casting](#type-casting)
 7. [Variable Syntax](#variable-syntax)
+8. [Rust library: evaluating a parsed expression](#rust-library-evaluating-a-parsed-expression)
 
 Evaluation limits (nesting depth 128, 256 MiB budget, server deadline) and their error texts are
 documented in [limits](../guide/limits.md).
@@ -876,6 +877,46 @@ value :: type_name
 {key: value, key2: value2}   # Create JSON object
 # Example: {name: "John", age: 30}
 ```
+
+---
+
+## Rust library: evaluating a parsed expression
+
+`skillet::parse` returns an `Expr`. Each text entry point has a twin that takes that `Expr`, so a
+formula that runs many times with different variables is parsed once:
+
+| Text | Parsed |
+|---|---|
+| `evaluate(&str)` | `evaluate_parsed(&Expr)` |
+| `evaluate_with(&str, &vars)` | `evaluate_parsed_with(&Expr, &vars)` |
+| `evaluate_with_custom(&str, &vars)` | `evaluate_parsed_with_custom(&Expr, &vars)` |
+| `evaluate_with_assignments(&str, &vars)` | `evaluate_parsed_with_assignments(&Expr, &vars)` |
+| `evaluate_with_assignments_and_context(&str, &vars)` | `evaluate_parsed_with_assignments_and_context(&Expr, &vars)` |
+
+`vars` is a `HashMap<String, Value>`. `evaluate_x(text, …)` is exactly
+`evaluate_parsed_x(&parse(text)?, …)`: same result, same errors. The JSON-variable functions have
+no twin; build the map with `json_to_value` instead.
+
+```rust
+use std::collections::HashMap;
+use skillet::{evaluate_parsed_with, parse, Value};
+
+let expr = parse(":price * :qty")?;
+for price in [2.5, 3.0] {
+    let mut vars = HashMap::new();
+    vars.insert("price".to_string(), Value::Number(price));
+    vars.insert("qty".to_string(), Value::Number(4.0));
+    println!("{:?}", evaluate_parsed_with(&expr, &vars)?);
+}
+```
+
+Limits: `parse` rejects input nested deeper than 128 (`Expression nested too deeply (max 128)`),
+and every `evaluate_parsed*` call gets its own evaluation budget and the deadline of an enclosing
+`with_limits`, as a text evaluation does ([limits](../guide/limits.md)). Pass trees that came from
+`parse`: a hand-built `Expr` is not depth-checked. `Expr` uses `Rc`, so a parsed expression stays
+on the thread that parsed it (it is not `Send`); cache one per thread, as the servers do
+([servers](../guide/servers.md#parse-cache)). Decision:
+[ADR-0021](../adr/0021-parsed-expression-api-and-server-cache.md).
 
 ---
 

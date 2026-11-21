@@ -35,7 +35,7 @@ to ~5 ms; CLI and HTTP samples are single evaluations (HTTP: one new connection 
 | `assign_sequence` | `=:a := 10; :b := :a * 2; :c := :b + :a; :c * 2` | — |
 | `method_chain` | `="  Hello World  ".trim().upper().reverse()` | — |
 | `logic_if` | `=IF(AND(:x > 5, :y < 10), "yes", "no")` | doc |
-| `parse_heavy` | `=SUM((1 * 2 + 1 - 1), …)`: 100 arguments, 2.6 KB of text | — |
+| `parse_heavy` | `=SUM((1 * 2 + 1 - 1), …)`: 100 arguments, 1.8 KB of text (1,796 bytes) | — |
 
 "doc" is a 330-byte JSON object (`user`, 4 `items`, `x`, `y`), defined as `DOC` in `baseline.rs`.
 
@@ -116,7 +116,7 @@ parsing JSON text (BL-036 would remove it).
 
 ## What the numbers say
 
-1. **Library evaluation takes 0.4–6 µs** for typical expressions, and ~30 µs for 2.6 KB of text.
+1. **Library evaluation takes 0.4–6 µs** for typical expressions, and ~30 µs for 1.8 KB of text.
    On short expressions, parsing is 40–80% of the total.
 2. **The CLI takes ~3–4 ms per call no matter which expression runs.** About 1 ms of that is
    OS process start; the other ~2–2.5 ms is `sk` start-up. Loading the repo's one JS hook does
@@ -188,6 +188,43 @@ No case got slower. Results are identical: every case prints the same result bef
 and a differential run over 264k generated expressions printed identical `parse` output (AST or
 error message and position).
 
+## BL-012: parse cache
+
+Both servers keep a per-worker-thread cache of parsed expressions (ADR-0021). Measured on the
+same machine (Apple M3 Pro, macOS 27.0.1), release builds of `sk_http_server` at `3f59ae1`
+(before) and at the BL-012 branch (after), 2026-11-21. `sk_http_server --threads 4`, then
+`sk_http_bench 127.0.0.1:PORT -n 1000 --no-cache` (a unique variable per request, so the result
+cache never hits and every request evaluates). 11 rounds, before and after alternating, a fresh
+server per run; load average 8.7–10.1 on 11 cores (other agents running), so compare the two
+columns with each other, not with the tables above. Cells: median / p95 (nearest rank) over the 11
+runs of the per-run average latency, and median (min–max) of req/s. The bench prints latency at
+10 µs resolution.
+
+Small formula: `10*5+sqrt(25)` (the default sweep expression):
+
+| Connections | latency before → after | req/s before → after |
+|---|---|---|
+| 1 | 80 / 120 → 80 / 110 µs | 11803 (8546–13287) → 11781 (9149–14936), 0% |
+| 5 | 170 / 200 → 170 / 190 µs | 29657 (24245–34127) → 29748 (26607–34695), 0% |
+| 10 | 310 / 370 → 320 / 400 µs | 32255 (26546–35741) → 31260 (24728–37497), −3% |
+| 20 | 600 / 720 → 620 / 680 µs | 32661 (27327–33959) → 31902 (28646–36567), −2% |
+| 50 | 1510 / 1960 → 1500 / 1830 µs | 32308 (24746–34289) → 32379 (26549–36722), 0% |
+
+`parse_heavy` (1,796 bytes, `--expr`):
+
+| Connections | latency before → after | req/s before → after |
+|---|---|---|
+| 1 | 190 / 240 → 140 / 180 µs | 5129 (4127–6688) → 7245 (5410–7897), +41% |
+| 5 | 260 / 330 → 210 / 250 µs | 19286 (14981–22098) → 23263 (19612–27218), +21% |
+| 10 | 400 / 680 → 340 / 470 µs | 24332 (14532–28823) → 28334 (21139–29726), +16% |
+| 20 | 660 / 1000 → 640 / 2020 µs | 29633 (19466–30971) → 30516 (9808–32068), +3% |
+| 50 | 1680 / 3950 → 1640 / 4030 µs | 28204 (12317–32543) → 29137 (12122–31736), +3% |
+
+Every request succeeded in every run. For the small formula the parse (~0.4 µs) is lost in the
+~80 µs request, so the change is within noise, as the prototype found. For `parse_heavy` it saves
+~50 µs per request at one connection; from 20 connections on, both builds are limited by the 4
+workers and the connection handling, and the gain shrinks to ~3%.
+
 ## Reproduce
 
 ```bash
@@ -215,6 +252,11 @@ target/release/sk_http_bench 127.0.0.1:5874 -n 1000
 target/release/sk_http_bench 127.0.0.1:5874 -n 1000 --no-cache
 for i in $(seq 15); do curl -s -o /dev/null -w '%{time_total}\n' http://127.0.0.1:5874/health; done
 kill %1
+
+# Parse cache before/after (BL-012): build sk_http_server on each commit, copy aside, then per
+# round start each build with --threads 4 and run (HEAVY = the parse_heavy text from baseline.rs):
+target/release/sk_http_bench 127.0.0.1:PORT -n 1000 --no-cache
+target/release/sk_http_bench 127.0.0.1:PORT -n 1000 --no-cache --expr "$HEAVY"
 
 # Stack per nesting level (BL-029):
 cargo bench --bench parser_stack                 # release
