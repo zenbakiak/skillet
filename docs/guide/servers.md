@@ -185,6 +185,11 @@ DELETE /delete-js {"filename": "math/double_it.js"}
 (Release build of `develop` at 21a37cc, started with `--admin-token`; the request schema is in
 [`openapi.yml`](../../openapi.yml).)
 
+Uploading or updating a hook runs its `@example` once to validate it, under the same limits as any
+plugin call (64 MiB, 10 s per call; see [Limits](limits.md#javascript-plugins-64-mib-10-s-256-kib)).
+An example that loops answers after 10 s with the timeout in `validation_results.example_error`.
+During `/eval` a plugin is also stopped by the 10 s request deadline.
+
 ### JavaScript endpoints in builds without plugins
 
 `sk_http_server` built without the default `plugins` feature
