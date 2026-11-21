@@ -705,17 +705,19 @@ fn bl027c_lambda_over_uncharged_reads_meets_the_deadline() {
         ones(20_000)
     );
     let start = std::time::Instant::now();
-    let r = with_limits(timeout_limits(50), || {
+    let r = with_limits(timeout_limits(1), || {
         evaluate_with_assignments(&src, &HashMap::new())
     });
     let took = start.elapsed();
     assert_eq!(
         r.map_err(|e| e.message),
-        Err("Evaluation timed out (max 50 ms)".to_string())
+        Err("Evaluation timed out (max 1 ms)".to_string())
     );
     assert!(took < Duration::from_secs(2), "{took:?}");
 }
 
+/// The deadline is 1 ms, far below the work done (thousands of 1 MB comparisons), so the
+/// test does not depend on how fast the machine is: CI runners finished it under 50 ms.
 /// F1 (fixed in BL-027d): a flat list of reads with no charge in between never read the clock.
 /// `:s == :s` cloned `:s` twice, and binary operators were not charged, so an array literal
 /// of N comparisons did 2N full clones before its single charge. Measured on the release
@@ -726,13 +728,13 @@ fn bl027c_flat_uncharged_reads_meet_the_deadline() {
     let cmps = vec![":s == :s"; 3_000].join(", ");
     let src = format!(":s := {}; [{}].length()", big_string("a", 1000), cmps);
     let start = std::time::Instant::now();
-    let r = with_limits(timeout_limits(50), || {
+    let r = with_limits(timeout_limits(1), || {
         evaluate_with_assignments(&src, &HashMap::new())
     });
     let took = start.elapsed();
     assert_eq!(
         r.map_err(|e| e.message),
-        Err("Evaluation timed out (max 50 ms)".to_string())
+        Err("Evaluation timed out (max 1 ms)".to_string())
     );
     assert!(took < Duration::from_millis(500), "{took:?}");
 }
