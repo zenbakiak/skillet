@@ -69,6 +69,44 @@ The server accepts JSON requests over TCP, one request per line:
 }
 ```
 
+### Request limits
+
+Both servers (`sk_server` and `sk_http_server`) apply the same request limits. They are
+constants; no flag changes them.
+
+| Limit | Value | `sk_server` behavior |
+|---|---|---|
+| Request size | 1 MB (1,048,576 bytes) per request line | answers `"error": "Request too large (max 1MB)"`, then closes the connection |
+| Read deadline | 30 s to receive the whole line | answers `"error": "Request read timed out (max 30 s)"`, then closes |
+| Idle connection | 30 s with no bytes of a new request | closes the connection without a response |
+| Write timeout | 10 s per socket write | drops the connection |
+
+Pooled connections (see [Connection Pooling](#1-connection-pooling-python)) that sit idle for
+30 s are closed by the server, so a pool must reconnect when a send or receive fails.
+
+`sk_http_server` answers an oversized request (headers + body over 1 MB, or a `Content-Length`
+over 1 MB) and a request that takes more than 30 s to arrive with HTTP status **400** and
+`{"error":"413 Payload Too Large","success":false}` or
+`{"error":"408 Request Timeout","success":false}`. Evaluation limits (depth, budget, the 10 s
+evaluation deadline) are separate; see [limits](limits.md#server-request-limits-1-mb-30-s-10-s)
+for both, with captured output.
+
+### JavaScript endpoints in builds without plugins
+
+`sk_http_server` built without the default `plugins` feature
+(`cargo build --release --no-default-features --bin sk_http_server`) keeps the JavaScript
+management routes (`/upload-js`, `/update-js`, `/delete-js`, `/list-js`, `/reload-hooks`) but
+does not run them. It checks the admin token as usual (401 when it is wrong) and then answers
+HTTP **404**, for any method:
+
+```console
+$ curl -s -w ' HTTP %{http_code}\n' localhost:5593/list-js
+{"error":"JavaScript plugins are not enabled in this build","success":false} HTTP 404
+```
+
+`/eval`, `/health`, `/cache` and the docs routes work in both builds; formulas simply cannot call
+JavaScript functions in a plugin-free build.
+
 ## Using with Different Languages
 
 ### 1. Python Client

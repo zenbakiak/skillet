@@ -1,5 +1,18 @@
 # Skillet HTTP Server Phase 2 Performance Report
 
+> **Historical, unverified (note added 2026-11-20, BL-050).** This report was written for the
+> 2025 "Phase 2" work. Its numbers were not produced by a script in this repo and have not been
+> reproduced; current measurements are in [`BASELINE.md`](BASELINE.md) (BL-005). Checked against
+> the code on `develop` (d3e6a5d):
+> - **Buffer pooling does not save allocations on normal requests.** `read_complete_http_request`
+>   (`src/bin/http_server/utils.rs`) takes a buffer from the thread-local pool, but on success the
+>   buffer becomes the request `String` and is never returned; it goes back to the pool only when
+>   the request is not valid UTF-8. The pool holds 4 buffers of 64 KB, not 8 KB. The "eliminates
+>   allocation overhead" claims below are false as written.
+> - The expression (result) cache exists (`src/bin/http_server/cache.rs`); since ADR-0011 an entry
+>   is cached only when it costs at most 64 KiB. Hit-rate and latency figures below are from one
+>   unrecorded run.
+
 **Date:** $(date)  
 **Phase:** Expression Caching + Buffer Pooling + Monitoring  
 **Target:** 70-90% parsing time reduction for repeated expressions  
@@ -13,7 +26,7 @@
 - **Statistics tracking**: Hits, misses, evictions, time saved
 
 ### ✅ 2. Buffer Pooling for HTTP Parsing
-- **Thread-local buffer pools**: Eliminates allocation overhead
+- **Thread-local buffer pools**: intended to remove allocation overhead (does not; see note above)
 - **Automatic buffer reuse**: 8KB initial capacity with smart growth
 - **Memory efficiency**: Shrinks oversized buffers automatically
 
@@ -65,7 +78,7 @@
 - **Intelligent cache key generation** handles variables correctly
 
 ### 🧠 **Memory Optimization**
-- **Thread-local buffer pools** eliminate HTTP parsing allocations
+- **Thread-local buffer pools** were intended to remove HTTP parsing allocations (see note above)
 - **LRU eviction strategy** keeps memory usage bounded
 - **Smart buffer resizing** prevents memory bloat
 
@@ -93,10 +106,10 @@ fn generate_cache_key(expression: &str, variables: &HashMap<String, Value>) -> S
 
 ### Buffer Pooling
 ```rust
-// Thread-local pools eliminate allocations
+// Thread-local pool (buffers are only returned on the invalid-UTF-8 path; see note above)
 thread_local! {
     static HTTP_BUFFER_POOL: RefCell<BufferPool> = 
-        RefCell::new(BufferPool::new(4, 8192));
+        RefCell::new(BufferPool::new(4, 65536));
 }
 ```
 

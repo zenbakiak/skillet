@@ -16,6 +16,20 @@ info:
     - **Admin Token**: Required authentication for JavaScript function management endpoints
     
     Tokens are passed via the `Authorization` header.
+
+    ## Request limits
+    - A request (headers + body) may be at most 1 MB (1,048,576 bytes). A larger request, or a
+      `Content-Length` over 1 MB, gets HTTP 400 with `"error": "413 Payload Too Large"`.
+    - The whole request must arrive within 30 s of the first read. Otherwise the server answers
+      HTTP 400 with `"error": "408 Request Timeout"`.
+    - Each socket write of a response times out after 10 s; the connection is then dropped.
+    - Evaluation limits (nesting depth, 256 MiB budget, 10 s evaluation deadline) are described
+      on `/eval` and in docs/guide/limits.md.
+
+    ## Builds without the `plugins` feature
+    The JavaScript endpoints (`/upload-js`, `/update-js`, `/delete-js`, `/list-js`,
+    `/reload-hooks`) check the admin token, then answer HTTP 404 with
+    `"error": "JavaScript plugins are not enabled in this build"`, for any method.
   version: 0.4.1
   contact:
     name: Skillet Lang
@@ -154,18 +168,15 @@ paths:
             `Expression nested too deeply (max 128)`, `Evaluation budget exceeded (max 256 MB)`
             (also returned when the serialized result would exceed the budget), or
             `Evaluation timed out (max 10 s)`. See docs/guide/limits.md.
+
+            Request limits also answer 400 (not 413 or 408): `413 Payload Too Large` when the
+            request is over 1 MB, `408 Request Timeout` when it takes more than 30 s to arrive.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '401':
           description: Authentication required
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '413':
-          description: Request payload too large (>1MB)
           content:
             application/json:
               schema:
@@ -225,8 +236,8 @@ paths:
                 example: "14"
         '400':
           description: |
-            Missing or invalid expression, or an evaluation limit was hit (same texts as
-            POST /eval). See docs/guide/limits.md.
+            Missing or invalid expression, an evaluation limit was hit, or a request limit was
+            hit (same texts as POST /eval). See docs/guide/limits.md.
           content:
             application/json:
               schema:
@@ -311,6 +322,15 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: JavaScript plugins are not enabled in this build (server built without the `plugins` feature)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                error: "JavaScript plugins are not enabled in this build"
 
   /update-js:
     put:
@@ -356,7 +376,9 @@ paths:
               schema:
                 $ref: '#/components/schemas/UpdateJSResponse'
         '404':
-          description: Function file not found
+          description: |
+            Function file not found, or JavaScript plugins are not enabled in this build
+            (`"error": "JavaScript plugins are not enabled in this build"`).
           content:
             application/json:
               schema:
@@ -391,7 +413,10 @@ paths:
               schema:
                 $ref: '#/components/schemas/DeleteJSResponse'
         '404':
-          description: Function file not found
+          description: |
+            Function file not found, or JavaScript plugins are not enabled in this build
+            (`"error": "JavaScript plugins are not enabled in this build"`; that body has no
+            `message` field).
           content:
             application/json:
               schema:
@@ -441,6 +466,15 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: JavaScript plugins are not enabled in this build (server built without the `plugins` feature)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                error: "JavaScript plugins are not enabled in this build"
 
   /reload-hooks:
     post:
@@ -469,6 +503,15 @@ paths:
                 success: true
                 message: "Successfully reloaded 3 JavaScript function(s)"
                 functions_loaded: 3
+        '404':
+          description: JavaScript plugins are not enabled in this build (server built without the `plugins` feature)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                error: "JavaScript plugins are not enabled in this build"
 
   /cache:
     delete:

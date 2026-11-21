@@ -76,7 +76,7 @@ done
 
 echo
 
-# Category 3: Variable Assignment (tests copy-on-write)
+# Category 3: Variable Assignment
 echo "3. Variable Assignment & Context:"
 variable_assignment=(
     ":x := 10; :y := :x * 2; :x + :y"
@@ -199,7 +199,8 @@ echo "  → Estimated 30-50% improvement in basic parsing (unverified, see BL-00
 echo
 echo "Phase 2 Improvements (Runtime/Evaluation):"
 echo "  ✅ Consolidated evaluator (eliminated 850+ lines duplicate code)"
-echo "  ✅ Copy-on-write variable context optimization"
+echo "  • Variable context: lambdas borrow the parent variables since BL-030 (earlier"
+echo "    copy-on-write claims were not true for lambdas; assignments copy inputs once)"
 echo "  ✅ O(1) function dispatch vs sequential module search"
 echo "  → Estimated 20-30% improvement in function execution (unverified, see BL-005)"
 echo
@@ -217,7 +218,7 @@ echo "Performance Improvement (vs unverified 300ms estimate): $(echo "scale=0; (
 echo
 echo "Memory optimizations:"
 echo "  • Reduced heap allocations through Rc<Expr> sharing"
-echo "  • Copy-on-write variable contexts eliminate unnecessary HashMap clones"
+echo "  • Lambdas bind :x/:acc in a local scope over borrowed variables (BL-030)"
 echo "  • Function dispatch tables pre-computed at startup"
 echo
 echo "Code quality improvements:"

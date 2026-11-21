@@ -13,7 +13,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 /// Simple HTTP client for benchmarking the Skillet HTTP server
-/// Usage: sk_http_bench <host:port> [options]
+/// Usage: `sk_http_bench <host:port> [options]`
 
 #[derive(Clone)]
 struct BenchConfig {
