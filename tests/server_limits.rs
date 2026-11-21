@@ -1,4 +1,4 @@
-//! Request size and time limits of `sk_server` and `sk_http_server` (BL-033, BL-037).
+//! Request size and time limits of `sk_server` and `sk_http_server` (BL-033, BL-037, BL-034).
 //! Servers run on 127.0.0.1 with one worker, so a held worker shows as a delayed next request.
 
 use std::io::{BufRead, BufReader, Read, Write};
@@ -238,4 +238,31 @@ fn bl037_sk_http_server_trickling_client_times_out() {
         "{}",
         head(&slow_resp)
     );
+}
+
+// ---------------------------------------------------------------- BL-034: large responses
+
+/// A 20 MB result arrives complete (it was cut to ~327 KB before accepted sockets were made
+/// blocking in 58cc5b7).
+#[test]
+fn bl034_sk_http_server_sends_large_responses_complete() {
+    let server = Server::http();
+    let expr = format!(
+        "SUBSTITUTE(SUBSTITUTE(\\\"{}\\\", \\\"a\\\", \\\"{}\\\"), \\\"a\\\", \\\"{}\\\")",
+        "a".repeat(10),
+        "a".repeat(1000),
+        "b".repeat(2000)
+    );
+    let resp = server.post(&format!("{{\"expression\":\"{expr}\"}}"));
+    let (headers, body) = resp.split_once("\r\n\r\n").expect("headers");
+    assert!(headers.starts_with("HTTP/1.1 200"), "{}", head(&resp));
+    let length: usize = headers
+        .lines()
+        .find_map(|l| l.strip_prefix("Content-Length: "))
+        .expect("Content-Length")
+        .parse()
+        .unwrap();
+    assert!(length > 20_000_000, "{length}");
+    assert_eq!(body.len(), length);
+    assert!(body.contains(&"b".repeat(20_000_000)));
 }
