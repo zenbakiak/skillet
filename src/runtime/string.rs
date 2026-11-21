@@ -2,6 +2,7 @@ use crate::error::Error;
 use crate::limits;
 use crate::runtime::utils::is_blank;
 use crate::types::Value;
+use std::borrow::Cow;
 
 /// Get the byte offset corresponding to a character index, without collecting into Vec<char>.
 #[inline]
@@ -32,6 +33,127 @@ fn concat_into(w: &mut impl std::fmt::Write, args: &[Value]) {
             Value::Boolean(b) => w.write_str(if *b { "TRUE" } else { "FALSE" }),
             Value::Null | Value::Currency(_) | Value::DateTime(_) | Value::Json(_) => Ok(()),
         };
+    }
+}
+
+/// A scalar as Excel's text functions see it: text as is, numbers (and currency) in Skillet's
+/// number format, booleans as `TRUE`/`FALSE`, NULL (an empty cell) as `""`. Arrays, dates and
+/// JSON objects have no text form here (`None`).
+fn excel_text(v: &Value) -> Option<Cow<'_, str>> {
+    match v {
+        Value::String(s) => Some(Cow::Borrowed(s)),
+        Value::Number(n) | Value::Currency(n) => Some(Cow::Owned(n.to_string())),
+        Value::Boolean(b) => Some(Cow::Borrowed(if *b { "TRUE" } else { "FALSE" })),
+        Value::Null => Some(Cow::Borrowed("")),
+        Value::Array(_) | Value::DateTime(_) | Value::Json(_) => None,
+    }
+}
+
+/// Flatten `v` into `out` as text, for `TEXTJOIN`.
+fn textjoin_parts<'v>(v: &'v Value, out: &mut Vec<Cow<'v, str>>) -> Result<(), Error> {
+    match v {
+        Value::Array(items) => items.iter().try_for_each(|it| textjoin_parts(it, out)),
+        _ => {
+            let text = excel_text(v).ok_or_else(|| {
+                Error::new("TEXTJOIN expects text, numbers, booleans or arrays", None)
+            })?;
+            out.push(text);
+            Ok(())
+        }
+    }
+}
+
+/// Excel `TEXTJOIN(delimiter, ignore_empty, text1, ...)`. Arrays are flattened. With
+/// `ignore_empty` TRUE, empty strings and NULLs are skipped. An array delimiter is used in turn
+/// between items, as in Excel. The output is charged before it is built (ADR-0011).
+fn textjoin(args: &[Value]) -> Result<Value, Error> {
+    let [delimiter, ignore_empty, texts @ ..] = args else {
+        return Err(Error::new(
+            "TEXTJOIN expects delimiter, ignore_empty, text1, [text2], ...",
+            None,
+        ));
+    };
+    if texts.is_empty() {
+        return Err(Error::new(
+            "TEXTJOIN expects delimiter, ignore_empty, text1, [text2], ...",
+            None,
+        ));
+    }
+    let mut delimiters = Vec::new();
+    textjoin_parts(delimiter, &mut delimiters)?;
+    if delimiters.is_empty() {
+        delimiters.push(Cow::Borrowed(""));
+    }
+    let ignore_empty = match ignore_empty {
+        Value::Boolean(b) => *b,
+        Value::Number(n) => *n != 0.0,
+        _ => {
+            return Err(Error::new(
+                "TEXTJOIN ignore_empty must be TRUE or FALSE",
+                None,
+            ))
+        }
+    };
+    let mut parts = Vec::new();
+    for t in texts {
+        textjoin_parts(t, &mut parts)?;
+    }
+    if ignore_empty {
+        parts.retain(|p| !p.is_empty());
+    }
+    let seps = parts.len().saturating_sub(1);
+    let total = parts
+        .iter()
+        .map(|p| p.len())
+        .chain(delimiters.iter().cycle().take(seps).map(|d| d.len()))
+        .fold(0usize, usize::saturating_add);
+    limits::charge_string(total)?;
+    let mut out = String::with_capacity(total);
+    for (i, part) in parts.iter().enumerate() {
+        if i > 0 {
+            out.push_str(&delimiters[(i - 1) % delimiters.len()]);
+        }
+        out.push_str(part);
+    }
+    Ok(Value::String(out))
+}
+
+/// Excel `FIND(find_text, within_text, [start_num])`: the 1-based character position of the
+/// first case-sensitive match at or after `start_num` (default 1; truncated). Not found, or
+/// `start_num` below 1 or past the end of `within_text`, is an error (Excel `#VALUE!`). An empty
+/// `find_text` matches at `start_num`. `FIND(array, lambda)` is the evaluator's array search.
+pub(crate) fn find_text(args: &[Value]) -> Result<Value, Error> {
+    let (needle, haystack) = match args {
+        [Value::String(n), h] | [Value::String(n), h, _] => (n, h),
+        _ => {
+            return Err(Error::new(
+                "FIND expects find_text, within_text, [start_num]",
+                None,
+            ))
+        }
+    };
+    let haystack =
+        excel_text(haystack).ok_or_else(|| Error::new("FIND expects within_text as text", None))?;
+    let start = match args.get(2) {
+        None | Some(Value::Null) => 1.0,
+        Some(Value::Number(n)) => n.trunc(),
+        Some(_) => return Err(Error::new("FIND start_num must be a number", None)),
+    };
+    let len = char_count(&haystack);
+    // NaN fails both comparisons, so it is rejected too.
+    if !(start >= 1.0 && start <= len as f64) {
+        return Err(Error::new(
+            "FIND start_num must be between 1 and the length of within_text",
+            None,
+        ));
+    }
+    let from = char_byte_offset(&haystack, start as usize - 1);
+    match haystack[from..].find(needle.as_str()) {
+        Some(byte) => {
+            let pos = start as usize + char_count(&haystack[from..from + byte]);
+            Ok(Value::Number(pos as f64))
+        }
+        None => Err(Error::new("FIND: find_text not found in within_text", None)),
     }
 }
 
@@ -353,6 +475,14 @@ pub fn exec_string(name: &str, args: &[Value]) -> Result<Value, Error> {
                 _ => Err(Error::new("INCLUDES expects string, substring", None)),
             }
         }
+        "LEN" => match args {
+            [v] => {
+                let text = excel_text(v).ok_or_else(|| Error::new("LEN expects text", None))?;
+                Ok(Value::Number(char_count(&text) as f64))
+            }
+            _ => Err(Error::new("LEN expects 1 argument: text", None)),
+        },
+        "TEXTJOIN" => textjoin(args),
         _ => Err(Error::new(
             format!("Unknown string function: {}", name),
             None,

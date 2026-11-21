@@ -32,7 +32,7 @@ pub fn exec_statistical(name: &str, args: &[Value]) -> Result<Value, Error> {
                 nums[len / 2]
             }))
         }
-        "MODE.SNGL" | "MODESNGL" | "MODE_SNGL" => {
+        "MODE.SNGL" | "MODESNGL" | "MODE_SNGL" | "MODE" => {
             let mut nums: Vec<f64> = Vec::new();
             fn collect_nums(v: &Value, nums: &mut Vec<f64>) {
                 match v {
@@ -121,7 +121,7 @@ pub fn exec_statistical(name: &str, args: &[Value]) -> Result<Value, Error> {
             let variance = nums.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / nums.len() as f64;
             Ok(Value::Number(variance))
         }
-        "PERCENTILE.INC" | "PERCENTILEINC" | "PERCENTILE_INC" => {
+        "PERCENTILE.INC" | "PERCENTILEINC" | "PERCENTILE_INC" | "PERCENTILE" => {
             if args.len() < 2 {
                 return Err(Error::new(
                     "PERCENTILE.INC expects array and percentile",
@@ -173,7 +173,7 @@ pub fn exec_statistical(name: &str, args: &[Value]) -> Result<Value, Error> {
                 ))
             }
         }
-        "QUARTILE.INC" | "QUARTILEINC" | "QUARTILE_INC" => {
+        "QUARTILE.INC" | "QUARTILEINC" | "QUARTILE_INC" | "QUARTILE" => {
             if args.len() < 2 {
                 return Err(Error::new("QUARTILE.INC expects array and quartile", None));
             }

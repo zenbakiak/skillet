@@ -1,11 +1,11 @@
 use crate::error::Error;
 use crate::types::Value;
-use chrono::{DateTime, Datelike, Local, NaiveDate, Timelike, Utc};
+use chrono::{DateTime, Datelike, Local, NaiveDate, NaiveTime, Timelike, Utc};
 
 pub fn is_datetime_function(name: &str) -> bool {
     matches!(
         name,
-        "NOW" | "DATE" | "TIME" | "YEAR" | "MONTH" | "DAY" | "DATEADD" | "DATEDIFF"
+        "NOW" | "DATE" | "TODAY" | "TIME" | "YEAR" | "MONTH" | "DAY" | "DATEADD" | "DATEDIFF"
     )
 }
 
@@ -15,39 +15,18 @@ pub fn exec_datetime(name: &str, args: &[Value]) -> Result<Value, Error> {
             let now = Utc::now();
             Ok(Value::DateTime(now.timestamp()))
         }
-        "DATE" => {
-            if args.is_empty() {
-                // No arguments - return today's date
-                let today = Local::now().date_naive();
-                let timestamp = today.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
-                Ok(Value::DateTime(timestamp))
-            } else if args.len() == 3 {
-                // Three arguments - year, month, day
-                let year = match args.first() {
-                    Some(Value::Number(n)) => *n as i32,
-                    _ => return Err(Error::new("DATE expects year as number", None)),
-                };
-                let month = match args.get(1) {
-                    Some(Value::Number(n)) => *n as u32,
-                    _ => return Err(Error::new("DATE expects month as number", None)),
-                };
-                let day = match args.get(2) {
-                    Some(Value::Number(n)) => *n as u32,
-                    _ => return Err(Error::new("DATE expects day as number", None)),
-                };
-
-                // Validate and create the date
-                let date = NaiveDate::from_ymd_opt(year, month, day)
-                    .ok_or_else(|| Error::new("Invalid date", None))?;
-                let timestamp = date.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
-                Ok(Value::DateTime(timestamp))
-            } else {
-                Err(Error::new(
-                    "DATE expects either no arguments or three arguments (year, month, day)",
-                    None,
-                ))
-            }
-        }
+        "DATE" => match args {
+            [] => Ok(today()),
+            [year, month, day] => exec_date(year, month, day),
+            _ => Err(Error::new(
+                "DATE expects either no arguments or three arguments (year, month, day)",
+                None,
+            )),
+        },
+        "TODAY" => match args {
+            [] => Ok(today()),
+            _ => Err(Error::new("TODAY expects no arguments", None)),
+        },
         "TIME" => exec_time(args),
         "YEAR" => {
             if let Some(Value::DateTime(timestamp)) = args.first() {
@@ -205,6 +184,58 @@ pub fn exec_datetime(name: &str, args: &[Value]) -> Result<Value, Error> {
             None,
         )),
     }
+}
+
+/// Today's local date as midnight UTC (`DATE()` and `TODAY()`).
+fn today() -> Value {
+    let today = Local::now().date_naive();
+    Value::DateTime(today.and_time(NaiveTime::MIN).and_utc().timestamp())
+}
+
+/// One `DATE` argument, truncated toward zero like Excel.
+fn date_part(v: &Value, what: &str) -> Result<i64, Error> {
+    match v {
+        Value::Number(n) if n.is_finite() => Ok(n.trunc() as i64),
+        _ => Err(Error::new(format!("DATE expects {} as number", what), None)),
+    }
+}
+
+/// Excel `DATE(year, month, day)`: years 0-1899 get 1900 added; months and days outside their
+/// range roll over into the next or previous month/year (`DATE(2026, 13, 1)` = 2027-01-01,
+/// `DATE(2026, 1, 0)` = 2025-12-31). Like Excel, a year outside 0-9999 or a result outside
+/// 1900-01-01..=9999-12-31 is an error.
+fn exec_date(year: &Value, month: &Value, day: &Value) -> Result<Value, Error> {
+    let out_of_range = || Error::new("DATE result is outside 1900-01-01..9999-12-31", None);
+    let mut y = date_part(year, "year")?;
+    let m = date_part(month, "month")?;
+    let d = date_part(day, "day")?;
+    if !(0..=9999).contains(&y) {
+        return Err(Error::new("DATE year must be between 0 and 9999", None));
+    }
+    if y < 1900 {
+        y += 1900;
+    }
+    // Months since year 0, then split back into year and month (0-based).
+    let months = y
+        .checked_mul(12)
+        .and_then(|v| v.checked_add(m.checked_sub(1)?))
+        .ok_or_else(out_of_range)?;
+    let (y, m0) = (months.div_euclid(12), months.rem_euclid(12));
+    let first = i32::try_from(y)
+        .ok()
+        .and_then(|y| NaiveDate::from_ymd_opt(y, m0 as u32 + 1, 1))
+        .ok_or_else(out_of_range)?;
+    let date = d
+        .checked_sub(1)
+        .and_then(chrono::TimeDelta::try_days)
+        .and_then(|delta| first.checked_add_signed(delta))
+        .ok_or_else(out_of_range)?;
+    if !(1900..=9999).contains(&date.year()) {
+        return Err(out_of_range());
+    }
+    Ok(Value::DateTime(
+        date.and_time(NaiveTime::MIN).and_utc().timestamp(),
+    ))
 }
 
 /// `TIME(hour, minute, second)`: seconds since midnight, `hour*3600 + minute*60 + second`

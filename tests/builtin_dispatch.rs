@@ -11,7 +11,8 @@ use skillet::runtime::function_dispatch::{
 use skillet::Value;
 
 /// Every name in the dispatch sets at d3e6a5d (81 names), grouped by the set it was in, plus
-/// `BETWEEN`, registered later to restore its documented behaviour (82 names).
+/// `BETWEEN`, registered later to restore its documented behaviour (82 names), plus the Excel
+/// names added for BL-054 / excel-compat D-9 (91 names).
 const DISPATCHED: &[&str] = &[
     // arithmetic (17)
     "SUM",
@@ -57,6 +58,8 @@ const DISPATCHED: &[&str] = &[
     "LEFT",
     "RIGHT",
     "MID",
+    "LEN",
+    "TEXTJOIN",
     // array (12)
     "ARRAY",
     "FLATTEN",
@@ -79,11 +82,15 @@ const DISPATCHED: &[&str] = &[
     "DAY",
     "DATEADD",
     "DATEDIFF",
+    "TODAY",
     // financial (4)
     "PMT",
     "DB",
     "FV",
     "IPMT",
+    "PPMT",
+    "PV",
+    "NPV",
     // statistical (16)
     "MEDIAN",
     "MODE.SNGL",
@@ -101,6 +108,9 @@ const DISPATCHED: &[&str] = &[
     "QUARTILE.INC",
     "QUARTILEINC",
     "QUARTILE_INC",
+    "MODE",
+    "PERCENTILE",
+    "QUARTILE",
     // json (1)
     "DIG",
 ];
@@ -127,8 +137,8 @@ const NOT_DISPATCHED: &[&str] = &[
 
 #[test]
 fn every_dispatched_name_resolves() {
-    assert_eq!(DISPATCHED.len(), 82);
-    assert_eq!(builtin_function_count(), 82);
+    assert_eq!(DISPATCHED.len(), 91);
+    assert_eq!(builtin_function_count(), 91);
     for name in DISPATCHED {
         assert!(has_builtin_function(name), "{name} should be a builtin");
         // Zero-arg call must reach the right module: no "Unknown … function" from any layer.

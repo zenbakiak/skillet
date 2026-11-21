@@ -48,6 +48,8 @@ Methods (`:arr.sum()`), operators and the rest of the language: [api.md](api.md)
 | Function | Signature | Arity | Summary | Example | Result |
 |---|---|---|---|---|---|
 | `LENGTH` | `LENGTH(text_or_array)` | 1 | Characters in a string or items in an array; 0 for NULL. | `LENGTH('héllo')` | `5` |
+| `LEN` | `LEN(text)` | 1 | Excel `LEN`: characters in the text; numbers and booleans count as their text, NULL as 0. | `LEN('héllo')` | `5` |
+| `TEXTJOIN` | `TEXTJOIN(delimiter, ignore_empty, text…)` | 3+ | Excel `TEXTJOIN`: join texts (arrays flattened) with `delimiter`; skip empty ones when `ignore_empty` is TRUE. | `TEXTJOIN(', ', TRUE, 'a', '', ['b', 'c'])` | `"a, b, c"` |
 | `CONCAT` | `CONCAT(values…)` | 0+ | Join strings, numbers, booleans and (flattened) arrays; other values add nothing. | `CONCAT('a', 1, TRUE)` | `"a1TRUE"` |
 | `UPPER` | `UPPER(text)` | 1 | Upper-case. | `UPPER('abc')` | `"ABC"` |
 | `LOWER` | `LOWER(text)` | 1 | Lower-case. | `LOWER('ABC')` | `"abc"` |
@@ -82,7 +84,7 @@ Methods (`:arr.sum()`), operators and the rest of the language: [api.md](api.md)
 | `JOIN` | `JOIN(array, [separator])` | 1-2 | Items joined into a string with `separator` (default `,`); nested arrays are an error. | `JOIN([1, 'a', TRUE], '-')` | `"1-a-TRUE"` |
 | `MERGE` | `MERGE(values…)` | 0+ | Arrays concatenated; scalar arguments are appended as items. | `MERGE([1, 2], 3, [4])` | `[1, 2, 3, 4]` |
 | `FILTER` † | `FILTER(array, expr, [param])` | 2-3 | Items for which `expr` is TRUE; the item is `:x` (or `:param`). | `FILTER([1, 2, 3, 4], :x % 2 == 0)` | `[2, 4]` |
-| `FIND` † | `FIND(array, expr, [param])` | 2-3 | First item for which `expr` is TRUE, else NULL. | `FIND([1, 5, 10], :x > 3)` | `5` |
+| `FIND` † | `FIND(array, expr, [param])` | 2-3 | First item for which `expr` is TRUE, else NULL. With text first, Excel `FIND(find_text, within_text, [start_num])`: 1-based, case-sensitive position; error when not found. | `FIND([1, 5, 10], :x > 3)` | `5` |
 | `MAP` † | `MAP(array, expr, [param])` | 2-3 | `expr` applied to each item `:x`. | `MAP([1, 2, 3], :x * 10)` | `[10, 20, 30]` |
 | `REDUCE` † | `REDUCE(array, expr, initial, [param], [acc_param])` | 3-5 | Fold: `expr` over `:acc` and `:x`, starting from `initial`. | `REDUCE([1, 2, 3], :acc + :x, 0)` | `6` |
 
@@ -91,7 +93,8 @@ Methods (`:arr.sum()`), operators and the rest of the language: [api.md](api.md)
 | Function | Signature | Arity | Summary | Example | Result |
 |---|---|---|---|---|---|
 | `NOW` | `NOW()` | 0 | Current UTC time as a DateTime (seconds). | `NOW()` | (depends on the clock) |
-| `DATE` | `DATE([year, month, day])` | 0-3 | Midnight UTC of the given date; today's local date with no arguments. | `DATE(2024, 1, 15)` | `2024-01-15T00:00:00Z` |
+| `DATE` | `DATE([year, month, day])` | 0-3 | Midnight UTC of the given date, Excel rules: months and days roll over, years 0-1899 get 1900 added. Today's local date with no arguments. | `DATE(2024, 1, 15)` | `2024-01-15T00:00:00Z` |
+| `TODAY` | `TODAY()` | 0 | Excel `TODAY`: today's local date at midnight, as a UTC DateTime (same as `DATE()`). | `TODAY()` | (depends on the clock) |
 | `TIME` | `TIME()` | 0 | Seconds since local midnight. | `TIME()` | (depends on the clock) |
 | `YEAR` | `YEAR(datetime)` | 1 | Year (UTC). | `YEAR(DATE(2024, 3, 9))` | `2024` |
 | `MONTH` | `MONTH(datetime)` | 1 | Month 1-12 (UTC). | `MONTH(DATE(2024, 3, 9))` | `3` |
@@ -107,17 +110,20 @@ Methods (`:arr.sum()`), operators and the rest of the language: [api.md](api.md)
 | `DB` | `DB(cost, salvage, life, period, [month])` | 4-5 | Fixed-declining-balance depreciation for a period (Excel `DB`). | `DB(10000, 1000, 5, 2)` | `2328.5017392669597` |
 | `FV` | `FV(rate, nper, pmt, [pv], [type])` | 3-5 | Future value of an investment (Excel `FV`). | `FV(0.05, 10, -100)` | `1257.789253554884` |
 | `IPMT` | `IPMT(rate, per, nper, pv, [fv], [type])` | 4-6 | Interest part of payment `per` (Excel `IPMT`). | `IPMT(0.1 / 12, 1, 36, 8000)` | `66.66666666666667` |
+| `PPMT` | `PPMT(rate, per, nper, pv, [fv], [type])` | 4-6 | Principal part of payment `per` (Excel `PPMT`). | `PPMT(0.1 / 12, 1, 24, 2000)` | `-75.62318600836664` |
+| `PV` | `PV(rate, nper, pmt, [fv], [type])` | 3-5 | Present value of a series of payments (Excel `PV`). | `PV(0.08 / 12, 240, 500)` | `-59777.14585118777` |
+| `NPV` | `NPV(rate, values…)` | 2+ | Net present value of periodic cash flows, the first one period from now (Excel `NPV`). | `NPV(0.1, -10000, 3000, 4200, 6800)` | `1188.4434123352216` |
 
 ## Statistical
 
 | Function | Signature | Arity | Summary | Example | Result |
 |---|---|---|---|---|---|
 | `MEDIAN` | `MEDIAN(values…)` | 0+ | Median of numbers and currency (arrays flattened); 0 when there are none. | `MEDIAN(1, 3, 2, 4)` | `2.5` |
-| `MODE_SNGL`<br>alias `MODESNGL`, `MODE.SNGL` | `MODE_SNGL(values…)` | 0+ | Most frequent number (first seen wins a tie); 0 when there are none. | `MODE_SNGL(1, 2, 2, 3)` | `2` |
+| `MODE_SNGL`<br>alias `MODESNGL`, `MODE.SNGL`, `MODE` | `MODE_SNGL(values…)` | 0+ | Most frequent number (first seen wins a tie); 0 when there are none. | `MODE_SNGL(1, 2, 2, 3)` | `2` |
 | `STDEV_P`<br>alias `STDEVP`, `STDEV.P` | `STDEV_P(values…)` | 0+ | Population standard deviation; 0 when there are none. | `STDEV_P(2, 4, 4, 4, 5, 5, 7, 9)` | `2` |
 | `VAR_P`<br>alias `VARP`, `VAR.P` | `VAR_P(values…)` | 0+ | Population variance; 0 when there are none. | `VAR_P(1, 2, 3, 4)` | `1.25` |
-| `PERCENTILE_INC`<br>alias `PERCENTILEINC`, `PERCENTILE.INC` | `PERCENTILE_INC(values…, k)` | 2+ | Inclusive percentile `k` (0-1) of the values, interpolated. | `PERCENTILE_INC([1, 2, 3, 4], 0.5)` | `2.5` |
-| `QUARTILE_INC`<br>alias `QUARTILEINC`, `QUARTILE.INC` | `QUARTILE_INC(values…, quart)` | 2+ | Inclusive quartile `quart` (0-4) of the values. | `QUARTILE_INC([1, 2, 3, 4, 5], 1)` | `2` |
+| `PERCENTILE_INC`<br>alias `PERCENTILEINC`, `PERCENTILE.INC`, `PERCENTILE` | `PERCENTILE_INC(values…, k)` | 2+ | Inclusive percentile `k` (0-1) of the values, interpolated. | `PERCENTILE_INC([1, 2, 3, 4], 0.5)` | `2.5` |
+| `QUARTILE_INC`<br>alias `QUARTILEINC`, `QUARTILE.INC`, `QUARTILE` | `QUARTILE_INC(values…, quart)` | 2+ | Inclusive quartile `quart` (0-4) of the values. | `QUARTILE_INC([1, 2, 3, 4, 5], 1)` | `2` |
 | `AVGIF` † | `AVGIF(array, expr)` | 2 | Mean of items for which `expr` over `:x` is TRUE. | `AVGIF([1, 3, 5, -1], :x > 0)` | `3` |
 | `COUNTIF` † | `COUNTIF(array, expr)` | 2 | Number of items for which `expr` over `:x` is TRUE. | `COUNTIF([1, 2, 3, 4], :x % 2 == 0)` | `2` |
 

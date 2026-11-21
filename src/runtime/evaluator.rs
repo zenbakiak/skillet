@@ -155,6 +155,34 @@ fn missing_variable(name: &str) -> Error {
     Error::new(format!("Missing variable: :{}", name), None)
 }
 
+/// Excel-style date arithmetic, in days: `DateTime ± Number` and `Number + DateTime` give a
+/// DateTime (fractional days allowed, rounded to the second), `DateTime - DateTime` gives the
+/// difference in days (fractional). Anything else is the usual arithmetic type error.
+#[cold]
+#[inline(never)]
+fn date_arithmetic(op: BinaryOp, a: &Value, b: &Value) -> Result<Value, Error> {
+    const DAY: f64 = 86_400.0;
+    let shift = |ts: i64, days: f64| {
+        let secs = (days * DAY).round();
+        // Stay inside i64 before the cast, then add with an overflow check.
+        if secs.is_finite() && secs.abs() < 9.2e18 {
+            ts.checked_add(secs as i64).map(Value::DateTime)
+        } else {
+            None
+        }
+        .ok_or_else(|| Error::new("Date arithmetic out of range", None))
+    };
+    match (op, a, b) {
+        (BinaryOp::Add, Value::DateTime(ts), Value::Number(n))
+        | (BinaryOp::Add, Value::Number(n), Value::DateTime(ts)) => shift(*ts, *n),
+        (BinaryOp::Sub, Value::DateTime(ts), Value::Number(n)) => shift(*ts, -*n),
+        (BinaryOp::Sub, Value::DateTime(x), Value::DateTime(y)) => {
+            Ok(Value::Number((*x as f64 - *y as f64) / DAY))
+        }
+        _ => Err(Error::new("Arithmetic op on non-number", None)),
+    }
+}
+
 /// Unified evaluator that handles all expression types efficiently
 pub struct Evaluator;
 
@@ -333,12 +361,9 @@ impl Evaluator {
             | BinaryOp::Div
             | BinaryOp::Mod
             | BinaryOp::Pow => {
-                let an = a
-                    .as_number()
-                    .ok_or_else(|| Error::new("Arithmetic op on non-number", None))?;
-                let bn = b
-                    .as_number()
-                    .ok_or_else(|| Error::new("Arithmetic op on non-number", None))?;
+                let (Some(an), Some(bn)) = (a.as_number(), b.as_number()) else {
+                    return date_arithmetic(op, a, b);
+                };
                 Ok(Value::Number(match op {
                     BinaryOp::Add => an + bn,
                     BinaryOp::Sub => an - bn,
@@ -465,7 +490,7 @@ impl Evaluator {
     /// Builtins that charge their own result before building it (ADR-0011 amendment 2); their
     /// result is only depth-checked. A custom function of the same name is charged as usual.
     fn is_prepaid_builtin<C: EvaluationContext>(name: &str, context: &C) -> bool {
-        matches!(name, "MERGE" | "CONCAT")
+        matches!(name, "MERGE" | "CONCAT" | "TEXTJOIN")
             && !context
                 .get_custom_registry()
                 .and_then(|r| r.read().ok().map(|reg| reg.has_function(name)))
@@ -623,6 +648,14 @@ impl Evaluator {
             return Err(Error::new("FIND expects (array, expr)", None));
         }
         let arr_v = Self::eval(&args[0], context)?;
+        if let Value::String(_) = arr_v {
+            // Excel FIND(find_text, within_text, [start_num]) (excel-compat D-6).
+            let mut ev_args = vec![arr_v];
+            for a in &args[1..] {
+                ev_args.push(Self::eval(a, context)?);
+            }
+            return crate::runtime::string::find_text(&ev_args);
+        }
         let lambda = &args[1];
         let param_name = if args.len() > 2 {
             if let Value::String(s) = Self::eval(&args[2], context)? {
