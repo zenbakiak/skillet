@@ -474,7 +474,7 @@ Brief (orchestrator, 2026-11-20):
           `#[ignore = "slow: server timeout"]` and list it.
     Perf: re-run `cargo bench --bench lambda_scope` before → after; overhead target ≤ 10%.
     Acceptance: ./harness/check.sh green; existing tests unchanged; bench table in handoff.
-  BL-027c · security-reviewer (Claude Opus 5.5) · `review` · same branch (bugfix/bl-027-budget-impl)
+  BL-027c · security-reviewer (Claude Opus 5.5) · `done` · same branch (bugfix/bl-027-budget-impl)
     Do: re-attack the budget as built. Start from 027b's own leads (uncharged-read n² CPU in
         library/CLI, ~2× budget peak via CONCAT/MERGE post-charge, uncharged index/slice, thread
         handoff in custom fns, single slow builtins like SORT), then look for anything else
@@ -486,7 +486,14 @@ Brief (orchestrator, 2026-11-20):
         Rule: anything that lets one HTTP request exceed ~2× MAX_EVAL_BYTES or run past the
         server deadline by more than ~2 s blocks the PR.
 
-  BL-027d · rust-engineer (+ language-designer for the read-charge decision) · `ready` · same branch
+  BL-027d · rust-engineer · `in-progress` · same branch
+    Decision (maintainer, 2026-11-20): option A, recorded as ADR-0011 Amendment 2 — charge reads that
+    copy, keep borrowed method/property targets free; tick the deadline on every read and binary op;
+    pre-charge .to_a()/.to_json()/::String/CONCAT/MERGE; reject oversized serialized HTTP results.
+    Acceptance: both ignored bl027c tests un-ignored and green; add a server test for F3; every P row
+    in tests/eval_budget.rs still passes (A12 included); add a test pinning the new
+    `:rows.map(SUM(:rows))` budget error on big input and the hoisted form passing;
+    ./harness/check.sh green; lambda_scope bench overhead vs develop ≤ 10%.
     Found in BL-027c; BLOCKS this PR (brief rule: > ~2x MAX_EVAL_BYTES or > ~2 s past the deadline).
     F1 Reads never tick the deadline. `:s := <80 MB>; [:s == :s, … ×4000]` (42 KB request): binary
        ops and variable reads charge nothing, so 8000 full clones run before the one array charge.
@@ -763,3 +770,9 @@ Found in BL-027c. A 20 MB string result: headers say `Content-Length: 20000086`,
   `CustomFunction`/`with_limits`).
 - Cost model undercounts tiny heap strings (charged 33 B, ~48 B real per 1-char string) and
   case mapping can grow 3x (`UPPER` of U+0390) after the charge; both stay < ~2x budget today.
+
+### BL-036 · Share values instead of copying on variable reads · P2 · `todo` · language-designer (ADR) → rust-engineer → performance-engineer
+Option B from the BL-027c decision. Reads deep-clone `Value` (e.g. `SUM(:rows)`, `CONCAT(:s, :s)`).
+Making values shared (`Rc`/`Arc` inside `Value`, or a borrowed-read evaluation path) would make reads
+O(1), remove the ADR-0011 Amendment 2 read charge, and speed up every formula over large variables.
+Changes the core `Value` type, so it needs an ADR and a characterization pass first.

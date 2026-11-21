@@ -5,6 +5,16 @@
 > charged**: the "Variable read" row below is struck, A12 stays a passing formula (it moves to the
 > P rows), and the PRD-001 open question about dropping the read charge is closed. Everything else
 > is accepted as written, including A11 (quadratic `reduce(MERGE(:acc, [:x]), [])` fails above ~2,800 items).
+>
+> **Amendment 2 (maintainer, 2026-11-20, after BL-027c):** reads that **copy** a value are charged
+> `cost(value)`; reads that only **borrow** (method/property targets, e.g. `:rows.length()`) stay free.
+> A12 therefore still passes. Formulas that copy a large variable once per item (e.g.
+> `:rows.map(SUM(:rows))` on big data) may now hit the budget; hoist instead:
+> `:t := SUM(:rows); :rows.map(:t)`. Every variable read and binary operation also ticks the
+> deadline (zero-byte charge). Amplifying conversions (`.to_a()` on strings, `.to_json()`,
+> `::String`, `CONCAT`, `MERGE`) are pre-charged with an upper bound, and the HTTP server rejects
+> results whose serialized size would exceed the budget. Removing the copy entirely (shared
+> values) is tracked as BL-036 and would let the read charge be dropped again.
 
 - Status: Accepted (2026-11-20, with amendment below)
 - Date: 2026-11-20
