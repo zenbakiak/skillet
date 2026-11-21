@@ -15,6 +15,16 @@ Complete reference for all Skillet functions, methods, and operators.
 Evaluation limits (nesting depth 128, 256 MiB budget, server deadline) and their error texts are
 documented in [limits](../guide/limits.md).
 
+Server request limits: both `sk_server` and `sk_http_server` reject a request over 1 MB, give a
+client 30 s in total to send one request, and time out a response write after 10 s.
+`sk_http_server` answers the first two with HTTP 400 and `"error": "413 Payload Too Large"` or
+`"error": "408 Request Timeout"`. In a build without the `plugins` feature, the JavaScript
+endpoints (`/upload-js`, `/update-js`, `/delete-js`, `/list-js`, `/reload-hooks`) answer HTTP 404
+`"JavaScript plugins are not enabled in this build"` after the admin-token check. Details:
+[limits](../guide/limits.md#server-request-limits-1-mb-30-s-10-s) and
+[servers](../guide/servers.md#javascript-endpoints-in-builds-without-plugins). The HTTP API itself
+is specified in [`openapi.yml`](../../openapi.yml).
+
 ---
 
 ## Operators
