@@ -1,73 +1,45 @@
-# Multi-stage build for Skillet HTTP Server
-FROM rustlang/rust:nightly-slim as builder
-
-# Install system dependencies for building
-RUN apt-get update && apt-get install -y \
-    pkg-config \
-    libssl-dev \
-    && rm -rf /var/lib/apt/lists/*
+# Multi-stage build for the Skillet HTTP server (sk_http_server).
+# Toolchain pinned to the CI/release toolchain (ADR-0012); bump with RUST_TOOLCHAIN in the workflows.
+FROM rust:1.89.0-slim-bookworm AS builder
 
 WORKDIR /app
 COPY . .
 
-# Build the HTTP server binary
-RUN cargo build --release --bin sk_http_server
+# --locked: build exactly what Cargo.lock pins.
+RUN cargo build --release --locked --bin sk_http_server
 
-# Runtime image - use sid to match builder's GLIBC 2.39
-FROM debian:sid-slim
+# Runtime image: same Debian release as the builder, so glibc matches.
+FROM debian:bookworm-slim
 
-# Install runtime dependencies
-RUN apt-get update && apt-get install -y \
-    ca-certificates \
-    curl \
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Create non-root user
-RUN groupadd -r skillet && useradd -r -g skillet -d /app -s /bin/false skillet
-
-# Create directories
-RUN mkdir -p /app/hooks && \
-    chown -R skillet:skillet /app
+# Non-root user. /app stays root-owned; only the hooks directory is writable by the server.
+RUN groupadd -r skillet && useradd -r -g skillet -d /app -s /bin/false skillet \
+    && mkdir -p /app/hooks \
+    && chown skillet:skillet /app/hooks
 
 WORKDIR /app
+
+COPY --from=builder --chown=root:root /app/target/release/sk_http_server ./
+COPY --chown=root:root --chmod=0755 docker/entrypoint.sh docker/healthcheck.sh ./
+
 USER skillet
 
-# Copy binary from builder
-COPY --from=builder --chown=skillet:skillet /app/target/release/sk_http_server ./
+# Bind all interfaces inside the container so `-p` publishing works. Restrict exposure on the
+# host side (docker-compose.yml publishes to 127.0.0.1 by default).
+ENV PORT=8080 \
+    HOST=0.0.0.0 \
+    SK_THREADS=2 \
+    SKILLET_HOOKS_DIR=/app/hooks
 
+# SKILLET_AUTH_TOKEN and SKILLET_ADMIN_TOKEN are required at run time and have no default;
+# entrypoint.sh refuses to start without them.
 
-# Environment variables with defaults
-ENV DOCKER_PORT=8080
-ENV HOST=0.0.0.0
-ENV AUTH_TOKEN=""
-ENV ADMIN_TOKEN=""
-ENV SK_THREADS=2
-ENV SKILLET_HOOKS_DIR=/app/hooks
-
-# Create startup script
-RUN printf '#!/bin/sh\n\
-    set -e\n\
-    PORT="${PORT:-${DOCKER_PORT:-8080}}"\n\
-    echo "Starting sk_http_server on port $PORT listening on ${HOST}"\n\
-    \n\
-    # Build command with optional arguments\n\
-    CMD="./sk_http_server $PORT --host ${HOST} --threads ${SK_THREADS:-2}"\n\
-    if [ -n "$AUTH_TOKEN" ]; then\n\
-    CMD="$CMD --token $AUTH_TOKEN"\n\
-    fi\n\
-    if [ -n "$ADMIN_TOKEN" ]; then\n\
-    CMD="$CMD --admin-token $ADMIN_TOKEN"\n\
-    fi\n\
-    \n\
-    echo "Executing: $CMD"\n\
-    exec $CMD\n' > start.sh && chmod +x start.sh
-
-# Expose port (Cloud Run uses PORT env var at runtime)
 EXPOSE 8080
 
-# Health check
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl -f http://localhost:${PORT:-${DOCKER_PORT}}/health || exit 1
+    CMD ["./healthcheck.sh"]
 
-# Default command
-CMD ["./start.sh"]
+ENTRYPOINT ["./entrypoint.sh"]
