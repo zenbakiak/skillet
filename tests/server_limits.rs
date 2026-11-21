@@ -328,3 +328,66 @@ fn bl018_servers_accept_only_the_exact_token() {
         }
     }
 }
+
+// ---------------------------------------------------------------- BL-048: empty tokens
+
+/// Runs a server binary that should refuse to start; returns its stderr.
+fn refuses_to_start(bin: &str, args: &[&str], env_token: Option<&str>) -> String {
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port()
+        .to_string();
+    let mut cmd = std::process::Command::new(bin);
+    cmd.arg(&port)
+        .args(args)
+        .env(
+            "SKILLET_HOOKS_DIR",
+            std::env::temp_dir().join("skillet-server-limits-no-hooks"),
+        )
+        .env("SKILLET_BIND_HOST", "127.0.0.1")
+        .env_remove("SKILLET_AUTH_TOKEN")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped());
+    if let Some(t) = env_token {
+        cmd.env("SKILLET_AUTH_TOKEN", t);
+    }
+    let mut child = cmd.spawn().expect("spawn server");
+    let start = Instant::now();
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        if start.elapsed() > Duration::from_secs(10) {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("{bin} {args:?} started instead of refusing");
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    let mut stderr = String::new();
+    child
+        .stderr
+        .take()
+        .unwrap()
+        .read_to_string(&mut stderr)
+        .unwrap();
+    assert!(!status.success(), "{bin} {args:?}: {status}");
+    stderr
+}
+
+#[test]
+fn bl048_servers_reject_empty_tokens() {
+    let line = env!("CARGO_BIN_EXE_sk_server");
+    let err = refuses_to_start(line, &["1", "--token", ""], None);
+    assert!(err.contains("auth token is empty"), "{err}");
+    let err = refuses_to_start(line, &["1"], Some(""));
+    assert!(err.contains("auth token is empty"), "{err}");
+
+    let http = env!("CARGO_BIN_EXE_sk_http_server");
+    let err = refuses_to_start(http, &["--threads", "1", "--token", ""], None);
+    assert!(err.contains("--token must not be empty"), "{err}");
+    let err = refuses_to_start(http, &["--threads", "1", "--admin-token", ""], None);
+    assert!(err.contains("--admin-token must not be empty"), "{err}");
+}

@@ -547,6 +547,13 @@ fn main() {
         i += 1;
     }
 
+    // An empty token would match a request with no token, so auth would be off while the
+    // banner says it is on (BL-048).
+    if auth_token.as_deref() == Some("") {
+        eprintln!("Error: the auth token is empty (--token or SKILLET_AUTH_TOKEN); give a non-empty token or unset it");
+        std::process::exit(1);
+    }
+
     // Handle daemon mode before any output
     if daemon_mode {
         #[cfg(unix)]
