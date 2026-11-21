@@ -16,14 +16,16 @@ Evaluation limits (nesting depth 128, 256 MiB budget, server deadline) and their
 documented in [limits](../guide/limits.md).
 
 Server request limits: both `sk_server` and `sk_http_server` reject a request over 1 MB, give a
-client 30 s in total to send one request, and time out a response write after 10 s.
-`sk_http_server` answers the first two with HTTP 400 and `"error": "413 Payload Too Large"` or
-`"error": "408 Request Timeout"`. In a build without the `plugins` feature, the JavaScript
-endpoints (`/upload-js`, `/update-js`, `/delete-js`, `/list-js`, `/reload-hooks`) answer HTTP 404
-`"JavaScript plugins are not enabled in this build"` after the admin-token check. Details:
-[limits](../guide/limits.md#server-request-limits-1-mb-30-s-10-s) and
-[servers](../guide/servers.md#javascript-endpoints-in-builds-without-plugins). The HTTP API itself
-is specified in [`openapi.yml`](../../openapi.yml).
+client 30 s in total to send one request, and give themselves 10 s in total to write one response
+(a client that reads more slowly gets a truncated response). `sk_http_server` answers the first two
+with HTTP 400 and `"error": "413 Payload Too Large"` or `"error": "408 Request Timeout"`. Both
+servers refuse to start with an empty token. `/upload-js`, `/update-js` and `/delete-js` accept
+only plain file names matching `[A-Za-z0-9_-]+.js` (HTTP 400 otherwise). In a build without the
+`plugins` feature, the JavaScript endpoints (`/upload-js`, `/update-js`, `/delete-js`, `/list-js`,
+`/reload-hooks`) answer HTTP 404 `"JavaScript plugins are not enabled in this build"` after the
+admin-token check. Details: [limits](../guide/limits.md#server-request-limits-1-mb-30-s-10-s) and
+[servers](../guide/servers.md#connections-and-authentication). The HTTP API itself is specified in
+[`openapi.yml`](../../openapi.yml).
 
 ---
 
@@ -171,7 +173,12 @@ Median value.
 ```bash
 MEDIAN(1, 2, 3, 4, 5)        # 3
 MEDIAN(1, 2, 3, 4)           # 2.5
+MEDIAN(1, SQRT(-1), 3)       # Error: Cannot sort NaN values
 ```
+
+`MEDIAN`, `PERCENTILE_INC`, `QUARTILE_INC`, `SORT` and `.sort()` sort their data first. If the data
+contains NaN (for example from `SQRT(-1)` or `0/0`), they return the error
+`Cannot sort NaN values`.
 
 #### `MODE.SNGL(...)`
 Most frequently occurring value.
@@ -306,10 +313,15 @@ Create date timestamp.
 DATE(2023, 12, 25)           # Unix timestamp for Dec 25, 2023
 ```
 
-#### `TIME(hour, minute, second)`
-Seconds since midnight.
+#### `TIME()`, `TIME(hour, minute, second)`
+Seconds since midnight. With three arguments it returns `hour*3600 + minute*60 + second`. With no
+arguments it returns the current local time as seconds since midnight. One or two arguments are an
+error. The parts are not truncated or wrapped: `TIME(25, 0, 0)` is 90000.
 ```bash
 TIME(14, 30, 0)              # 52200 (2:30 PM in seconds)
+TIME(1, 2, 3)                # 3723
+TIME()                       # current local time, e.g. 81236 (22:33:56)
+TIME(14, 30)                 # Error: TIME expects either no arguments or three arguments (hour, minute, second)
 ```
 
 #### `YEAR(date)`, `MONTH(date)`, `DAY(date)`

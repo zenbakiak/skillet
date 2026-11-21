@@ -1038,7 +1038,7 @@ sk "=:sales * IF(:sales > 100000, 0.08, IF(:sales > 50000, 0.06, 0.04))" sales=7
 ### Date/Time Functions
 - `NOW()` - Current timestamp
 - `DATE(year, month, day)` - Create date
-- `TIME(hour, minute, second)` - Create time
+- `TIME(hour, minute, second)` - Seconds since midnight (`hour*3600 + minute*60 + second`); `TIME()` is the current local time in seconds since midnight
 - `YEAR(date)` - Extract year
 - `MONTH(date)` - Extract month
 - `DAY(date)` - Extract day

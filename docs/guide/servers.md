@@ -78,11 +78,18 @@ constants; no flag changes them.
 |---|---|---|
 | Request size | 1 MB (1,048,576 bytes) per request line | answers `"error": "Request too large (max 1MB)"`, then closes the connection |
 | Read deadline | 30 s to receive the whole line | answers `"error": "Request read timed out (max 30 s)"`, then closes |
-| Idle connection | 30 s with no bytes of a new request | closes the connection without a response |
-| Write timeout | 10 s per socket write | drops the connection |
+| Idle connection | 30 s without a real request (blank and invalid lines do not count) | closes the connection without a response |
+| Wrong or missing token | one attempt per connection | answers `"error": "Unauthorized: invalid token"`, then closes |
+| Write deadline | 10 s to write the whole response | stops writing and closes; the line has no trailing newline |
 
 Pooled connections (see [Connection Pooling](#1-connection-pooling-python)) that sit idle for
 30 s are closed by the server, so a pool must reconnect when a send or receive fails.
+
+The write deadline is a total for the whole response, on both servers. A client that reads a
+large result more slowly than that gets a truncated response with no error message: on
+`sk_server` a JSON line without its trailing `\n`, on `sk_http_server` a body shorter than
+`Content-Length`. Sending the largest possible result (256 MiB) within 10 s needs about 25 MB/s.
+Details and measurements: [limits](limits.md#response-write-deadline-10-s).
 
 `sk_http_server` answers an oversized request (headers + body over 1 MB, or a `Content-Length`
 over 1 MB) and a request that takes more than 30 s to arrive with HTTP status **400** and
@@ -90,6 +97,93 @@ over 1 MB) and a request that takes more than 30 s to arrive with HTTP status **
 `{"error":"408 Request Timeout","success":false}`. Evaluation limits (depth, budget, the 10 s
 evaluation deadline) are separate; see [limits](limits.md#server-request-limits-1-mb-30-s-10-s)
 for both, with captured output.
+
+### Connections and authentication
+
+Start `sk_server` with `--token <secret>` (or `SKILLET_AUTH_TOKEN`) to require a token in every
+request's `token` field. An empty token is refused at start-up, with exit code 1:
+
+```console
+$ sk_server 5602 --token ""
+Error: the auth token is empty (--token or SKILLET_AUTH_TOKEN); give a non-empty token or unset it
+$ echo $?
+1
+$ SKILLET_AUTH_TOKEN= sk_server 5602
+Error: the auth token is empty (--token or SKILLET_AUTH_TOKEN); give a non-empty token or unset it
+```
+
+A request with a wrong or missing token gets one error response, and then the server closes the
+connection. Later lines on that connection are not answered; open a new connection to try again.
+Output from a release build of `develop` at 21a37cc, server started with `--token s3cret`:
+
+```console
+send: {"expression":"=1+1","token":"wrong"}
+      {"expression":"=1+1","token":"s3cret"}
+recv: {"success":false,"result":null,"error":"Unauthorized: invalid token","execution_time_ms":0.0,"request_id":0}
+      (connection closed; the second line is not answered)
+
+send: {"expression":"=1+1"}
+recv: {"success":false,"result":null,"error":"Unauthorized: invalid token","execution_time_ms":0.0,"request_id":1}
+      (connection closed)
+
+send: {"expression":"=2+3*4","token":"s3cret"}
+recv: {"success":true,"result":14.0,"error":null,"execution_time_ms":0.105916,"request_id":2}
+```
+
+A connection stays open as long as it sends a real request at least every 30 s. Blank lines are
+ignored and invalid JSON gets an `Invalid JSON request: …` error, but neither restarts the 30 s.
+In the same run, a connection that sent one valid request and then a blank or invalid line every
+second was closed by the server after 31.1 s, about 30 s after its only real request.
+
+`sk_http_server` refuses empty tokens the same way:
+
+```console
+$ sk_http_server 5601 --token ""
+Error: --token must not be empty
+$ sk_http_server 5601 --admin-token ""
+Error: --admin-token must not be empty
+```
+
+Both exit with code 1.
+
+### JavaScript hook files (`sk_http_server`)
+
+`sk_http_server` loads JavaScript functions from the hooks directory (`SKILLET_HOOKS_DIR`, default
+`hooks`), including its subdirectories. The admin endpoints `/upload-js`, `/update-js` and
+`/delete-js` accept only a plain file name matching `[A-Za-z0-9_-]+.js`: letters, digits, `_` and
+`-`, ending in `.js`, with no directory part. Any other name gets HTTP **400**:
+
+```console
+POST /upload-js {"filename": "triple_it.js", "js_code": "…"}
+200 {"success":true,"message":"JavaScript function 'TRIPLE_IT' uploaded and validated successfully",…}
+
+POST /upload-js {"filename": "my.func.js", …}
+400 {"success":false,"message":"Filename must be a plain name of letters, digits, '_' or '-' ending in .js (no directories)","function_name":null,"validation_results":null,"error":"Invalid filename"}
+
+POST /upload-js {"filename": "triple_it.txt", …}
+400 {"success":false,"message":"Filename must end with .js extension","function_name":null,"validation_results":null,"error":"Invalid file extension"}
+```
+
+Hooks in subdirectories still load, can be called, and appear in `/list-js` with their relative
+path, but they cannot be updated or deleted through the API. Change them on disk and call
+`/reload-hooks`:
+
+```console
+GET /list-js
+200 {"success":true,"functions":[{"filename":"math/double_it.js","function_name":"DOUBLE_IT",…}],"total_count":1,"error":null}
+
+POST /eval {"expression": "=DOUBLE_IT(21)"}
+200 {"success":true,"result":42.0,…}
+
+PUT /update-js {"filename": "math/double_it.js", …}
+400 {"success":false,"message":"Filename must be a plain name of letters, digits, '_' or '-' ending in .js (no directories)","function_name":null,"validation_results":null,"error":"Invalid filename"}
+
+DELETE /delete-js {"filename": "math/double_it.js"}
+400 {"success":false,"message":"Filename must be a plain name of letters, digits, '_' or '-' ending in .js (no directories)","error":"Invalid filename"}
+```
+
+(Release build of `develop` at 21a37cc, started with `--admin-token`; the request schema is in
+[`openapi.yml`](../../openapi.yml).)
 
 ### JavaScript endpoints in builds without plugins
 

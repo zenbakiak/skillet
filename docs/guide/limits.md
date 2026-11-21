@@ -11,7 +11,7 @@ goes over a limit returns an ordinary `Error`; it never crashes the process or t
 | Response size | serialized result must fit the 256 MiB budget | servers only | `Evaluation budget exceeded (max 256 MB)` |
 | Request size | 1 MB (1,048,576 bytes) | both servers | HTTP 400 `413 Payload Too Large` / `Request too large (max 1MB)` (`sk_server`) |
 | Request read time | 30 s for the whole request | both servers | HTTP 400 `408 Request Timeout` / `Request read timed out (max 30 s)` (`sk_server`) |
-| Response write | 10 s per socket write | both servers | none (the connection is dropped) |
+| Response write | 10 s for the whole response | both servers | none (the response is cut short and the connection closed) |
 | Cache entry | 64 KiB | `sk_http_server` result cache | none (bigger results are just not cached) |
 
 Request limits are described in [Server request limits](#server-request-limits-1-mb-30-s-10-s).
@@ -51,6 +51,17 @@ $ sk "[1,1,1].reduce([:acc], 0)"
 Array([Array([Array([Number(0.0)])])])
 
 $ sk ":a := [1]; :a := [:a]; …(200 times)…; :a"
+Error: Expression nested too deeply (max 128)
+```
+
+Values returned by a JavaScript plugin get the same check when they are converted to Skillet values.
+`NEST(n)` below is a test plugin that returns `n` nested arrays around `1`:
+
+```console
+$ sk "=NEST(128).flatten()"
+Array([Number(1.0)])
+
+$ sk "=NEST(129).flatten()"
 Error: Expression nested too deeply (max 128)
 ```
 
@@ -244,8 +255,8 @@ environment variable to change them.
 | Limit | Value | `sk_http_server` | `sk_server` |
 |---|---|---|---|
 | Request size | 1 MB (1,048,576 bytes) | headers + body; a `Content-Length` over 1 MB is rejected before the body is read | one request line, without the trailing newline |
-| Read deadline | 30 s | for the whole request, from the first read | per request line, from when the server starts reading it |
-| Write timeout | 10 s | per socket write of the response | per socket write of the response |
+| Read deadline | 30 s | for the whole request, from the first read | from when the connection opened or the last real request was answered |
+| Write deadline | 10 s | for the whole response, from its first write | for the whole response line, from its first write |
 
 The read deadline is a total, not a per-read timeout, so a client that sends one byte at a time
 cannot hold a worker thread for longer than 30 s (BL-033, BL-037).
@@ -275,12 +286,52 @@ rest of the stream can no longer be split into lines:
 {"success":false,"result":null,"error":"Request read timed out (max 30 s)","execution_time_ms":0.0,"request_id":1}
 ```
 
-An `sk_server` connection that is idle for 30 s with no bytes of a new request is closed without a
-response. Clients that keep connections open (see the pooling example in
-[servers](servers.md)) must reconnect after that.
+An `sk_server` connection that gets no new request within 30 s is closed without a response. The
+30 s count from when the connection opened, or from the end of the last real, authorized request
+(BL-046). Clients that keep connections open (see the pooling example in [servers](servers.md))
+must reconnect after that.
 
-If a response write blocks for more than 10 s (the client stopped reading), the server gives up on
-that connection; the client gets no error message.
+Only real requests restart that count. Blank and whitespace-only lines are ignored, and invalid
+JSON gets an `Invalid JSON request: …` error, but neither keeps a connection open past 30 s.
+After a wrong or missing token the server answers `Unauthorized: invalid token` and closes the
+connection; the client must reconnect to try again. See
+[servers](servers.md#connections-and-authentication) for captured output.
+
+### Response write deadline (10 s)
+
+Writing one response may take at most 10 s in total, on both servers (BL-047). The deadline counts
+from the first byte written, not per socket write. A client that reads more slowly than that gets a
+truncated response and no error message:
+
+- `sk_http_server`: the body is shorter than its `Content-Length` header, then the connection
+  closes.
+- `sk_server`: the JSON line has no trailing newline, then the connection closes.
+
+A fast client is not affected. Measured with a release build of `develop` at 21a37cc on
+127.0.0.1, a 20 MB result (`SUBSTITUTE(SUBSTITUTE("aaaaaaaaaa", "a", :h), "a", :c)` with `h` =
+100 × `a` and `c` = 20,000 × `x`), read at full speed and then limited to 1 MB/s:
+
+```console
+$ curl -s -o /dev/null -w 'HTTP %{http_code} size_download=%{size_download}\n' … /eval
+HTTP 200 size_download=20000085
+
+$ curl -s -D slow.hdr -o slow.body --limit-rate 1M -w '… exit=%{exitcode} %{errormsg}\n' … /eval
+HTTP 200 size_download=11886592 exit=18 end of response with 8113493 bytes missing
+$ grep -i content-length slow.hdr
+Content-Length: 20000085
+
+sk_server, same expression, full speed:  20000084 bytes in 0.0s, ends with newline: True
+sk_server, same expression, 1 MB/s:      9310234 bytes in 11.0s, ends with newline: False
+```
+
+The slow client received more than 10 MB because the operating system's socket buffers hold data
+the server already wrote.
+
+What this means for sizing: a response can be as large as the 256 MiB evaluation budget, and
+sending 256 MiB within 10 s needs about 25 MB/s. Clients on slower links, or results in the tens of
+megabytes over a WAN, can hit the deadline. Check that a response is complete (HTTP: body length
+equals `Content-Length`; `sk_server`: the line ends with `\n`) and keep large results small, for
+example by returning `.length()`, a sum or `LEFT(text, n)` instead of the whole value.
 
 ## Library API: `EvalLimits` and `with_limits`
 

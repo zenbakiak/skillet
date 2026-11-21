@@ -16,6 +16,10 @@ were reconstructed from git tags and commit messages, so they are brief.
 Planned as 0.7.0 (it contains breaking changes, see "Removed").
 
 ### Added
+- `benches/baseline.rs` and `benches/BASELINE.md`: a reproducible performance baseline for the
+  library, CLI and HTTP layers (#48).
+- `docs/guide/limits.md`: one place for every limit (nesting depth, evaluation budget, server
+  deadlines, request and response sizes) (#49).
 - `skillet::MAX_NESTING_DEPTH` (128): expressions and runtime-built arrays deeper than this fail
   with `Expression nested too deeply (max 128)` instead of overflowing the stack (#44).
 - Per-evaluation memory budget (ADR-0011): `skillet::MAX_EVAL_BYTES` (256 MB of created values),
@@ -26,8 +30,19 @@ Planned as 0.7.0 (it contains breaking changes, see "Removed").
   404 `JavaScript plugins are not enabled in this build` after the admin-token check (BL-025).
 - CI runs the full `./harness/check.sh` gate (both feature sets, strict clippy and fmt) and
   `cargo audit` on every push and pull request to `main` and `develop` (BL-004, BL-019).
+- Release archives come with a `.tar.gz.sha256` checksum file, verified before upload (#53).
+- `docs/reference/functions.md` is generated from the builtin table, and a test fails when it is
+  stale (#58). `docs/reference/excel-compat.md` lists how each builtin compares with Excel (#56).
+  Rustdoc examples for the public API (#60).
 
 ### Changed
+- The parser uses about 4x less stack per nesting level, so debug builds handle the maximum
+  depth on a default 2 MB thread; parsing is 4-35% faster (#48).
+- Documentation moved into `docs/guide/`, `docs/reference/` and `docs/ops/`; the published crate
+  now includes the licence files (#49).
+- `evaluate_with_json` and `evaluate_with_json_custom` share one internal helper; no behaviour
+  change (#47).
+- The minimum supported Rust version is 1.85 (`rust-version` in `Cargo.toml`, ADR-0012) (#50).
 - One evaluator: method and lambda calls now use the same evaluator as the top level. Inside
   lambdas, `JQ`, `DIG`, `REDUCE` with the default `:acc`, custom parameter names and similar
   cases now behave as they do at the top level; for example, `[1,2].map(DIG(...))` no longer fails
@@ -52,6 +67,26 @@ Planned as 0.7.0 (it contains breaking changes, see "Removed").
   - `sk_server` streams nested arrays as JSON instead of building the full text first (wire
     format unchanged).
 - Server worker threads get a 16 MB stack instead of the default 2 MB (#44).
+- Servers (#62):
+  - Writing one response has a 10 s limit in total, instead of 10 s per socket write. A client
+    that reads more slowly gets a truncated response (an HTTP body shorter than `Content-Length`,
+    or an `sk_server` line without its trailing newline). Reading the largest results in time
+    needs about 25 MB/s; see `docs/guide/limits.md`.
+  - `sk_server`: blank lines and invalid JSON no longer restart the 30 s connection deadline;
+    only a real, authorized request does. After a wrong or missing token the server answers
+    `Unauthorized: invalid token` and closes the connection.
+  - Both servers refuse to start with an empty token and exit with code 1: `--token ""` on
+    both, `--admin-token ""` on `sk_http_server`, an empty `SKILLET_AUTH_TOKEN` on `sk_server`.
+- `/upload-js`, `/update-js` and `/delete-js` accept only plain file names matching
+  `[A-Za-z0-9_-]+.js` and answer 400 otherwise. Hooks in subdirectories still load and are
+  listed by `/list-js`, but can no longer be updated or deleted through the API (#63).
+- `sk_http_server` blocks in `accept()` instead of polling every 1 ms, which removes about 1.1 ms
+  from each request (#54).
+- Builtin functions are dispatched from one table; lookups take 14–28 ns instead of 20–75 ns
+  (#58). Evaluation-budget charges are cheaper, recovering part of the slowdown from #46 (#64).
+- Release workflows use Rust 1.89.0 and build with `--locked` (#53). `lru` updated to 0.19 (#57).
+- Two timing-sensitive tests no longer fail on fast or loaded machines; the accept-floor test
+  runs only with `--ignored` (#65, #66).
 - The crate is formatted with `rustfmt` and clippy-clean (#42).
 
 ### Removed
@@ -61,19 +96,44 @@ Planned as 0.7.0 (it contains breaking changes, see "Removed").
 - Unused dependencies `dashmap`, `string-interner`, `typed-arena` and `beef` (#43).
 
 ### Fixed
+- `sk_http_server` reported a request read timeout as "500 Internal Server Error"; it now
+  reports "408 Request Timeout" (#51).
 - Deeply nested input (`((((…))))`, `1+1+…`, long `.a.b…` chains, `.reduce([:acc], 0)`) no longer
   crashes the process with a stack overflow; on `sk_http_server` one request could take the
   server down (#44).
 - Accepted sockets were inherited as non-blocking on macOS: `sk_server` dropped requests that
   arrived in pieces and `sk_http_server` cut large responses short (#46).
 - `sk_http_server` builds each response once, at its exact size (#46).
+- NaN in sorted data no longer panics: `MEDIAN`, `PERCENTILE_INC`, `QUARTILE_INC`, `SORT` and
+  `.sort()` return `Cannot sort NaN values`. Before, the evaluator panicked (a server request got
+  no response), and `.sort()` returned arrays of up to 20 items containing NaN unsorted (#59).
+- `TIME(h, m, s)` returns `h*3600 + m*60 + s`; it used to ignore its arguments and return the
+  current time. `TIME()` still returns the current local time, and one or two arguments are an
+  error (#61).
+- `sk_http_server` serves its built-in documentation page on `GET /` from any working directory
+  (#54).
+- The "Range operations" case in `sk_http_bench` failed every request (#57).
 
 ### Security
+- `sk_server` limits each request line to 1 MB and both servers limit reading one request to
+  30 s in total (#51).
+- Auth tokens are compared in constant time on both servers (#51).
+- `crossbeam-epoch` updated to 0.9.21 for RUSTSEC-2026-0204 (#50).
 - Stack-overflow DoS through nesting depth is closed (#44).
 - CPU and allocation DoS through lambdas copying the scope is closed (#45).
 - Memory and CPU exhaustion from a single evaluation is bounded by the evaluation budget and, on
   the servers, the 10 s deadline (#46).
 - The crate release workflow runs with read-only `contents` permission.
+- An empty token no longer turns authentication off while reporting it as enabled; the servers
+  refuse to start (#62).
+- A slow-reading client can no longer hold a server worker past the 10 s write limit (#62).
+- `sk_server` allows one token attempt per connection (#62).
+- Hook management endpoints only touch files directly in the hooks directory, and hook loading
+  only reads files inside it (#63).
+- Values returned by JavaScript hooks are limited to nesting depth 128 (#63).
+- A slow custom function no longer blocks function registration or `/reload-hooks` (#63).
+- `sk_http_server` writes its daemon PID file without following symlinks (#63).
+- `lru` 0.19 fixes RUSTSEC-2026-0253 (#57).
 
 ## [0.6.3] - 2026-03-25
 
