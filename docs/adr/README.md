@@ -22,6 +22,7 @@ ADRs 0001–0008 are **retroactive**: they record decisions already embodied in 
 | [0014](0014-jq-wildcard-results.md) | `JQ` result shape follows the path, not the match count | Proposed |
 | [0015](0015-percentile-nan.md) | NaN and infinity in statistical builtins | Proposed |
 | [0016](0016-custom-function-visibility.md) | Custom functions are visible in every sub-expression | Proposed |
+| [0017](0017-quickjs-resource-limits.md) | Resource limits for JavaScript plugins (QuickJS) | Accepted |
 
 ## Template
 

@@ -146,6 +146,59 @@ Error: --admin-token must not be empty
 
 Both exit with code 1.
 
+`sk_http_server` also reads its tokens from the environment: `SKILLET_AUTH_TOKEN` (eval token)
+and `SKILLET_ADMIN_TOKEN` (admin token, for the JavaScript endpoints and `DELETE /cache`). The
+flag wins over the variable, and an empty variable is refused like an empty flag:
+
+```console
+$ SKILLET_ADMIN_TOKEN= sk_http_server 5611
+Error: SKILLET_ADMIN_TOKEN must not be empty; give a non-empty value or unset it
+```
+
+If only one token is set, the other one inherits it (the banner warns about it).
+
+### Cross-origin requests and request bodies (`sk_http_server`)
+
+Browsers only let a page read a response from another origin when the response allows it
+([ADR-0019](../adr/0019-server-cors-and-development-mode.md)). `sk_http_server` sends
+`Access-Control-Allow-Origin` as follows:
+
+| Configuration | `Access-Control-Allow-Origin` |
+|---|---|
+| `--cors-origin <origin>` or `SKILLET_CORS_ORIGIN` (flag wins) | exactly that value; `*` is allowed |
+| no origin, a token configured | `*` |
+| no origin, no token (development mode) | not sent |
+
+So a server in development mode cannot be read by a page on another origin. Preflight
+`OPTIONS` requests get the same header plus `Access-Control-Allow-Methods: GET, POST, PUT,
+DELETE, OPTIONS` and `Access-Control-Allow-Headers: Authorization, Content-Type`; in
+development mode they get no CORS headers, and the browser drops the request. The banner shows
+the policy, for example `🌍 CORS: Access-Control-Allow-Origin: https://app.example` or
+`🌍 CORS: off (no token, no --cors-origin)`.
+
+A request with a body (other than `GET` and `OPTIONS`) must send `Content-Type:
+application/json`; parameters such as `; charset=utf-8` are allowed and case does not matter.
+Otherwise the answer is HTTP **415**, before any token check. Browsers send a JSON request
+from another origin only after a preflight, so a page cannot post to a local server without the
+server's consent. `/upload-js` and `/update-js` also accept `multipart/form-data`.
+
+In development mode (no admin token) the admin endpoints (`/upload-js`, `/update-js`,
+`/delete-js`, `/list-js`, `/reload-hooks`, `DELETE /cache`) answer HTTP **403** to any request
+with an `Origin` header, which browsers send, telling you to set an admin token. curl and
+scripts, which send no `Origin`, are not affected.
+
+```console
+$ curl -si -X POST localhost:5611/eval -d '{"expression":"=1"}'
+HTTP/1.1 415 Unsupported Media Type
+Content-Type: application/json
+Content-Length: 65
+Connection: close
+
+{"error":"Content-Type must be application/json","success":false}
+```
+
+(`curl -d` sends `application/x-www-form-urlencoded`; add `-H "Content-Type: application/json"`.)
+
 ### JavaScript hook files (`sk_http_server`)
 
 `sk_http_server` loads JavaScript functions from the hooks directory (`SKILLET_HOOKS_DIR`, default
@@ -184,6 +237,11 @@ DELETE /delete-js {"filename": "math/double_it.js"}
 
 (Release build of `develop` at 21a37cc, started with `--admin-token`; the request schema is in
 [`openapi.yml`](../../openapi.yml).)
+
+Uploading or updating a hook runs its `@example` once to validate it, under the same limits as any
+plugin call (64 MiB, 10 s per call; see [Limits](limits.md#javascript-plugins-64-mib-10-s-256-kib)).
+An example that loops answers after 10 s with the timeout in `validation_results.example_error`.
+During `/eval` a plugin is also stopped by the 10 s request deadline.
 
 ### JavaScript endpoints in builds without plugins
 
@@ -472,27 +530,34 @@ server {
 
 ### 3. Docker Deployment
 
+The repository's `Dockerfile` runs `sk_http_server` and requires `SKILLET_AUTH_TOKEN` and
+`SKILLET_ADMIN_TOKEN`; see [Docker deployment](../ops/docker.md). For the TCP `sk_server`, a
+minimal image looks like this:
+
 ```dockerfile
-# Dockerfile
-FROM rust:1.81 as builder
+# Dockerfile.sk_server
+FROM rust:1.89.0-slim-bookworm AS builder
 WORKDIR /app
 COPY . .
-RUN cargo build --release --bin sk_server
+RUN cargo build --release --locked --bin sk_server
 
 FROM debian:bookworm-slim
+RUN useradd -r -d /app -s /bin/false skillet
 WORKDIR /app
 COPY --from=builder /app/target/release/sk_server .
+USER skillet
 EXPOSE 8080
-CMD ["./sk_server", "8080", "4"]
+# The token comes from SKILLET_AUTH_TOKEN at run time, never from argv.
+CMD ["./sk_server", "8080", "4", "--host", "0.0.0.0"]
 ```
 
 ```bash
-# Build and run
-docker build -t skillet-server .
-docker run -p 8080:8080 skillet-server
+# Build and run; publish on the host loopback only
+docker build -f Dockerfile.sk_server -t skillet-server .
+docker run -p 127.0.0.1:8080:8080 -e SKILLET_AUTH_TOKEN skillet-server
 
-# Test from host
-echo '{"expression": "=2+3*4", "variables": null}' | nc localhost 8080
+# Test from host (sk_server expects the token in each request; see "Connections and authentication" above)
+echo '{"expression": "=2+3*4", "variables": null}' | nc 127.0.0.1 8080
 ```
 
 ## Performance Monitoring

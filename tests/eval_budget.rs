@@ -477,6 +477,8 @@ impl Server {
             .env("SKILLET_HOOKS_DIR", hooks)
             .env("SKILLET_BIND_HOST", "127.0.0.1")
             .env_remove("SKILLET_AUTH_TOKEN")
+            .env_remove("SKILLET_ADMIN_TOKEN")
+            .env_remove("SKILLET_CORS_ORIGIN")
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .spawn()

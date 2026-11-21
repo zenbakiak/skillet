@@ -252,15 +252,18 @@ The binary includes all necessary dependencies:
 ## Advanced Distribution Options
 
 ### Docker Container
-Create a Dockerfile for containerized distribution:
+The repository ships a `Dockerfile` that builds from source and refuses to start without tokens;
+see [Docker deployment](docker.md). To package a prebuilt musl binary instead:
 
 ```dockerfile
-FROM alpine:latest
-RUN apk add --no-cache curl
+FROM alpine:3.20
+RUN adduser -S -h /app skillet
 COPY sk_http_server /usr/local/bin/
-COPY hooks/ /app/hooks/
+COPY --chown=skillet hooks/ /app/hooks/
 WORKDIR /app
+USER skillet
 EXPOSE 5074
+# Pass SKILLET_AUTH_TOKEN and SKILLET_ADMIN_TOKEN with -e or --env-file, never on argv.
 CMD ["sk_http_server", "5074", "--host", "0.0.0.0"]
 ```
 
