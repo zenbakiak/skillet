@@ -207,20 +207,25 @@ pub fn exec_datetime(name: &str, args: &[Value]) -> Result<Value, Error> {
     }
 }
 
-/// `TIME(hour, minute, second)`: seconds since midnight, `hour*3600 + minute*60 + second`
-/// with Excel's truncation and 24-hour wrap (docs/reference/api.md). `TIME()` with no arguments keeps its legacy meaning: the current
-/// local time as seconds since midnight.
+/// Seconds in a day: `TIME` returns a fraction of a day.
+const SECONDS_PER_DAY: f64 = 86400.0;
+
+/// `TIME(hour, minute, second)`: the time as a fraction of a day (Excel, ADR-0018), with Excel's
+/// truncation, limits and 24-hour wrap: `TIME(12, 0, 0)` is 0.5. `TIME()` with no arguments is
+/// the current local time in the same unit.
 fn exec_time(args: &[Value]) -> Result<Value, Error> {
     match args {
         [] => {
             let now = Local::now().time();
-            Ok(Value::Number(now.num_seconds_from_midnight() as f64))
+            Ok(Value::Number(
+                f64::from(now.num_seconds_from_midnight()) / SECONDS_PER_DAY,
+            ))
         }
         [hour, minute, second] => {
             // Excel TIME: each part is truncated and must be 0..=32767 (a negative minute or
             // second is allowed while the total stays non-negative). The total wraps at 24
-            // hours, so TIME(25, 0, 0) = TIME(1, 0, 0). Skillet's unit is seconds, not a
-            // fraction of a day.
+            // hours, so TIME(25, 0, 0) = TIME(1, 0, 0). The result is a fraction of a day, as in
+            // Excel (ADR-0018), so DATE(...) + TIME(...) adds the time to a date.
             let part = |v: &Value, what: &str| match v {
                 Value::Number(n) if n.is_finite() && *n <= 32767.0 => Ok(n.trunc()),
                 Value::Number(_) => Err(Error::new(
@@ -239,7 +244,7 @@ fn exec_time(args: &[Value]) -> Result<Value, Error> {
             if total < 0.0 {
                 return Err(Error::new("TIME is before midnight (#NUM!)", None));
             }
-            Ok(Value::Number(total % 86400.0))
+            Ok(Value::Number((total % SECONDS_PER_DAY) / SECONDS_PER_DAY))
         }
         _ => Err(Error::new(
             "TIME expects either no arguments or three arguments (hour, minute, second)",

@@ -172,7 +172,7 @@ pub(crate) static BUILTINS: &[Builtin] = &[
     // Date and time
     f("NOW", DateTime, 0, n(0), "", "Current UTC time as a DateTime (seconds).", "NOW()").volatile(),
     f("DATE", DateTime, 0, n(3), "[year, month, day]", "Midnight UTC of the given date; today's local date with no arguments.", "DATE(2024, 1, 15)"),
-    f("TIME", DateTime, 0, n(3), "[hour, minute, second]", "Seconds since midnight, wrapped at 24 hours (Excel rules); the current local time with no arguments.", "TIME(14, 30, 0)"),
+    f("TIME", DateTime, 0, n(3), "[hour, minute, second]", "Time as a fraction of a day (Excel): parts truncated, wrapped at 24 hours; the current local time with no arguments.", "TIME(14, 30, 0)"),
     f("YEAR", DateTime, 1, n(1), "datetime", "Year (UTC).", "YEAR(DATE(2024, 3, 9))"),
     f("MONTH", DateTime, 1, n(1), "datetime", "Month 1-12 (UTC).", "MONTH(DATE(2024, 3, 9))"),
     f("DAY", DateTime, 1, n(1), "datetime", "Day of the month (UTC).", "DAY(DATE(2024, 3, 9))"),

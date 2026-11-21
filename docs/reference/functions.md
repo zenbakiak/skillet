@@ -92,7 +92,7 @@ Methods (`:arr.sum()`), operators and the rest of the language: [api.md](api.md)
 |---|---|---|---|---|---|
 | `NOW` | `NOW()` | 0 | Current UTC time as a DateTime (seconds). | `NOW()` | (depends on the clock) |
 | `DATE` | `DATE([year, month, day])` | 0-3 | Midnight UTC of the given date; today's local date with no arguments. | `DATE(2024, 1, 15)` | `2024-01-15T00:00:00Z` |
-| `TIME` | `TIME([hour, minute, second])` | 0-3 | Seconds since midnight, wrapped at 24 hours (Excel rules); the current local time with no arguments. | `TIME(14, 30, 0)` | `52200` |
+| `TIME` | `TIME([hour, minute, second])` | 0-3 | Time as a fraction of a day (Excel): parts truncated, wrapped at 24 hours; the current local time with no arguments. | `TIME(14, 30, 0)` | `0.6041666666666666` |
 | `YEAR` | `YEAR(datetime)` | 1 | Year (UTC). | `YEAR(DATE(2024, 3, 9))` | `2024` |
 | `MONTH` | `MONTH(datetime)` | 1 | Month 1-12 (UTC). | `MONTH(DATE(2024, 3, 9))` | `3` |
 | `DAY` | `DAY(datetime)` | 1 | Day of the month (UTC). | `DAY(DATE(2024, 3, 9))` | `9` |
