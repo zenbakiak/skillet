@@ -1,6 +1,7 @@
 pub mod arithmetic;
 pub mod array;
 pub mod builtin_functions;
+pub(crate) mod builtin_table;
 pub mod datetime;
 pub mod evaluator;
 pub mod financial;
