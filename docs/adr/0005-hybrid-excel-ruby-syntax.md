@@ -3,6 +3,8 @@
 - Status: Accepted (retroactive, v0.6.3)
 - Date: 2026-11-20
 - Related: PRD-001
+- Amended by: [ADR-0018](0018-excel-compatibility.md) (2026-11-21). From 0.7.0, unary minus
+  binds tighter than `^` and `^` is left-associative, as in Excel: `-3^2 = 9`, `2^3^2 = 64`.
 
 ## Context
 Target users are spreadsheet power users and backend developers. Each group knows a different idiom.
