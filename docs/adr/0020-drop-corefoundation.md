@@ -1,86 +1,95 @@
 # 0020. Drop CoreFoundation from the macOS binaries
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-11-21
 - Deciders: Maintainer (dependency feature change, BL-055)
-- Related: BL-040 (start-up profile), BL-042 (`scalar-doc`), BL-055, `src/runtime/datetime.rs`,
+- Related: BL-040 (start-up profile), BL-042 (`scalar-doc`, closed by this ADR), BL-055,
+  `src/runtime/local_time.rs`, `src/runtime/datetime.rs`, `src/bin/http_server/api_docs.html`,
   `benches/BASELINE.md` ("BL-055: what CoreFoundation costs `sk`")
-
-The maintainer approved removing CoreFoundation. This ADR stays Proposed because the removal
-needs two choices the approval did not cover: what `DATE()` and `TIME()` return, and what
-happens to `scalar-doc`.
 
 ## Context
 
-Every binary on macOS links `CoreFoundation.framework`. `otool -L target/release/sk` at
-`3f59ae1` lists CoreFoundation and libSystem. The path (`cargo tree -i iana-time-zone -e
-features`) is `chrono` feature `clock` → `iana-time-zone` → `core-foundation-sys`. Two crates
-turn `clock` on:
+On macOS every Skillet binary linked `CoreFoundation.framework`. `otool -L target/release/sk` at
+`3f59ae1` listed CoreFoundation and libSystem, and loading the framework cost ~1.1–1.6 ms per
+`sk` call (BL-040 found it; numbers below). The path (`cargo tree -i iana-time-zone -e
+features`) was chrono's `clock` feature → `iana-time-zone` → `core-foundation-sys`. Two crates
+turned `clock` on:
 
-1. `skillet` itself, through chrono's default features. The code needs them: `DATE()` with no
-   arguments returns midnight of today's **local** date (`Local::now().date_naive()`), and
-   `TIME()` with no arguments returns seconds since **local** midnight (`Local::now().time()`).
-   Both are documented that way (`docs/reference/functions.md`, `docs/reference/api.md`).
-   `NOW()` already uses `Utc::now()`.
-2. `tera` (chrono `std` + `clock`), pulled in by `scalar-doc`, which only builds the `/docs`
-   page of `sk_http_server`. It is a normal dependency of the library, so Cargo's feature
-   unification turns `clock` on for every binary, `sk` included.
+1. `skillet` itself, through chrono's default features. The code needed them: with no
+   arguments, `DATE()` returns midnight of today's **local** date and `TIME()` returns the
+   **local** time of day (`chrono::Local`). Both are documented that way. `NOW()` already used
+   `Utc::now()`.
+2. `tera` (chrono `std` + `clock`), pulled in by `scalar-doc`, which only built the `/docs` page
+   of `sk_http_server`. It was a normal dependency of the library, so Cargo's feature
+   unification turned `clock` on for every binary, `sk` included.
 
-Measured with prototypes (not merged), 5 interleaved rounds of 300 calls, release build:
+Removing only one of the two saves nothing: a prototype with skillet's chrono reduced to
+`["std", "now", "serde"]` still linked CoreFoundation through `tera`.
 
-| Build | Links CoreFoundation | `sk` size | `sk "=1+1"` median |
-|---|---|---|---|
-| `3f59ae1` | yes | 4 382 000 B | 5.84 ms |
-| `skillet` chrono without `clock` (`Local` → `Utc`) | yes (through `tera`) | 4 340 400 B | 5.95 ms |
-| same, `scalar-doc` removed | no | 4 340 096 B | 4.31 ms |
-| `/usr/bin/true` | | | 2.94 ms |
+## Options considered
 
-So removing CoreFoundation saves 1.1–1.6 ms per `sk` call, but only if **both** sources go.
-Machine, load and method are in `benches/BASELINE.md`.
+Local time for `DATE()` / `TIME()`:
 
-## Options
+- A. Switch to UTC. Smallest change, but user-visible: outside UTC, `DATE()` and `TIME()`
+  change value for part of the day. Rejected.
+- **B. Read the local UTC offset from libc (`localtime_r`, `tm_gmtoff`) on Unix.** libc honours
+  `TZ` and `/etc/localtime`, the same sources chrono's `Local` reads first (chrono only asks
+  `iana-time-zone`, and so CoreFoundation, when both fail). Results stay the same. Costs one
+  small `unsafe` block.
+- C. UTC unless `TZ` is set, parsing `TZ` ourselves. A behavior change for most users, and more
+  code than B. Rejected.
 
-### For `DATE()` / `TIME()` (local time)
+`tera` (through `scalar-doc`):
 
-A. **Use UTC.** `Utc::now()` in both. Smallest change. Behavior change: outside UTC, `DATE()`
-   and `TIME()` change value near midnight (`DATE()` is off by one day for part of the day,
-   `TIME()` by the UTC offset). Needs docs and a CHANGELOG "Changed" entry. Inconsistent with
-   Excel, where `TODAY()`/`NOW()` are local.
+- **D. Remove `scalar-doc` and serve the Scalar page as static HTML (`include_str!`).** The page
+  that `scalar-doc` rendered was fixed (title, `/openapi.yml`, default theme), so a static copy
+  is equivalent. Also removes `tera` and ~30 crates from the tree, and most `cargo audit`
+  warnings (BL-042).
+- E. Feature-gate `scalar-doc`. Builds that enable it would bring CoreFoundation back. Rejected.
 
-B. **Read the local offset from libc** (`localtime_r`, `tm_gmtoff`) on Unix. `libc` is already a
-   dependency. libc honors `TZ` and `/etc/localtime`, the same sources chrono's `Local` reads
-   first; chrono only calls `iana-time-zone` (and so CoreFoundation) as a fallback when both
-   fail. No behavior change on the supported targets (release binaries are macOS and Linux
-   only). Cost: one small `unsafe` block. On non-Unix targets, keep chrono `clock` through a
-   `[target.'cfg(not(unix))'.dependencies]` entry, or fall back to UTC.
+## Decision
 
-C. **UTC unless `TZ` is set**, parsing `TZ` ourselves. Behavior change for users without `TZ`
-   (most desktop users); more code than B for no gain. Not recommended.
+**B + D.**
 
-### For `tera` (through `scalar-doc`)
-
-D. **Remove `scalar-doc`** (BL-042) and serve a static Scalar page from `include_str!` (it is
-   an HTML page that loads Scalar and points it at `/openapi.yml`). Also removes most
-   `cargo audit` warnings (BL-042).
-
-E. **Feature-gate `scalar-doc`** behind an optional `docs-page` feature, off by default or on
-   only for `sk_http_server` builds. Default builds drop CoreFoundation; builds that turn the
-   feature on keep it.
-
-## Decision (proposed)
-
-B + D: local time through libc, so `DATE()` and `TIME()` keep their values, and `scalar-doc`
-removed. `skillet`'s chrono becomes
-`{ version = "0.4", default-features = false, features = ["std", "now", "serde"] }` (`now` gives
-`Utc::now()`). The `now` feature needs a recent chrono 0.4 (`Cargo.lock` has 0.4.43, whose
-`rust-version` is far below our MSRV 1.85); set the requirement to `0.4.43` to make that explicit.
+- chrono becomes `{ version = "0.4.43", default-features = false, features = ["std", "now",
+  "serde"] }`. `now` provides `Utc::now()`. chrono 0.4.43 is what `Cargo.lock` already had; its
+  `rust-version` is 1.62, so the MSRV (1.85, ADR-0012) is unaffected.
+- `src/runtime/local_time.rs` provides `now()`, the local date-time, used by `DATE()` and
+  `TIME()`. On Linux, Android, macOS, iOS, FreeBSD, NetBSD, OpenBSD and DragonFly it is
+  `Utc::now()` plus `tm_gmtoff` from `libc::localtime_r`, and falls back to UTC if libc fails.
+  On every other target it is `chrono::Local::now()`, and `Cargo.toml` turns chrono's `clock`
+  on for exactly those targets (`[target.'cfg(not(any(...)))'.dependencies]`; the two target
+  lists must match).
+- **`unsafe` exception.** The rule "no `unsafe` outside `src/bin/http_server/daemon.rs` without
+  an ADR" (`harness/roles/rust-engineer.md`) gets one more allowed place:
+  `utc_offset_seconds` in `src/runtime/local_time.rs`. It is one block around the
+  `localtime_r` call and `MaybeUninit::assume_init`, with a `SAFETY` comment. Any further
+  `unsafe` in the library still needs its own ADR.
+- `GET /docs` serves `src/bin/http_server/api_docs.html` (the page `scalar-doc` rendered, with
+  its entity-escaped `/` written plainly). `tests/http_server_accept.rs` pins it.
 
 ## Consequences
 
-- `sk` start-up drops by ~1.1–1.6 ms on macOS; `otool -L` shows only libSystem.
-- A regression test pins `DATE()`/`TIME()` against `TZ` (for example `TZ=Etc/GMT-14`), so a
-  later switch to UTC cannot happen silently.
-- With D, `/docs` keeps working without `tera`; with E, the docs feature brings
-  CoreFoundation back for the builds that enable it.
-- If the maintainer picks A instead of B, it is a user-visible change and needs a CHANGELOG
-  "Changed" entry and updates to `docs/reference/functions.md` and `docs/reference/api.md`.
+Measured from release builds of `3f59ae1` and of this change, same session: Apple M3 Pro,
+macOS 27.0.1, rustc 1.89.0, 5 interleaved rounds of 300 calls (`benches/cli_startup.py`),
+1-minute load average 20–27:
+
+| | before (`3f59ae1`) | after |
+|---|---|---|
+| `otool -L sk` | CoreFoundation, libSystem | libSystem, libiconv |
+| `sk "=1+1"` median (p95) | 4.55 ms (6.88) | 3.29 ms (4.90) |
+| `/usr/bin/true` (floor) | 2.14 ms | 2.14 ms |
+| `sk` size | 4 382 000 B | 4 340 480 B |
+| `sk_http_server` size | 7 989 680 B | 4 833 568 B |
+
+- `sk` start-up drops by ~1.2 ms on macOS, about half of its time above the process-start floor.
+- `libiconv` is linked now because the library calls into the `libc` crate, which declares
+  `#[link(name = "iconv")]` on Apple targets. It is in the dyld shared cache and costs nothing
+  measurable: a prototype without it ran 3.35 ms in the same session.
+- `sk_server` and `sk_http_server` still load Foundation (and so CoreFoundation) through
+  `ctrlc` → `dispatch2` → `objc2`. This is unrelated to chrono and was already the case
+  before; those binaries are long-running, so the start-up cost does not matter there.
+- A regression test (`tests/local_time.rs`) runs `sk` with pinned POSIX `TZ` values and checks
+  `DATE()` and `TIME()` against UTC plus the known offset, so a later silent switch to UTC
+  fails. It is unit-free for `TIME`, so changing `TIME`'s unit does not break it.
+- On targets outside the libc list, behavior and dependencies are as before.
