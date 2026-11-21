@@ -143,7 +143,8 @@ cargo run --bin sk_http_server 5074 -d --host 0.0.0.0 --token secret123 --admin-
 - `-H, --host <addr>` - Bind address (default: 127.0.0.1)
 - `-d, --daemon` - Run as background daemon
 - `--token <value>` - Require token for eval requests (or set `SKILLET_AUTH_TOKEN`; the flag wins; an empty value is a start-up error)
-- `--admin-token <value>` - Require admin token for JS function management
+- `--admin-token <value>` - Require admin token for JS function management and `DELETE /cache` (or set `SKILLET_ADMIN_TOKEN`; same rules as `--token`)
+- `--cors-origin <origin>` - `Access-Control-Allow-Origin` value (or set `SKILLET_CORS_ORIGIN`). Default: `*` when a token is set, no CORS headers otherwise. Request bodies must be `Content-Type: application/json` (415 otherwise); see [servers guide](docs/guide/servers.md#cross-origin-requests-and-request-bodies-sk_http_server)
 - `--pid-file <file>` - PID file for daemon mode
 - `--log-file <file>` - Log file for daemon mode
 
