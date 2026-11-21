@@ -5,7 +5,7 @@
 
 use crate::ast::Expr;
 use crate::error::Error;
-use crate::limits::charge_value;
+use crate::limits::with_meter;
 use crate::runtime::evaluator::{EvaluationContext, Evaluator, Scope};
 use crate::types::Value;
 
@@ -42,14 +42,16 @@ pub fn exec_filter(
 
     let mut scope = lambda_scope(ctx);
     let mut filtered = Vec::with_capacity(items.len());
-    for item in items {
-        charge_value(item)?;
-        scope.set(&param, item.clone());
-        if let Value::Boolean(true) = Evaluator::eval(lambda_expr, &scope)? {
-            filtered.push(item.clone());
+    with_meter(|meter| {
+        for item in items {
+            meter.charge_value(item)?;
+            scope.set(&param, item.clone());
+            if let Value::Boolean(true) = Evaluator::eval(lambda_expr, &scope)? {
+                filtered.push(item.clone());
+            }
         }
-    }
-    Ok(Value::Array(filtered))
+        Ok(Value::Array(filtered))
+    })
 }
 
 /// Handle MAP method call (higher-order function)
@@ -66,12 +68,14 @@ pub fn exec_map(
 
     let mut scope = lambda_scope(ctx);
     let mut mapped = Vec::with_capacity(items.len());
-    for item in items {
-        charge_value(item)?;
-        scope.set(&param, item.clone());
-        mapped.push(Evaluator::eval(lambda_expr, &scope)?);
-    }
-    Ok(Value::Array(mapped))
+    with_meter(|meter| {
+        for item in items {
+            meter.charge_value(item)?;
+            scope.set(&param, item.clone());
+            mapped.push(Evaluator::eval(lambda_expr, &scope)?);
+        }
+        Ok(Value::Array(mapped))
+    })
 }
 
 /// Handle FIND method call (higher-order function)
@@ -87,14 +91,16 @@ pub fn exec_find(
     let param = param_name(args_expr, 1, "x");
 
     let mut scope = lambda_scope(ctx);
-    for item in items {
-        charge_value(item)?;
-        scope.set(&param, item.clone());
-        if let Value::Boolean(true) = Evaluator::eval(lambda_expr, &scope)? {
-            return Ok(item.clone());
+    with_meter(|meter| {
+        for item in items {
+            meter.charge_value(item)?;
+            scope.set(&param, item.clone());
+            if let Value::Boolean(true) = Evaluator::eval(lambda_expr, &scope)? {
+                return Ok(item.clone());
+            }
         }
-    }
-    Ok(Value::Null)
+        Ok(Value::Null)
+    })
 }
 
 /// Handle REDUCE method call (higher-order function)
@@ -116,12 +122,14 @@ pub fn exec_reduce(
     let val_param = param_name(args_expr, 2, "x");
     let acc_param = param_name(args_expr, 3, "acc");
 
-    for item in items {
-        charge_value(item)?;
-        // Same order as before: when both names are equal the accumulator wins.
-        scope.set(&val_param, item.clone());
-        scope.set(&acc_param, accumulator);
-        accumulator = Evaluator::eval(lambda_expr, &scope)?;
-    }
-    Ok(accumulator)
+    with_meter(|meter| {
+        for item in items {
+            meter.charge_value(item)?;
+            // Same order as before: when both names are equal the accumulator wins.
+            scope.set(&val_param, item.clone());
+            scope.set(&acc_param, accumulator);
+            accumulator = Evaluator::eval(lambda_expr, &scope)?;
+        }
+        Ok(accumulator)
+    })
 }
