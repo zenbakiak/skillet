@@ -695,6 +695,25 @@ DIG(:obj, ['user','missing'], 'N/A')       # "N/A"
 
 #### `JQ(json_data, jsonpath_expression)`
 Execute JSONPath queries on JSON data. Supports complex path expressions, filtering, and array operations. Returns the matching data that can be used with aggregation functions.
+
+**Result shape.** The path decides the shape, never the data ([ADR-0014](../adr/0014-jq-wildcard-results.md), RFC 9535 §2.3.5.1):
+
+| Path | Result |
+|---|---|
+| Singular: only `.name`, `['name']` and `[n]` steps (no `[*]`, `..`, slice, filter or union) | The matched value, or `NULL` when nothing matches |
+| Any other path (`[*]`, `..`, `[a:b]`, `[?(...)]`, `[a,b]`) | An array of every match, possibly `[]`, also for a single match |
+
+```
+JQ({"u":{"n":"Ann"}}, "$.u.n")            # "Ann"
+JQ({"a":5}, "$.b")                        # NULL
+JQ({"a":[3]}, "$.a")                      # [3]  (the value itself is an array)
+JQ({"a":[3]}, "$.a[*]")                   # [3]
+JQ({"a":[]}, "$.a[*]")                    # []
+JQ({"a":[{"p":1}]}, "$..p")               # [1]
+JQ({"a":[3]}, "$.a[*]").sum()             # 3
+JQ({"a":[3,4]}, "$.a[*]").first()         # 3  (first match of a wildcard)
+```
+
 ```bash
 # Basic property access
 JQ(:arguments, "$.user.name")              # Extract user name
