@@ -434,7 +434,7 @@ always return arrays; breaking change needs an ADR.
 BL-003 with `#[allow(clippy::manual_range_contains)]`). Decide: error on NaN (likely), then use
 `!(0.0..=1.0).contains(&p)` and drop the allow.
 
-### BL-027 · Exponential value growth and evaluation budget · P1 · `in-progress` · security-reviewer → language-designer → rust-engineer
+### BL-027 · Exponential value growth and evaluation budget · P1 · `done` · security-reviewer → language-designer → rust-engineer
 Found in BL-017a: `[1,…].reduce([:acc, :acc], 0)` doubles per item (20 items → 1M elements, 175 MB;
 ~26 items → ~11 GB). Needs a total-size/step budget per evaluation (and a server-side timeout).
 Language Designer decides the limits and error; Rust implements; Security re-tests.
@@ -463,7 +463,7 @@ Brief (orchestrator, 2026-11-20):
     Out of scope: src/ changes.
   Decision (maintainer, 2026-11-20): ADR-0011 accepted with amendment: BL-030 first, then 027b
     without the variable-read charge (A12 must pass). A11 behaviour change accepted.
-  BL-027b · rust-engineer (Claude Opus 5.5) · `review` · Branch: bugfix/bl-027-budget-impl (from develop after #45)
+  BL-027b · rust-engineer (Claude Opus 5.5) · `done` · Branch: bugfix/bl-027-budget-impl (from develop after #45)
     Spec: docs/adr/0011-evaluation-budget.md as accepted, INCLUDING the amendment at the top
           (variable reads are not charged; A12 must pass). The ADR's site table, pre-charge list,
           error texts, deadline mechanism, cache cap and `with_limits` API are the contract.
@@ -486,7 +486,7 @@ Brief (orchestrator, 2026-11-20):
         Rule: anything that lets one HTTP request exceed ~2× MAX_EVAL_BYTES or run past the
         server deadline by more than ~2 s blocks the PR.
 
-  BL-027d · rust-engineer (Claude Opus 5.5) · `review` · same branch
+  BL-027d · rust-engineer (Claude Opus 5.5) · `done` · same branch
     Decision (maintainer, 2026-11-20): option A, recorded as ADR-0011 Amendment 2 — charge reads that
     copy, keep borrowed method/property targets free; tick the deadline on every read and binary op;
     pre-charge .to_a()/.to_json()/::String/CONCAT/MERGE; reject oversized serialized HTTP results.
@@ -519,7 +519,7 @@ Brief (orchestrator, 2026-11-20):
        to_a 47.2, to_json 13.9, ::String 13.0). F3 needs a server test (none yet; add with the fix).
 
   BL-027e · security-reviewer · `done`
-  BL-027f · rust-engineer (Claude Opus 5.5) · `review` · same branch · Found in BL-027e; BLOCKS this PR (same rule).
+  BL-027f · rust-engineer (Claude Opus 5.5) · `done` · same branch · Found in BL-027e; BLOCKS this PR (same rule).
     F4 Object literals serialize their values after the reads are charged and before the result
        is checked; JSON escaping grows control characters 6x. `:s := <20 MB \x01>; {"k0": :s, …}`
        release: 1 key 199 MB, 4 keys 599 MB (sk_http_server 602 MB, sk_server 600 MB, 120 KB
@@ -868,6 +868,15 @@ Handoff (language-designer, Claude Opus 5.5, 2026-11-20) — BL-027a:
        - BL-028 (docs) should add the budget, timeout and the two rewrite patterns.
   ADR: ADR-0011 proposed (maintainer to accept before BL-027b).
 
+Review (orchestrator, 2026-11-20): BL-027 accepted. 027b budget, 027c/e re-attacks, 027d/f fixes.
+  All F1-F5 closed (F4 test + JQ test pass, fail on old code; F5 770 → 129 MB with byte-identical
+  wire format). eval_budget 31 passed / 1 slow ignored; strict gate green.
+  Perf vs develop (orchestrator re-run, 5 interleaved rounds, load ~6): +6% to +11%
+  (`:x * 1` +10%, `:x.abs()` +11%). Slightly over the 10% target; accepted for a DoS fix
+  (absolute +0.2–0.45 ms per 100k items), recovery filed as BL-038.
+  Changelog "Added": MAX_EVAL_BYTES, EvalLimits, with_limits; "Changed": copying-read charge,
+  A11 boundary, server 10 s deadline, 64 KiB cache cap, oversized-response rejection.
+
 ### BL-028 · Document the nesting depth limit · P3 · `todo` · docs-engineer
 BL-017b added `MAX_NESTING_DEPTH = 128` (`skillet::MAX_NESTING_DEPTH`) and the error
 "Expression nested too deeply (max 128)". It applies to expression nesting (parens, brackets,
@@ -1001,3 +1010,8 @@ blocking). The 30 s read timeout is per `read`, so a client sending one byte eve
 worker until it has sent 1 MB. Measured, 1 worker: an idle client delays the next request 29.7 s.
 Fix: a total deadline for reading one request (e.g. 30 s from accept), checked between reads;
 regression test with a trickling client. Same fix shape as BL-033 for sk_server.
+
+### BL-038 · Recover evaluation-budget overhead (~10% on lambda-heavy formulas) · P3 · `todo` · performance-engineer → rust-engineer
+BL-027 added a per-operation deadline tick and charge calls; `lambda_scope` shows +6–11% vs
+develop bf7c20a. Profile and trim (e.g. batch ticks per lambda iteration instead of per op, cheaper
+fast path in `check_value`). BL-036 (shared values) would also remove the copying-read charge.
