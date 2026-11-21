@@ -463,8 +463,87 @@ Brief (orchestrator, 2026-11-20):
     Out of scope: src/ changes.
   Decision (maintainer, 2026-11-20): ADR-0011 accepted with amendment: BL-030 first, then 027b
     without the variable-read charge (A12 must pass). A11 behaviour change accepted.
-  BL-027b · rust-engineer · `ready` (BL-030 done)
+  BL-027b · rust-engineer (Claude Opus 5.5) · `review` · Branch: bugfix/bl-027-budget-impl (from develop after #45)
+    Spec: docs/adr/0011-evaluation-budget.md as accepted, INCLUDING the amendment at the top
+          (variable reads are not charged; A12 must pass). The ADR's site table, pre-charge list,
+          error texts, deadline mechanism, cache cap and `with_limits` API are the contract.
+    Tests: new tests/eval_budget.rs implementing the ADR example table (P rows pass with exact
+          Values, A rows return the budget error, C rows via `with_limits`). Attacks must stay cheap
+          in the test (they fail early by design); keep each test < 1 s in debug.
+          Server timeout (T1): one test against sk_http_server is enough; if it is slow, gate it with
+          `#[ignore = "slow: server timeout"]` and list it.
+    Perf: re-run `cargo bench --bench lambda_scope` before → after; overhead target ≤ 10%.
+    Acceptance: ./harness/check.sh green; existing tests unchanged; bench table in handoff.
   BL-027c · security-reviewer · `todo` (re-attack after 027b)
+
+Handoff (rust-engineer, Claude Opus 5.5, 2026-11-20) — BL-027b:
+  Did: - src/limits.rs: thread-local budget (used/max/deadline/ticks + sticky trip); `check_value`
+         replaces `check_value_depth` (one walk: depth + cost, stops early); every runtime
+         `eval*` entry point opens a default scope or joins the active one and returns the
+         recorded limit error even when the evaluation swallowed it (SUMIF, custom fn catching
+         a nested evaluate). Pub API: `MAX_EVAL_BYTES`, `#[non_exhaustive] EvalLimits`,
+         `with_limits` (nested only tightens; inner charges count to the outer scope).
+       - Charge sites per ADR table (minus variable read): array/object literal, function,
+         method, safe-method, cast, property/safe-property, assignment, every lambda iteration
+         (FILTER/MAP/FIND/REDUCE/SUMIF/AVGIF/COUNTIF and .filter/.map/.find/.reduce).
+         Pre-charge: SUBSTITUTE/SUBSTITUTEM/.replace (exact length), JOIN/.join, SPLIT/.split
+         (per part), JQ (per match), every Json parse (property access, object literal, DIG,
+         .keys/.values/.has_key/.dig, .to_json, JQ input).
+       - Servers: `with_limits(default + 10 s)` around every evaluation (sk_http_server cache
+         miss path, sk_server); cache stores only entries <= 64 KiB (key + result + vars).
+       - tests/eval_budget.rs: P1-P12 (exact Values), A1-A12, C1-C6, T1 (server, ignored),
+         swallowed-error and nested-evaluation cases. Each < 1 s in debug; suite 3.3 s.
+  Evidence: ./harness/check.sh (full, strict) green; `cargo test --test eval_budget` 21 passed,
+         1 ignored; T1 run with --ignored: passes in 10.5 s (400 + "Evaluation timed out (max 10 s)",
+         single worker answers the next request). Existing tests/ untouched.
+         Bench `RUNS=5 cargo bench --bench lambda_scope`, release, median of 5, before = HEAD
+         worktree (bf7c20a) and after alternated 3x on the same machine (MacBook 11 cores):
+         | Formula                                      | before  | after   | delta |
+         |----------------------------------------------|---------|---------|-------|
+         | `:nums.map(:x * 1).sum()` (100k)             | 2.02 ms | 2.11 ms | +4%   |
+         | `:nums.map(:x.abs()).sum()`                  | 4.15 ms | 4.40 ms | +6%   |
+         | `:rows.map(:x.price).sum()` (10k)            | 2.65 ms | 2.77 ms | +5%   |
+         | `:rows.map(:x.price.round(1)).sum()`         | 3.05 ms | 3.20 ms | +5%   |
+         | `:rows.map(:x.price / :rows.length()).sum()` | 3.30 ms | 3.35 ms | +2%   |
+         (first after-run after a rebuild is noisier; results identical before/after.)
+         Release `sk` spot check (/usr/bin/time -l): A1 `[1x26].reduce([:acc, :acc], 0)` budget
+         error in 0.33 s, 209 MB max RSS; A2 CONCAT doubling 0.04 s / 540 MB; A3 MERGE doubling
+         0.07 s / 540 MB; A4 object doubling 0.40 s / 393 MB; A5 assignment doubling 0.05 s /
+         334 MB; A7 SUBSTITUTE 0.00 s / 7 MB; A10 1e9 iterations 0.05 s / 7 MB.
+  Deviations / readings of the ADR (simplest reading that keeps every P row):
+       - T1 formula `:nums.map(:x.abs()).sum()` no longer times out on the server: BL-030 made it
+         ~5 ms. The server test uses `:nums.map(SUM(:nums)).sum()` (100k) instead: each
+         `SUM(:nums)` clones the variable (reads are not charged), ~100k clones >> 10 s.
+         C6 uses 4 chained `.map(:x.abs())` passes so a fast machine still runs > 1 ms.
+       - P6: 121 matches with 121 nested objects (120 wrappers around `{"s": <100 KB>}`); the
+         ADR's "120 nested objects" gives 121 only if the innermost one is counted as a wrapper.
+       - A11 boundary moved: without the read charge, `reduce(MERGE(:acc, [:x]), [])` fails above
+         ~4,090 items (ADR model: ~2,900). 10k still fails, 2,800 still passes (both tested).
+       - Error text: "max N MB" only when the limit is a whole number of MiB, else "max N bytes"
+         (ADR only defines < 1 MiB). Timeout: "N s" when whole seconds, else "N ms".
+       - JQ match cost: Null/Bool/Number 32, String 32 + len, Array 32 + items, Object
+         32 + sum(key len + value). The ADR says "cost of each match"; an object match becomes a
+         Json string, whose length we estimate this way instead of serializing it.
+       - Lambda items are charged per iteration (not once per array) on purpose: each charge is
+         a deadline tick, so O(n^2) lambda bodies built only from uncharged reads still time out.
+       - Charges outside any scope are no-ops (direct `Evaluator::eval` / `runtime::method_calls`
+         callers bypass the budget; depth still applies). Every runtime `eval*` fn opens a scope.
+       - `deadline_passed()` added (crate-private, unused yet) for BL-018's QuickJS interrupt.
+       - `SERVER_EVAL_TIMEOUT` is defined in both binaries (sk_server has no shared module).
+  Risks/Follow-ups (for BL-027c to re-attack):
+       - Uncharged reads: `:nums.map(SUM(:nums))`, `:nums.map(:nums == :x)` are O(n^2) CPU with
+         no memory growth. Bounded only by the server deadline; the library/`sk` have none.
+         Making reads borrow (or Rc values) would fix it; out of scope here.
+       - Peak heap can reach ~2x budget (CONCAT/MERGE doubling: 540 MB RSS) because the two
+         argument reads are uncharged clones and CONCAT/MERGE are charged after allocating.
+         Pre-charging CONCAT/MERGE would cut that; ADR lists them as charge-after.
+       - Index/slice results (`:big[0:]`) are not charged (not in the ADR table; same class as reads).
+       - Inside a scope, a single builtin (SORT of a huge variable) still runs to completion
+         before the next deadline check.
+       - Docs (BL-028): budget, error texts, `EvalLimits`/`with_limits`, server timeout, the two
+         rewrite patterns, and the A11 behaviour change.
+       - Changelog: `with_limits`/`EvalLimits`/`MAX_EVAL_BYTES` added; A11 behaviour change.
+  ADR: none (implements ADR-0011)
 
 Handoff (language-designer, Claude Opus 5.5, 2026-11-20) — BL-027a:
   Did: - docs/adr/0011-evaluation-budget.md (Proposed) + README row; PRD-001 NFR-4…NFR-7 + open questions.
