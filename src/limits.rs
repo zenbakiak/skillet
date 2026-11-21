@@ -240,6 +240,13 @@ pub(crate) fn charge_json_node(node: &serde_json::Value) -> Result<(), Error> {
     charge(cost)
 }
 
+/// A zero-byte charge: counts towards the deadline check (every 256th tick reads the clock)
+/// without using budget. Every variable read and binary operation ticks (ADR-0011 amendment 2).
+#[inline]
+pub(crate) fn tick() -> Result<(), Error> {
+    charge(0)
+}
+
 /// Check a value the evaluator just built: depth within [`MAX_NESTING_DEPTH`] and its cost
 /// within the budget, in one walk that stops as soon as either limit is passed.
 ///

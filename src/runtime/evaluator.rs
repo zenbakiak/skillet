@@ -167,20 +167,25 @@ impl Evaluator {
             Expr::Null => Ok(Value::Null),
 
             Expr::Unary(op, e) => {
-                let v = Self::eval(e, context)?;
-                Self::eval_unary_op(*op, v)
+                let v = Self::eval_operand(e, context)?;
+                limits::tick()?;
+                Self::eval_unary_op(*op, &v)
             }
 
             Expr::Binary(l, op, r) => {
-                let a = Self::eval(l, context)?;
-                let b = Self::eval(r, context)?;
-                Self::eval_binary_op(*op, a, b)
+                let a = Self::eval_operand(l, context)?;
+                let b = Self::eval_operand(r, context)?;
+                limits::tick()?;
+                Self::eval_binary_op(*op, &a, &b)
             }
 
-            Expr::Variable(name) => context
-                .get_variable(name)
-                .cloned()
-                .ok_or_else(|| missing_variable(name)),
+            Expr::Variable(name) => {
+                limits::tick()?;
+                context
+                    .get_variable(name)
+                    .cloned()
+                    .ok_or_else(|| missing_variable(name))
+            }
 
             Expr::PropertyAccess { target, property } => Self::with_target(target, context, |v| {
                 Self::eval_property_access(v, property, false).and_then(check_value)
@@ -283,8 +288,26 @@ impl Evaluator {
         }
     }
 
+    /// Evaluate an operator operand. A plain variable is borrowed (one deadline tick, no copy),
+    /// so `:s == :s` on a large string compares in place instead of cloning it twice.
+    fn eval_operand<'c, C: EvaluationContext>(
+        expr: &Expr,
+        context: &'c C,
+    ) -> Result<Cow<'c, Value>, Error> {
+        match expr {
+            Expr::Variable(name) => {
+                limits::tick()?;
+                context
+                    .get_variable(name)
+                    .map(Cow::Borrowed)
+                    .ok_or_else(|| missing_variable(name))
+            }
+            _ => Self::eval(expr, context).map(Cow::Owned),
+        }
+    }
+
     /// Evaluate unary operations
-    fn eval_unary_op(op: UnaryOp, v: Value) -> Result<Value, Error> {
+    fn eval_unary_op(op: UnaryOp, v: &Value) -> Result<Value, Error> {
         match op {
             UnaryOp::Plus => {
                 Ok(Value::Number(v.as_number().ok_or_else(|| {
@@ -305,7 +328,7 @@ impl Evaluator {
     }
 
     /// Evaluate binary operations
-    fn eval_binary_op(op: BinaryOp, a: Value, b: Value) -> Result<Value, Error> {
+    fn eval_binary_op(op: BinaryOp, a: &Value, b: &Value) -> Result<Value, Error> {
         match op {
             BinaryOp::Add
             | BinaryOp::Sub
@@ -390,12 +413,7 @@ impl Evaluator {
         context: &C,
         f: impl FnOnce(&Value) -> Result<Value, Error>,
     ) -> Result<Value, Error> {
-        match target {
-            Expr::Variable(name) => f(context
-                .get_variable(name)
-                .ok_or_else(|| missing_variable(name))?),
-            _ => f(&Self::eval(target, context)?),
-        }
+        f(Self::eval_operand(target, context)?.as_ref())
     }
 
     /// Evaluate property access (both safe and unsafe)
