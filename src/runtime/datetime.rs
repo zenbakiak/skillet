@@ -48,11 +48,7 @@ pub fn exec_datetime(name: &str, args: &[Value]) -> Result<Value, Error> {
                 ))
             }
         }
-        "TIME" => {
-            let now = Local::now().time();
-            let seconds_since_midnight = now.num_seconds_from_midnight() as f64;
-            Ok(Value::Number(seconds_since_midnight))
-        }
+        "TIME" => exec_time(args),
         "YEAR" => {
             if let Some(Value::DateTime(timestamp)) = args.first() {
                 let dt = DateTime::from_timestamp(*timestamp, 0)
@@ -206,6 +202,32 @@ pub fn exec_datetime(name: &str, args: &[Value]) -> Result<Value, Error> {
         }
         _ => Err(Error::new(
             format!("Unknown datetime function: {}", name),
+            None,
+        )),
+    }
+}
+
+/// `TIME(hour, minute, second)`: seconds since midnight, `hour*3600 + minute*60 + second`
+/// (docs/reference/api.md). `TIME()` with no arguments keeps its legacy meaning: the current
+/// local time as seconds since midnight.
+fn exec_time(args: &[Value]) -> Result<Value, Error> {
+    match args {
+        [] => {
+            let now = Local::now().time();
+            Ok(Value::Number(now.num_seconds_from_midnight() as f64))
+        }
+        [hour, minute, second] => {
+            let part = |v: &Value, what: &str| match v {
+                Value::Number(n) if n.is_finite() => Ok(*n),
+                _ => Err(Error::new(format!("TIME expects {} as number", what), None)),
+            };
+            let h = part(hour, "hour")?;
+            let m = part(minute, "minute")?;
+            let s = part(second, "second")?;
+            Ok(Value::Number(h * 3600.0 + m * 60.0 + s))
+        }
+        _ => Err(Error::new(
+            "TIME expects either no arguments or three arguments (hour, minute, second)",
             None,
         )),
     }
