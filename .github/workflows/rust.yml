@@ -18,7 +18,7 @@ env:
   CARGO_TERM_COLOR: always
   # Toolchain the gate runs on. Clippy runs with -D warnings, so this is pinned
   # (a floating `stable` would break CI whenever a new lint ships). Bump it
-  # together with the local toolchain; MSRV is a separate decision (BL-014).
+  # together with the local toolchain. The MSRV (ADR-0012) is checked by the msrv job.
   RUST_TOOLCHAIN: "1.89.0"
 
 jobs:
@@ -70,3 +70,16 @@ jobs:
       # comment and a backlog item (security-reviewer decision).
       - name: cargo audit
         run: cargo audit
+
+  msrv:
+    name: MSRV build (Rust 1.85, ADR-0012)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: msrv
+      - name: Build all targets on the MSRV (locked)
+        run: cargo build --locked --all-targets
