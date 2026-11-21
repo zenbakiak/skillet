@@ -1,6 +1,7 @@
 use crate::custom::CustomFunction;
 use crate::error::Error;
 use crate::types::Value;
+use crate::MAX_NESTING_DEPTH;
 use rquickjs::{Ctx, FromJs, Function as JsFunction, IntoJs, Runtime};
 use std::fs;
 use std::path::Path;
@@ -184,8 +185,16 @@ impl JavaScriptFunction {
         Ok(())
     }
 
-    /// Convert JavaScript value to Skillet Value
-    fn js_to_value<'js>(ctx: &Ctx<'js>, js_val: rquickjs::Value<'js>) -> Result<Value, Error> {
+    /// Convert JavaScript value to Skillet Value.
+    ///
+    /// `depth` is the number of arrays enclosing `js_val`. Arrays nest at most
+    /// [`MAX_NESTING_DEPTH`] levels (counted like the evaluator: an empty array adds no level),
+    /// which also stops self-referencing arrays before the recursion exhausts the stack.
+    fn js_to_value<'js>(
+        ctx: &Ctx<'js>,
+        js_val: rquickjs::Value<'js>,
+        depth: usize,
+    ) -> Result<Value, Error> {
         if js_val.is_null() || js_val.is_undefined() {
             Ok(Value::Null)
         } else if js_val.is_bool() {
@@ -204,14 +213,20 @@ impl JavaScriptFunction {
             let js_array: rquickjs::Array = FromJs::from_js(ctx, js_val)
                 .map_err(|e| Error::new(format!("JS conversion error: {}", e), None))?;
 
-            let mut result = Vec::new();
             let length = js_array.len();
+            if length > 0 && depth >= MAX_NESTING_DEPTH {
+                return Err(Error::new(
+                    format!("Expression nested too deeply (max {})", MAX_NESTING_DEPTH),
+                    None,
+                ));
+            }
 
+            let mut result = Vec::new();
             for i in 0..length {
                 let item = js_array
                     .get::<rquickjs::Value>(i)
                     .map_err(|e| Error::new(format!("Failed to get array element: {}", e), None))?;
-                result.push(Self::js_to_value(ctx, item)?);
+                result.push(Self::js_to_value(ctx, item, depth + 1)?);
             }
 
             Ok(Value::Array(result))
@@ -301,7 +316,7 @@ impl CustomFunction for JavaScriptFunction {
                 .map_err(|e| Error::new(format!("JS function execution failed: {}", e), None))?;
 
             // Convert result back to Skillet Value
-            Self::js_to_value(&ctx, result)
+            Self::js_to_value(&ctx, result, 0)
         })
     }
 
@@ -455,5 +470,69 @@ mod tests {
             Value::String(s) => assert_eq!(s, "olleh"),
             _ => panic!("Expected string result"),
         }
+    }
+
+    fn hook_returning(body: &str) -> JavaScriptFunction {
+        let js_code = format!(
+            "// @name: NESTED\n// @min_args: 0\nfunction execute(args) {{ {} }}",
+            body
+        );
+        JavaScriptFunction::parse_js_function_internal(&js_code).unwrap()
+    }
+
+    fn nested_array_js(depth: usize) -> String {
+        format!(
+            "var a = [1]; for (var i = 1; i < {}; i++) {{ a = [a]; }} return a;",
+            depth
+        )
+    }
+
+    fn array_depth(v: &Value) -> usize {
+        match v {
+            Value::Array(items) => 1 + items.iter().map(array_depth).max().unwrap_or(0),
+            _ => 0,
+        }
+    }
+
+    #[test]
+    fn hook_result_at_max_nesting_depth_converts() {
+        let result = hook_returning(&nested_array_js(MAX_NESTING_DEPTH))
+            .execute(vec![])
+            .unwrap();
+        assert_eq!(array_depth(&result), MAX_NESTING_DEPTH);
+    }
+
+    #[test]
+    fn hook_result_past_max_nesting_depth_is_rejected() {
+        let err = hook_returning(&nested_array_js(MAX_NESTING_DEPTH + 1))
+            .execute(vec![])
+            .unwrap_err();
+        assert_eq!(err.message, "Expression nested too deeply (max 128)");
+    }
+
+    #[test]
+    fn hook_result_deeply_nested_array_is_rejected() {
+        let err = hook_returning(&nested_array_js(100_000))
+            .execute(vec![])
+            .unwrap_err();
+        assert_eq!(err.message, "Expression nested too deeply (max 128)");
+    }
+
+    #[test]
+    fn hook_result_self_referencing_array_is_rejected() {
+        let err = hook_returning("var a = [1]; a.push(a); return a;")
+            .execute(vec![])
+            .unwrap_err();
+        assert_eq!(err.message, "Expression nested too deeply (max 128)");
+    }
+
+    #[test]
+    fn hook_result_empty_array_below_max_depth_converts() {
+        // An empty array adds no nesting level, as in the evaluator's depth rule.
+        let body = format!(
+            "var a = []; for (var i = 0; i < {}; i++) {{ a = [a]; }} return a;",
+            MAX_NESTING_DEPTH
+        );
+        assert!(hook_returning(&body).execute(vec![]).is_ok());
     }
 }
