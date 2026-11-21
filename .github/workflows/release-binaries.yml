@@ -11,6 +11,11 @@ on:
 permissions:
   contents: write
 
+env:
+  CARGO_TERM_COLOR: always
+  # Same pinned toolchain as the CI gate (rust.yml, ADR-0012). Bump them together.
+  RUST_TOOLCHAIN: "1.89.0"
+
 jobs:
   build-binaries:
     name: Build ${{ matrix.target }}
@@ -45,24 +50,25 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust ${{ env.RUST_TOOLCHAIN }}
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
           targets: ${{ matrix.target }}
-          # Ensure we use Rust 1.85+ for edition2024 support
-          toolchain: stable
 
       - name: Install cross (for Linux musl builds)
         if: matrix.use_cross
         run: |
           cargo install cross --git https://github.com/cross-rs/cross
 
+      # --locked: fail instead of resolving new dependency versions, so the
+      # binaries are built from exactly the committed Cargo.lock.
       - name: Build binaries
         run: |
           if [ "${{ matrix.use_cross }}" = "true" ]; then
-            cross build --release --target ${{ matrix.target }} --bins
+            cross build --locked --release --target ${{ matrix.target }} --bins
           else
-            cargo build --release --target ${{ matrix.target }} --bins
+            cargo build --locked --release --target ${{ matrix.target }} --bins
           fi
         shell: bash
 
@@ -77,6 +83,19 @@ jobs:
             sk_http_server \
             sk_http_bench
           cd ../../..
+
+      # SHA-256 checksum next to the archive, in the same artifact, so manual
+      # (workflow_dispatch) builds carry checksums too. macOS has no sha256sum.
+      - name: Create checksum
+        shell: bash
+        run: |
+          cd dist
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum ${{ matrix.archive_name }}.tar.gz > ${{ matrix.archive_name }}.tar.gz.sha256
+          else
+            shasum -a 256 ${{ matrix.archive_name }}.tar.gz > ${{ matrix.archive_name }}.tar.gz.sha256
+          fi
+          cat ${{ matrix.archive_name }}.tar.gz.sha256
 
       - name: Upload archive
         uses: actions/upload-artifact@v4
@@ -99,14 +118,16 @@ jobs:
       - name: Display structure of downloaded files
         run: ls -R artifacts
 
-      - name: Create checksums
+      # Every archive must have a checksum from its build job, and it must match.
+      - name: Verify checksums
         run: |
           cd artifacts
           find . -type f \( -name "*.tar.gz" -o -name "*.zip" \) -exec sh -c '
             for file; do
               dir=$(dirname "$file")
               base=$(basename "$file")
-              (cd "$dir" && sha256sum "$base" > "$base.sha256")
+              test -f "$file.sha256" || { echo "missing checksum: $file" >&2; exit 1; }
+              (cd "$dir" && sha256sum -c "$base.sha256") || exit 1
             done
           ' sh {} +
 

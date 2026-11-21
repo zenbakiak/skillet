@@ -7,7 +7,7 @@ prebuilt binaries, Docker/Alpine images, and platform support.
 - `.github/workflows/` (shared with QA: QA owns *what* the gate checks; you own *how* CI runs it)
 - `Cargo.toml` package metadata (`version`, `include`, features), `.cargo/config.toml`, toolchain pins (ADR-0012)
 - `Dockerfile*`, `docker-compose.yml`, `scripts/build_alpine_binaries.sh`, `scripts/install*.sh`
-- `CHANGELOG.md` (create it: Keep a Changelog format, SemVer)
+- `CHANGELOG.md` (Keep a Changelog format, SemVer; add to "Unreleased" as changes land)
 
 ## Release process (pre-1.0: minor = may break, patch = fixes only)
 Gitflow per ADR-0009.
@@ -17,10 +17,11 @@ Gitflow per ADR-0009.
    (group entries by commit type: `feat`, `fix`, `perf`, …).
 4. `cargo publish --dry-run` and check `cargo package --list` matches `include` (no missing files,
    no stray files).
-5. Human merges `release/X.Y.Z` → `main`, tags `vX.Y.Z`, and merges back into `develop`. The tag
-   triggers `crate-release.yml` and `release-binaries.yml`.
+5. Human merges `release/X.Y.Z` → `main` and merges back into `develop`. Tag `vX.Y.Z` triggers
+   `release-binaries.yml`; tag `crate-vX.Y.Z` triggers `crate-release.yml` (it checks the tag
+   matches `Cargo.toml`).
    Hotfixes: `hotfix/X.Y.Z` from `main`, same merge-back rule.
-5. Smoke-test one downloaded binary per OS: `sk "=1+1"` prints `Number(2.0)`.
+6. Smoke-test one downloaded binary per OS: `sk "=1+1"` prints `Number(2.0)`.
 
 Agents prepare steps 1–3; **only a human publishes, tags, or pushes to `main`.**
 
@@ -32,11 +33,20 @@ Agents prepare steps 1–3; **only a human publishes, tags, or pushes to `main`.
 
 ## Current state (2026-11)
 - Targets: macOS x86_64/arm64, Linux musl x86_64/arm64. Windows dropped (`libc` daemon) → BL-013.
-- `Cargo.toml` `include` now ships README, licences, `docs/guide/`, `docs/reference/`, `openapi.yml` (BL-006/BL-009; deleted `DAEMON_*.md` entries removed).
-- No `CHANGELOG.md` at root (one exists in `skill-publish/` for the skill only).
-- CI (`rust.yml`) runs only on `main` → BL-004.
+  `Dockerfile.alpine-builder` builds only aarch64 (x86_64 is an open decision, BL-050).
+- Toolchain (ADR-0012): MSRV 1.85 (`rust-version`, checked by the `msrv` job). CI gate and both
+  release workflows pin Rust 1.89.0 via `RUST_TOOLCHAIN` in each workflow; bump all three together.
+  `.tool-versions` is gitignored, local only.
+- CI (`rust.yml`) runs `./harness/check.sh`, `cargo audit` and the MSRV build on pushes and PRs to
+  `main` and `develop`, all `--locked`. Release workflows build, test, package and publish `--locked`.
+- `release-binaries.yml` writes `<archive>.tar.gz.sha256` next to each archive in the build job;
+  the publish job verifies every checksum before uploading.
+- `Cargo.toml` `include`: `Cargo.toml`, README, CHANGELOG, licences, `docs/guide/`, `docs/reference/`,
+  `openapi.yml`, `src/`, `tests/`. `repository` is set; no `homepage`.
+- `CHANGELOG.md` exists at the root (Keep a Changelog).
 - Git hooks exist (`.githooks/`, ADR-0009), but GitHub branch protection on `main`/`develop`
   (required PR + required CI check) is not set yet → BL-022.
+- `cross` is installed from cross-rs git HEAD in `release-binaries.yml` (not pinned).
 
 ## Hand off
 Use the handoff template in `harness/roles/orchestrator.md`; include `cargo package --list` diff
