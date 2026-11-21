@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "plugins")]
 use skillet::JSPluginLoader;
-use skillet::{evaluate_with_assignments, evaluate_with_custom, Value};
+use skillet::{evaluate_parsed_with_assignments, evaluate_parsed_with_custom, Value};
 use std::collections::{BTreeMap, HashMap};
 use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -73,6 +73,10 @@ use request_limits::{DeadlineReader, DeadlineWriter, MAX_REQUEST_SIZE};
 #[path = "http_server/token_eq.rs"]
 mod token_eq;
 use token_eq::tokens_match;
+
+#[path = "http_server/parse_cache.rs"]
+mod parse_cache;
+use parse_cache::parsed;
 
 #[path = "http_server/pid_file.rs"]
 mod pid_file;
@@ -265,10 +269,11 @@ fn process_request(req: EvalRequest, request_id: u64) -> EvalResponse {
 
     // Evaluate expression
     let result = skillet::with_limits(server_limits(), || {
+        let expr = parsed(&req.expression)?;
         if req.expression.contains(";") || req.expression.contains(":=") {
-            evaluate_with_assignments(&req.expression, &vars)
+            evaluate_parsed_with_assignments(&expr, &vars)
         } else {
-            evaluate_with_custom(&req.expression, &vars)
+            evaluate_parsed_with_custom(&expr, &vars)
         }
     });
 
