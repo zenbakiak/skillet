@@ -10,8 +10,12 @@ skillet-wasm
 /target
 Secrets*.toml
 .env
+# Production env/secrets files (narrowed from `*.prd.*`, which also hid docs such as `x.prd.md`)
 .env.prd
-*.prd.*
+.env.prd.*
+.env.*.prd
+*.prd.env
+*.prd.toml
 dist/
 skill-publish/
 .claude/settings.local.json
