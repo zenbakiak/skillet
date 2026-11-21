@@ -40,6 +40,17 @@ admin-token check. Details: [limits](../guide/limits.md#server-request-limits-1-
 - `^` - Exponentiation
 - `=` - Equals prefix (Excel-style)
 
+Dates work with `+` and `-` in days, like Excel:
+
+```bash
+DATE(2026, 1, 31) + 1                  # DateTime for 2026-02-01 (Number + DateTime works too)
+DATE(2026, 3, 1) - 1                   # DateTime for 2026-02-28
+DATE(2026, 1, 1) + 0.5                 # DateTime for 2026-01-01 12:00 (rounded to the second)
+DATE(2026, 3, 1) - DATE(2026, 2, 1)    # 28 (days; fractional when times differ)
+```
+
+Other operators on a DateTime (`*`, `/`, `DateTime + DateTime`, `Number - DateTime`) are an error.
+
 ### Comparison Operators
 - `>` - Greater than
 - `<` - Less than
@@ -180,22 +191,25 @@ MEDIAN(1, SQRT(-1), 3)       # Error: Cannot sort NaN values
 contains NaN (for example from `SQRT(-1)` or `0/0`), they return the error
 `Cannot sort NaN values`.
 
-#### `MODE.SNGL(...)`
-Most frequently occurring value.
+#### `MODE.SNGL(...)`, `MODE(...)`
+Most frequently occurring value. `MODE` is Excel's legacy name for the same function.
 ```bash
 MODE_SNGL(1, 2, 2, 3, 4, 4, 4)     # 4
+MODE(5.6, 4, 4, 3, 2, 4)           # 4
 ```
 
-#### `PERCENTILE.INC(array, k)`
-k-th percentile (0 ≤ k ≤ 1).
+#### `PERCENTILE.INC(array, k)`, `PERCENTILE(array, k)`
+k-th percentile (0 ≤ k ≤ 1). `PERCENTILE` is Excel's legacy name for the same function.
 ```bash
+PERCENTILE([1, 3, 2, 4], 0.3)      # 1.9
 PERCENTILE_INC([1,2,3,4,5], 0.5)   # 3 (50th percentile)
 PERCENTILE_INC([1,2,3,4,5], 0.25)  # 2 (25th percentile)
 ```
 
-#### `QUARTILE.INC(array, quart)`
-Quartile value (1=Q1, 2=Q2, 3=Q3).
+#### `QUARTILE.INC(array, quart)`, `QUARTILE(array, quart)`
+Quartile value (1=Q1, 2=Q2, 3=Q3). `QUARTILE` is Excel's legacy name for the same function.
 ```bash
+QUARTILE([1,2,4,7,8,9,10,12], 1)   # 3.5
 QUARTILE_INC([1,2,3,4,5,6,7,8], 1) # 2.75 (Q1)
 QUARTILE_INC([1,2,3,4,5,6,7,8], 2) # 4.5 (Q2/median)
 ```
@@ -239,11 +253,38 @@ XOR(true, true)              # false
 
 ### Text Functions
 
-#### `LEN(text)`, `LENGTH(text)`
-String length.
+#### `LEN(text)`, `LENGTH(text_or_array)`
+String length in characters. `LEN` is Excel's: numbers and booleans count as their text and NULL
+(an empty cell) is 0; an array is an error. `LENGTH` also counts array items, and is an error for
+numbers.
 ```bash
 LEN("Hello")                 # 5
+LEN(12345)                   # 5
+LEN(NULL)                    # 0
 LENGTH("Hello World")        # 11
+LENGTH([1, 2, 3])            # 3
+```
+
+#### `TEXTJOIN(delimiter, ignore_empty, text1, ...)`
+Excel's `TEXTJOIN`: joins the texts (arrays are flattened) with `delimiter`. With `ignore_empty`
+TRUE, empty strings and NULLs are skipped. Numbers and booleans become text. An array delimiter is
+used in turn between items. At least one text is required.
+```bash
+TEXTJOIN(", ", TRUE, "a", "", ["b", "c"])     # "a, b, c"
+TEXTJOIN(",", FALSE, "a", "", "b")            # "a,,b"
+TEXTJOIN([",", ";"], TRUE, "a", "b", "c")     # "a,b;c"
+```
+
+#### `FIND(find_text, within_text, [start_num])`
+When the first argument is text, `FIND` is Excel's: the 1-based position of the first
+case-sensitive match at or after `start_num` (default 1). Not found, or a `start_num` below 1 or
+past the end of `within_text`, is an error. With an array first, see
+[`FIND(array, expression)`](#findarray-expression).
+```bash
+FIND("M", "Miriam McGovern")       # 1
+FIND("m", "Miriam McGovern")       # 6
+FIND("M", "Miriam McGovern", 3)    # 8
+FIND("x", "abc")                   # Error: FIND: find_text not found in within_text
 ```
 
 #### `CONCAT(...)`
@@ -307,11 +348,21 @@ Current timestamp (Unix time).
 NOW()                        # Current timestamp
 ```
 
-#### `DATE(year, month, day)`
-Create date timestamp.
+#### `DATE(year, month, day)`, `DATE()`, `TODAY()`
+Midnight UTC of a date, with Excel's rules: arguments are truncated, months and days outside
+their range roll over, and years 0-1899 get 1900 added (`DATE(26, 1, 1)` is 1926-01-01). A year
+below 0 or above 9999, or a result outside 1900-01-01..9999-12-31, is an error. `DATE()` and
+`TODAY()` return today's local date at midnight.
 ```bash
-DATE(2023, 12, 25)           # Unix timestamp for Dec 25, 2023
+DATE(2023, 12, 25)           # DateTime for 2023-12-25
+DATE(2026, 13, 1)            # 2027-01-01
+DATE(2026, 2, 30)            # 2026-03-02
+DATE(2026, 1, 0)             # 2025-12-31 (day 0 = last day of the previous month)
+DATE(2024, 2 + 1, 0)         # 2024-02-29 (end of month)
+TODAY()                      # today, midnight
 ```
+
+String casts stay strict: `"2026-02-30"::DateTime` is an error.
 
 #### `TIME()`, `TIME(hour, minute, second)`
 Seconds since midnight. With three arguments it returns `hour*3600 + minute*60 + second`. With no
@@ -363,7 +414,8 @@ MAP(users, :x.name.upper())
 ```
 
 #### `FIND(array, expression)`
-Find first matching element.
+Find first matching element (`NULL` when none). With text first, `FIND` is Excel's text search
+(see [Text Functions](#findfind_text-within_text-start_num)).
 ```bash
 FIND([1,2,3,4,5], :x > 3)     # 4
 FIND(users, :x.id == 123)
@@ -452,6 +504,33 @@ PMT(0.04/12, 5*12, 25000)      # Monthly payment: $460.41
 # Savings goal: 6% return, save for 10 years to reach $50k
 PMT(0.06/12, 10*12, 0, 50000)  # Need to save: $305.10/month
 ```
+
+Results follow Excel's sign convention: money you pay is negative. The examples above return
+-536.82, -460.41 and -305.10.
+
+#### `PPMT(rate, per, nper, pv, [fv], [type])`
+Principal part of payment `per` (1..`nper`), Excel's `PPMT`. `per` outside 1..`nper` is an error.
+```bash
+PPMT(0.1/12, 1, 24, 2000)      # -75.62
+PPMT(0.08, 10, 10, 200000)     # -27598.05
+```
+
+#### `PV(rate, nper, pmt, [fv], [type])`
+Present value of a series of equal payments, Excel's `PV`.
+```bash
+PV(0.08/12, 12*20, 500)        # -59777.15
+PV(0.05, 10, -100, 0, 1)       # 810.78 (payments at the start of each period)
+```
+
+#### `NPV(rate, value1, ...)`
+Net present value of cash flows at the end of each period, Excel's `NPV`: `Σ value_i / (1 + rate)^i`.
+Arrays are flattened, and only numbers count. No numbers is an error.
+```bash
+NPV(0.1, -10000, 3000, 4200, 6800)                  # 1188.44
+NPV(0.08, [8000, 9200, 10000, 12000, 14500]) - 40000  # 1922.06
+```
+
+Optional arguments of `PPMT`, `PV` and `NPV` must be numbers (or NULL); other types are an error.
 
 ---
 

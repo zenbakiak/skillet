@@ -847,7 +847,9 @@ sk "=CONCAT(:name.upper(), ' ', :age)" name="alice" age=25  # "ALICE (25)"
 ```bash
 # Current date/time
 sk "=NOW()"                                    # Current Unix timestamp
+sk "=TODAY()"                                  # Today, midnight
 sk "=DATE(2023, 12, 25)"                      # Unix timestamp for Dec 25, 2023
+sk "=DATE(2024, 2 + 1, 0)"                    # 2024-02-29: months and days roll over like Excel
 sk "=TIME(14, 30, 0)"                         # Seconds since midnight for 2:30 PM
 
 # Date extraction
@@ -861,6 +863,10 @@ sk "=DATEADD(NOW(), 2, 'months')"                     # 2 month from now
 sk "=DATEADD(NOW(), 2, 'weeks')"                     # 2 weeks from now
 sk "=DATEADD(NOW(), 2, 'minutes')"                     # 2 minutes from now
 sk "=DATEDIFF(NOW(), DATEADD(NOW(), 7, \"days\"), \"days\")"       # Days between dates
+
+# Excel-style arithmetic in days
+sk "=DATE(2026, 1, 31) + 1"                    # 2026-02-01
+sk "=DATE(2026, 3, 1) - DATE(2026, 2, 1)"      # 28 (days)
 
 # Practical examples
 sk "=YEAR(DATE(2023, 6, 15))"                 # 2023
@@ -1011,9 +1017,9 @@ sk "=:sales * IF(:sales > 100000, 0.08, IF(:sales > 50000, 0.06, 0.04))" sales=7
 - `STDEV.P(...)` - Population standard deviation
 - `VAR.P(...)` - Population variance
 - `MEDIAN(...)` - Median value
-- `MODE.SNGL(...)` - Most frequent value
-- `PERCENTILE.INC(array, k)` - k-th percentile
-- `QUARTILE.INC(array, quart)` - Quartile value
+- `MODE.SNGL(...)`, `MODE(...)` - Most frequent value
+- `PERCENTILE.INC(array, k)`, `PERCENTILE(array, k)` - k-th percentile
+- `QUARTILE.INC(array, quart)`, `QUARTILE(array, quart)` - Quartile value
 
 ### Logical Functions
 - `IF(condition, true_value, false_value)` - Conditional
@@ -1024,7 +1030,9 @@ sk "=:sales * IF(:sales > 100000, 0.08, IF(:sales > 50000, 0.06, 0.04))" sales=7
 - `XOR(...)` - Logical XOR
 
 ### Text Functions
-- `LEN(text)` - Length of string
+- `LEN(text)` - Length of string (Excel: numbers count as their text, NULL is 0)
+- `TEXTJOIN(delimiter, ignore_empty, text1, ...)` - Join texts with a delimiter (Excel)
+- `FIND(find_text, within_text, [start_num])` - 1-based, case-sensitive position (Excel); error when not found
 - `CONCAT(...)` - Concatenate strings
 - `SUBSTRING(text, start, length)` - Extract substring
 - `LEFT(text, [num_chars])` - Leftmost characters (default 1)
@@ -1037,8 +1045,10 @@ sk "=:sales * IF(:sales > 100000, 0.08, IF(:sales > 50000, 0.06, 0.04))" sales=7
 
 ### Date/Time Functions
 - `NOW()` - Current timestamp
-- `DATE(year, month, day)` - Create date
+- `DATE(year, month, day)` - Create date (Excel rules: months and days roll over, years 0-1899 get 1900 added)
+- `TODAY()` - Today's local date at midnight (same as `DATE()`)
 - `TIME(hour, minute, second)` - Seconds since midnight (`hour*3600 + minute*60 + second`); `TIME()` is the current local time in seconds since midnight
+- `date + days`, `date - days`, `date - date` - Excel-style date arithmetic in days
 - `YEAR(date)` - Extract year
 - `MONTH(date)` - Extract month
 - `DAY(date)` - Extract day
@@ -1047,7 +1057,7 @@ sk "=:sales * IF(:sales > 100000, 0.08, IF(:sales > 50000, 0.06, 0.04))" sales=7
 
 ### Array Functions
 - `FILTER(array, expression)` - Filter array elements
-- `FIND(array, expression)` - Find first element matching expression (returns element or Null)
+- `FIND(array, expression)` - Find first element matching expression (returns element or Null); with text first it is Excel's text `FIND`
 - `MAP(array, expression)` - Transform array elements
 - `REDUCE(array, expression, initial)` - Reduce array to single value
 - `SUMIF(array, condition [, sum_array])` - Conditional sum (supports lambda and Excel-style criteria)
@@ -1062,6 +1072,9 @@ sk "=:sales * IF(:sales > 100000, 0.08, IF(:sales > 50000, 0.06, 0.04))" sales=7
   - `pv`: Present value (loan amount)
   - `fv`: Future value (optional, default 0)
   - `type`: Payment timing (optional, 0=end of period, 1=beginning)
+- `PPMT(rate, per, nper, pv, [fv], [type])` - Principal part of payment `per` (Excel)
+- `PV(rate, nper, pmt, [fv], [type])` - Present value of a series of payments (Excel)
+- `NPV(rate, value1, ...)` - Net present value of periodic cash flows (Excel)
 
 ### Type Conversion Methods (Available on All Types)
 - `to_s()`, `to_string()` - Convert to string
