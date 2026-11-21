@@ -180,3 +180,58 @@ fn test_jsonpath_with_filter() {
         panic!("Expected number result, got: {:?}", result);
     }
 }
+
+// ADR-0014: the result shape follows the parsed path, never the match count.
+
+fn jq(json: &str, path: &str) -> Value {
+    evaluate_with_json(&format!("JQ(:arguments, \"{}\")", path), json).unwrap()
+}
+
+fn nums(xs: &[f64]) -> Value {
+    Value::Array(xs.iter().map(|&n| Value::Number(n)).collect())
+}
+
+#[test]
+fn jq_singular_path_returns_the_value() {
+    assert_eq!(
+        jq(r#"{"u":{"n":"Ann"}}"#, "$.u.n"),
+        Value::String("Ann".into())
+    );
+    assert_eq!(jq(r#"{"a":[3,4]}"#, "$.a[0]"), Value::Number(3.0));
+    assert_eq!(jq(r#"{"a":[3,4]}"#, "$['a'][1]"), Value::Number(4.0));
+    // A singular path whose value is an array returns that array, not a wrapped one.
+    assert_eq!(jq(r#"{"a":[3]}"#, "$.a"), nums(&[3.0]));
+}
+
+#[test]
+fn jq_singular_path_without_match_returns_null() {
+    assert_eq!(jq(r#"{"a":5}"#, "$.b"), Value::Null);
+    assert_eq!(jq(r#"{"a":[3]}"#, "$.a[5]"), Value::Null);
+    assert_eq!(jq(r#"{"a":{"b":1}}"#, "$.a.x.y"), Value::Null);
+}
+
+#[test]
+fn jq_wildcard_always_returns_an_array() {
+    assert_eq!(jq(r#"{"a":[]}"#, "$.a[*]"), nums(&[]));
+    assert_eq!(jq(r#"{"a":[3]}"#, "$.a[*]"), nums(&[3.0]));
+    assert_eq!(jq(r#"{"a":[3,4]}"#, "$.a[*]"), nums(&[3.0, 4.0]));
+    // Methods work for a single row too.
+    assert_eq!(
+        evaluate_with_json(r#"JQ(:arguments, "$.a[*]").sum()"#, r#"{"a":[3]}"#).unwrap(),
+        Value::Number(3.0)
+    );
+}
+
+#[test]
+fn jq_recursive_descent_returns_an_array() {
+    assert_eq!(jq(r#"{"a":[{"p":1}]}"#, "$..p"), nums(&[1.0]));
+    assert_eq!(jq(r#"{"a":[{"q":1}]}"#, "$..p"), nums(&[]));
+}
+
+#[test]
+fn jq_filter_slice_and_union_return_arrays() {
+    let rows = r#"{"r":[{"k":"x","v":1},{"k":"y","v":2}]}"#;
+    assert_eq!(jq(rows, "$.r[?(@.k == 'x')].v"), nums(&[1.0]));
+    assert_eq!(jq(r#"{"a":[3,4]}"#, "$.a[0:1]"), nums(&[3.0]));
+    assert_eq!(jq(r#"{"a":[3,4]}"#, "$.a[0,1]"), nums(&[3.0, 4.0]));
+}
