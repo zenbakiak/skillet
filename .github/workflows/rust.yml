@@ -47,3 +47,26 @@ jobs:
       - name: Run harness gate
         run: ./harness/check.sh
 
+  audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust ${{ env.RUST_TOOLCHAIN }}
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+
+      # Checks Cargo.lock against the RustSec advisory database. Vulnerabilities
+      # fail the job; "unmaintained"/"unsound" warnings are reported only.
+      # To accept an advisory, add `--ignore RUSTSEC-YYYY-NNNN` here with a
+      # comment and a backlog item (security-reviewer decision).
+      - name: cargo audit
+        run: cargo audit
