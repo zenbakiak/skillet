@@ -1,0 +1,246 @@
+# One tag, one release (ADR-0022). Pushing `vX.Y.Z` builds the binaries, creates the GitHub
+# release with that version's CHANGELOG.md section as its body, and publishes the crate.
+#
+#   verify ──┬── build-binaries (matrix) ──┬── github-release ── crates-io
+#            └── crate-check ──────────────┘
+#
+# `verify` fails before anything is built or published if the tag does not match the
+# Cargo.toml version or the CHANGELOG.md section is missing or empty. crates.io is last
+# because it is the only step that cannot be undone.
+# workflow_dispatch runs verify and the builds against the Cargo.toml version; it never publishes.
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  # Same pinned toolchain as the CI gate (rust.yml, ADR-0012). Bump them together.
+  RUST_TOOLCHAIN: "1.89.0"
+  # cross-rs/cross commit, installed with --locked (ADR-0022). The musl images it pulls are
+  # pinned by digest in Cross.toml; bump the commit and the digests together.
+  CROSS_REV: "a9301e91f72bba3850460512685f6b16062015ff"
+
+jobs:
+  verify:
+    name: Verify tag, version and release notes
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check tag matches Cargo.toml version
+        id: version
+        shell: bash
+        run: |
+          CARGO_VER=$(sed -n -E 's/^version = "([^"]+)"/\1/p' Cargo.toml | head -n1)
+          echo "Cargo.toml version: $CARGO_VER"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+            echo "Tag: $TAG"
+            if [[ "$TAG" != "v$CARGO_VER" ]]; then
+              echo "::error::tag $TAG does not match Cargo.toml version $CARGO_VER (expected v$CARGO_VER)"
+              exit 1
+            fi
+          else
+            echo "Not a tag push: dry run for $CARGO_VER, nothing will be published."
+          fi
+          echo "version=$CARGO_VER" >> "$GITHUB_OUTPUT"
+
+      - name: Extract release notes from CHANGELOG.md
+        run: |
+          scripts/changelog_section.sh "${{ steps.version.outputs.version }}" CHANGELOG.md > release-notes.md
+          cat release-notes.md
+
+      - name: Upload release notes
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-notes
+          path: release-notes.md
+          retention-days: 1
+
+  build-binaries:
+    name: Build ${{ matrix.target }}
+    needs: verify
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macOS Intel
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            archive_name: skillet-macos-x86_64
+
+          # macOS Apple Silicon
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            archive_name: skillet-macos-arm64
+
+          # Linux x86_64 (musl for Alpine compatibility)
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            archive_name: skillet-linux-x86_64
+            use_cross: true
+
+          # Linux ARM64 (musl for Alpine compatibility)
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+            archive_name: skillet-linux-arm64
+            use_cross: true
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust ${{ env.RUST_TOOLCHAIN }}
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          targets: ${{ matrix.target }}
+
+      - name: Install cross (for Linux musl builds)
+        if: matrix.use_cross
+        run: |
+          cargo install cross --git https://github.com/cross-rs/cross --rev "$CROSS_REV" --locked
+          cross --version
+
+      # --locked: fail instead of resolving new dependency versions, so the
+      # binaries are built from exactly the committed Cargo.lock.
+      - name: Build binaries
+        run: |
+          if [ "${{ matrix.use_cross }}" = "true" ]; then
+            cross build --locked --release --target ${{ matrix.target }} --bins
+          else
+            cargo build --locked --release --target ${{ matrix.target }} --bins
+          fi
+        shell: bash
+
+      - name: Create archive
+        run: |
+          mkdir -p dist
+          cd target/${{ matrix.target }}/release
+          tar czf ../../../dist/${{ matrix.archive_name }}.tar.gz \
+            sk \
+            sk_server \
+            sk_client \
+            sk_http_server \
+            sk_http_bench
+          cd ../../..
+
+      # SHA-256 checksum next to the archive, in the same artifact, so manual
+      # (workflow_dispatch) builds carry checksums too. macOS has no sha256sum.
+      - name: Create checksum
+        shell: bash
+        run: |
+          cd dist
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum ${{ matrix.archive_name }}.tar.gz > ${{ matrix.archive_name }}.tar.gz.sha256
+          else
+            shasum -a 256 ${{ matrix.archive_name }}.tar.gz > ${{ matrix.archive_name }}.tar.gz.sha256
+          fi
+          cat ${{ matrix.archive_name }}.tar.gz.sha256
+
+      - name: Upload archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.archive_name }}
+          path: dist/*
+          retention-days: 1
+
+  crate-check:
+    name: Test and package the crate
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust ${{ env.RUST_TOOLCHAIN }}
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      # --locked everywhere: fail instead of resolving new dependency versions,
+      # so what is tested is exactly what the committed Cargo.lock describes.
+      - name: Build and test
+        run: |
+          cargo build --locked --verbose
+          cargo test --locked --verbose
+
+      - name: Package (builds the packaged crate)
+        run: cargo package --locked --verbose
+
+  github-release:
+    name: Publish GitHub release
+    needs: [verify, build-binaries, crate-check]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Display structure of downloaded files
+        run: ls -R artifacts
+
+      # Every archive must have a checksum from its build job, and it must match.
+      - name: Verify checksums
+        run: |
+          cd artifacts
+          find . -type f \( -name "*.tar.gz" -o -name "*.zip" \) -exec sh -c '
+            for file; do
+              dir=$(dirname "$file")
+              base=$(basename "$file")
+              test -f "$file.sha256" || { echo "missing checksum: $file" >&2; exit 1; }
+              (cd "$dir" && sha256sum -c "$base.sha256") || exit 1
+            done
+          ' sh {} +
+
+      - name: Create release and upload assets
+        uses: softprops/action-gh-release@v2
+        with:
+          name: v${{ needs.verify.outputs.version }}
+          body_path: artifacts/release-notes/release-notes.md
+          files: |
+            artifacts/**/*.tar.gz
+            artifacts/**/*.sha256
+          prerelease: false  # Mark as stable release, not prerelease
+          draft: false       # Publish immediately, not as draft
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  crates-io:
+    name: Publish to crates.io
+    needs: [verify, github-release]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust ${{ env.RUST_TOOLCHAIN }}
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      - name: Publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+        run: cargo publish --locked --verbose
