@@ -6,7 +6,7 @@ use crate::runtime::{
     function_dispatch::exec_builtin_fast,
     method_calls::exec_method_in,
     type_casting::cast_value,
-    utils::{index_array, slice_array},
+    utils::{clamp_index, slice_items},
 };
 use crate::types::Value;
 use std::borrow::Cow;
@@ -179,12 +179,14 @@ impl Evaluator {
                 Self::eval_binary_op(*op, &a, &b)
             }
 
+            // A read that copies is charged the cost of the copy, before it is made
+            // (ADR-0011 amendment 2). Borrowed reads (`eval_operand`) only tick.
             Expr::Variable(name) => {
-                limits::tick()?;
-                context
+                let v = context
                     .get_variable(name)
-                    .cloned()
-                    .ok_or_else(|| missing_variable(name))
+                    .ok_or_else(|| missing_variable(name))?;
+                charge_value(v)?;
+                Ok(v.clone())
             }
 
             Expr::PropertyAccess { target, property } => Self::with_target(target, context, |v| {
@@ -232,34 +234,40 @@ impl Evaluator {
                 cast_value(v, ty).and_then(check_value)
             }
 
-            Expr::Index { target, index } => {
-                let recv = Self::eval(target, context)?;
+            Expr::Index { target, index } => Self::with_target(target, context, |recv| {
                 let idx_v = Self::eval(index, context)?;
                 let idx = idx_v
                     .as_number()
                     .ok_or_else(|| Error::new("Index must be number", None))?
                     as isize;
                 match recv {
-                    Value::Array(items) => index_array(items, idx),
+                    Value::Array(items) => match clamp_index(items.len(), idx) {
+                        Some(i) => check_value(items[i].clone()),
+                        None => Err(Error::new("Index out of bounds", None)),
+                    },
                     _ => Err(Error::new("Index on non-array", None)),
                 }
-            }
+            }),
 
             Expr::Slice { target, start, end } => {
-                let recv = Self::eval(target, context)?;
-                match recv {
+                Self::with_target(target, context, |recv| match recv {
                     Value::Array(items) => {
                         let start_val =
                             start.as_ref().map(|e| Self::eval(e, context)).transpose()?;
                         let end_val = end.as_ref().map(|e| Self::eval(e, context)).transpose()?;
-                        slice_array(items, start_val, end_val)
+                        slice_items(items, start_val, end_val).and_then(check_value)
                     }
                     _ => Err(Error::new("Slice on non-array", None)),
-                }
+                })
             }
 
             Expr::FunctionCall { name, args } => {
-                Self::eval_function_call(name, args, context).and_then(check_value)
+                let v = Self::eval_function_call(name, args, context)?;
+                if Self::is_prepaid_builtin(name, context) {
+                    limits::check_prepaid(v)
+                } else {
+                    check_value(v)
+                }
             }
 
             Expr::MethodCall {
@@ -441,6 +449,16 @@ impl Evaluator {
             Value::Null if safe => Ok(Value::Null),
             _ => Err(Error::new("Property access requires JSON object", None)),
         }
+    }
+
+    /// Builtins that charge their own result before building it (ADR-0011 amendment 2); their
+    /// result is only depth-checked. A custom function of the same name is charged as usual.
+    fn is_prepaid_builtin<C: EvaluationContext>(name: &str, context: &C) -> bool {
+        matches!(name, "MERGE" | "CONCAT")
+            && !context
+                .get_custom_registry()
+                .and_then(|r| r.read().ok().map(|reg| reg.has_function(name)))
+                .unwrap_or(false)
     }
 
     /// Evaluate function calls with optimized dispatch

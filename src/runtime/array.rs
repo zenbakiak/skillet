@@ -139,6 +139,8 @@ pub fn exec_array(name: &str, args: &[Value]) -> Result<Value, Error> {
             _ => Err(Error::new("JOIN expects array, [separator]", None)),
         },
         "MERGE" => {
+            // Charged before building; the evaluator does not charge the result again.
+            crate::limits::charge_merge(args)?;
             // Estimate capacity: count array lengths + scalar elements
             let mut capacity = 0;
             for arg in args {

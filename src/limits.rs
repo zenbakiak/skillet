@@ -247,6 +247,82 @@ pub(crate) fn tick() -> Result<(), Error> {
     charge(0)
 }
 
+/// Pre-charge a `MERGE` result: the cost of every argument, before the merged array is built.
+pub(crate) fn charge_merge(args: &[Value]) -> Result<(), Error> {
+    args.iter().try_for_each(charge_value)
+}
+
+/// Pre-charge the string `write` would produce, counted with no allocation (`CONCAT`, `.to_s`,
+/// `::String` on arrays). Costs one extra formatting pass.
+pub(crate) fn charge_formatted(write: impl FnOnce(&mut ByteCounter)) -> Result<(), Error> {
+    let mut counter = ByteCounter(0);
+    write(&mut counter);
+    charge_string(usize::try_from(counter.0).unwrap_or(usize::MAX))
+}
+
+/// Pre-charge the JSON text of a string (`.to_json()`): quotes plus escaped length.
+pub(crate) fn charge_json_string(s: &str) -> Result<(), Error> {
+    charge_string(json_escaped_len(s).saturating_add(2))
+}
+
+/// Check a value whose cost was pre-charged by the builtin that built it (`MERGE`, `CONCAT`):
+/// depth only, plus a deadline tick. Charging it again would halve the budget for them.
+pub(crate) fn check_prepaid(value: Value) -> Result<Value, Error> {
+    tick()?;
+    if let Value::Array(items) = &value {
+        if let Walk::TooDeep = walk_items(items, MAX_NESTING_DEPTH - 1, &mut 0, u64::MAX) {
+            return Err(nesting_error(None));
+        }
+    }
+    Ok(value)
+}
+
+/// Length of `s` once escaped as the body of a JSON string by `serde_json` (`"` `\` and the
+/// short escapes take 2 bytes, other control characters 6 as `\u00XX`), without allocating.
+pub(crate) fn json_escaped_len(s: &str) -> usize {
+    s.as_bytes()
+        .iter()
+        .map(|&c| usize::from(JSON_ESCAPE_LEN[c as usize]))
+        .sum()
+}
+
+const JSON_ESCAPE_LEN: [u8; 256] = {
+    let mut t = [1u8; 256];
+    let mut c = 0;
+    while c < 0x20 {
+        t[c] = 6;
+        c += 1;
+    }
+    t[b'\n' as usize] = 2;
+    t[b'\r' as usize] = 2;
+    t[b'\t' as usize] = 2;
+    t[0x08] = 2;
+    t[0x0c] = 2;
+    t[b'"' as usize] = 2;
+    t[b'\\' as usize] = 2;
+    t
+};
+
+/// A `fmt::Write` / `io::Write` sink that only counts bytes, to size output before building it.
+pub(crate) struct ByteCounter(pub(crate) u64);
+
+impl std::fmt::Write for ByteCounter {
+    fn write_str(&mut self, s: &str) -> std::fmt::Result {
+        self.0 = self.0.saturating_add(s.len() as u64);
+        Ok(())
+    }
+}
+
+impl std::io::Write for ByteCounter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0 = self.0.saturating_add(buf.len() as u64);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 /// Check a value the evaluator just built: depth within [`MAX_NESTING_DEPTH`] and its cost
 /// within the budget, in one walk that stops as soon as either limit is passed.
 ///

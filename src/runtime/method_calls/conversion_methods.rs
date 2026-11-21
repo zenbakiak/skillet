@@ -1,5 +1,7 @@
 use crate::error::Error;
+use crate::limits;
 use crate::types::Value;
+use std::fmt::Write;
 
 /// Handle conversion method calls for all types (Ruby-style)
 pub fn exec_conversion_method(name: &str, recv: &Value) -> Result<Value, Error> {
@@ -19,8 +21,15 @@ pub fn exec_conversion_method(name: &str, recv: &Value) -> Result<Value, Error> 
     }
 }
 
-/// Convert any value to string
+/// Convert any value to string. Arrays are counted first and pre-charged, since a number
+/// can print far longer than it costs (`1e308` is 309 characters).
 fn to_string(value: &Value) -> Result<Value, Error> {
+    if let Value::Array(_) = value {
+        limits::charge_formatted(|c| write_s(c, value))?;
+        let mut out = String::new();
+        write_s(&mut out, value);
+        return Ok(Value::String(out));
+    }
     let result = match value {
         Value::Null => "".to_string(),
         Value::String(s) => s.clone(),
@@ -33,20 +42,34 @@ fn to_string(value: &Value) -> Result<Value, Error> {
         }
         Value::Boolean(b) => b.to_string(),
         Value::Currency(c) => format!("{:.2}", c),
-        Value::Array(arr) => {
-            let string_parts: Result<Vec<String>, Error> = arr
-                .iter()
-                .map(|v| match to_string(v)? {
-                    Value::String(s) => Ok(s),
-                    _ => unreachable!(),
-                })
-                .collect();
-            format!("[{}]", string_parts?.join(", "))
-        }
         Value::Json(s) => s.clone(),
         Value::DateTime(dt) => dt.to_string(),
+        Value::Array(_) => unreachable!("arrays are handled above"),
     };
     Ok(Value::String(result))
+}
+
+/// Write the `.to_s()` text of `value` (arrays as `[a, b]`, recursively).
+fn write_s(w: &mut impl Write, value: &Value) {
+    let _ = match value {
+        Value::Null => Ok(()),
+        Value::String(s) | Value::Json(s) => w.write_str(s),
+        Value::Number(n) if n.fract() == 0.0 => write!(w, "{:.0}", n),
+        Value::Number(n) => write!(w, "{}", n),
+        Value::Boolean(b) => write!(w, "{}", b),
+        Value::Currency(c) => write!(w, "{:.2}", c),
+        Value::DateTime(dt) => write!(w, "{}", dt),
+        Value::Array(arr) => {
+            let _ = w.write_char('[');
+            for (i, v) in arr.iter().enumerate() {
+                if i > 0 {
+                    let _ = w.write_str(", ");
+                }
+                write_s(w, v);
+            }
+            w.write_char(']')
+        }
+    };
 }
 
 /// Convert any value to integer
@@ -97,7 +120,9 @@ fn to_array(value: &Value) -> Result<Value, Error> {
         Value::Null => Vec::new(),
         Value::Array(arr) => arr.clone(),
         Value::String(s) => {
-            // Convert string to array of characters
+            // One string per character: 32 + its bytes each, charged before building.
+            let chars = s.chars().count() as u64;
+            limits::charge(32 + 32 * chars + s.len() as u64)?;
             s.chars().map(|c| Value::String(c.to_string())).collect()
         }
         other => vec![other.clone()],
@@ -111,8 +136,9 @@ fn to_json(value: &Value) -> Result<Value, Error> {
         Value::Null => "{}".to_string(),
         Value::Json(s) => s.clone(),
         Value::String(s) => {
-            let json_val = serde_json::Value::String(s.clone());
-            serde_json::to_string(&json_val)
+            // Escaping can grow the text up to 6x (`\u0001`): charge the exact size first.
+            limits::charge_json_string(s)?;
+            serde_json::to_string(s)
                 .map_err(|e| Error::new(format!("Failed to convert to JSON: {}", e), None))?
         }
         Value::Number(n) => {
@@ -132,6 +158,11 @@ fn to_json(value: &Value) -> Result<Value, Error> {
             let json_array: Result<Vec<serde_json::Value>, Error> =
                 arr.iter().map(value_to_json_value).collect();
             let json_val = serde_json::Value::Array(json_array?);
+            // Size the escaped text without building it, then charge it before allocating.
+            let mut counter = limits::ByteCounter(0);
+            serde_json::to_writer(&mut counter, &json_val)
+                .map_err(|e| Error::new(format!("Failed to convert to JSON: {}", e), None))?;
+            limits::charge_string(usize::try_from(counter.0).unwrap_or(usize::MAX))?;
             serde_json::to_string(&json_val)
                 .map_err(|e| Error::new(format!("Failed to convert to JSON: {}", e), None))?
         }

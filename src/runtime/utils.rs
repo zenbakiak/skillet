@@ -40,6 +40,15 @@ pub fn slice_array(
     start: Option<Value>,
     end: Option<Value>,
 ) -> Result<Value, Error> {
+    slice_items(&items, start, end)
+}
+
+/// `slice_array` over borrowed items (the evaluator slices variables without copying them).
+pub(crate) fn slice_items(
+    items: &[Value],
+    start: Option<Value>,
+    end: Option<Value>,
+) -> Result<Value, Error> {
     let len = items.len() as isize;
     let s = match start {
         Some(Value::Number(n)) => n as isize,
