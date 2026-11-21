@@ -463,7 +463,7 @@ Brief (orchestrator, 2026-11-20):
     Out of scope: src/ changes.
   Decision (maintainer, 2026-11-20): ADR-0011 accepted with amendment: BL-030 first, then 027b
     without the variable-read charge (A12 must pass). A11 behaviour change accepted.
-  BL-027b · rust-engineer · `todo` (blocked by BL-030)
+  BL-027b · rust-engineer · `ready` (BL-030 done)
   BL-027c · security-reviewer · `todo` (re-attack after 027b)
 
 Handoff (language-designer, Claude Opus 5.5, 2026-11-20) — BL-027a:
@@ -511,7 +511,7 @@ down to 1 MB). Affects embedders spawning threads in debug and in-process tests.
 binary precedence levels into one precedence-climbing loop and shrinking `parse_atom`'s frame;
 measure stack per level before/after.
 
-### BL-030 · Lambdas clone the whole variable map per call (CPU/alloc DoS) · P1 · `review` · rust-engineer (+ performance-engineer for numbers)
+### BL-030 · Lambdas clone the whole variable map per call (CPU/alloc DoS) · P1 · `done` · rust-engineer (+ performance-engineer for numbers)
 Found in BL-027a. Every method/function call inside a lambda runs `context.clone_variables()` and the
 lambda helpers `base_vars.cloned()`, so cost is O(items × size of all vars). Measured (release):
 `:nums.map(:x.abs()).sum()` over 100k numbers (589 KB JSON) = 14.6 s and 305 GB allocated;
@@ -585,3 +585,18 @@ Handoff (rust-engineer, Claude Opus 5.5, 2026-11-20):
          first avoids it (QA item worth filing).
        - BL-027b is unblocked.
   ADR: none
+
+Review (orchestrator, 2026-11-20): accepted. Re-ran `cargo bench --bench lambda_scope` (RUNS=3):
+  all five formulas 2.6–5.0 ms (abs 15.4 s → 5 ms; A12 4.0 s → 3.2 ms); results identical; tests/
+  untouched; no remaining clone_variables() call sites. Changelog note: `runtime::method_calls`
+  handler signatures changed (`&dyn EvaluationContext`), `exec_*_with_custom` removed; lib.rs API
+  unchanged. Follow-ups: BL-031, BL-032.
+
+### BL-031 · Custom functions not visible in method args and builtin lambdas · P3 · `todo` · language-designer
+Found in BL-030 (pre-existing, preserved): custom functions work inside `.map()/.filter()` lambdas but
+not in plain method arguments (`:s.contains(MYFN())`) or in `FILTER()/MAP()`-style builtin lambdas.
+Decide whether that is intended; likely not (one evaluator, one function namespace).
+
+### BL-032 · `sk_concurrency` flakes when the release `sk` is stale · P2 · `todo` · qa-engineer
+`tests/sk_concurrency.rs` runs `cargo run --release` from parallel tests; if the release binary is out
+of date they rebuild concurrently and some fail. Build once up front (or use `CARGO_BIN_EXE_*`).
