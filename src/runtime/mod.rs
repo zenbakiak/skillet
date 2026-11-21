@@ -8,6 +8,7 @@ pub mod financial;
 pub mod function_dispatch;
 pub mod json;
 pub mod jsonpath;
+mod local_time;
 pub mod logical;
 pub mod method_calls;
 pub mod statistical;

@@ -11,7 +11,7 @@ without changing what expressions evaluate to.
 ## Standards
 - Edition 2021, MSRV 1.85 per ADR-0012 (bumping MSRV/edition = ADR).
 - No `unwrap()`/`expect()`/`panic!` on input-dependent paths; return `Error` with a position when you have one.
-- No `unsafe` outside `src/bin/http_server/daemon.rs` without an ADR.
+- No `unsafe` outside `src/bin/http_server/daemon.rs` and `src/runtime/local_time.rs` (ADR-0020) without an ADR.
 - Prefer deleting code to adding it. No new dependency if std or an existing dep does it; any new dependency = ADR.
 - Public API in `src/lib.rs` is a contract: add, or deprecate with `#[deprecated(since, note)]`; never break.
 - Keep functions under ~80 lines; split by responsibility, not by line count.
