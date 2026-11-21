@@ -14,14 +14,18 @@ fn precedence_and_parentheses() {
     assert!(approxv(evaluate("(2 + 3) * 4").unwrap(), 20.0));
 }
 
+/// Excel: `^` is left-associative (BL-054, D-10; was right-associative, 512).
 #[test]
-fn exponent_right_associative() {
-    assert!(approxv(evaluate("2 ^ 3 ^ 2").unwrap(), 512.0));
+fn exponent_left_associative() {
+    assert!(approxv(evaluate("2 ^ 3 ^ 2").unwrap(), 64.0));
+    assert!(approxv(evaluate("2 ^ (3 ^ 2)").unwrap(), 512.0));
 }
 
+/// Excel: negation binds tighter than `^` (BL-054, D-10; `-3 ^ 2` was -9).
 #[test]
 fn unary_and_equals_prefix() {
-    assert!(approxv(evaluate("-3 ^ 2").unwrap(), -9.0));
+    assert!(approxv(evaluate("-3 ^ 2").unwrap(), 9.0));
+    assert!(approxv(evaluate("-(3 ^ 2)").unwrap(), -9.0));
     assert!(approxv(evaluate("(-3) ^ 2").unwrap(), 9.0));
     assert!(approxv(evaluate("= 10 + 20 * 3").unwrap(), 70.0));
 }

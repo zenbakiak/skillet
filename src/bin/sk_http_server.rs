@@ -78,6 +78,19 @@ fn handle_http_request(
     // Handle paths that might have query parameters
     let path_only = path.split('?').next().unwrap_or(path);
 
+    // Before dispatch, so no handler runs for a browser in development mode or parses a body
+    // that is not JSON (ADR-0019).
+    if let Err(message) =
+        http_server::cors::check_browser_admin(path_only, &request, server_admin_token.is_some())
+    {
+        send_http_error(&mut stream, 403, message);
+        return;
+    }
+    if let Err(message) = http_server::cors::check_content_type(method, path_only, &request) {
+        send_http_error(&mut stream, 415, message);
+        return;
+    }
+
     match (method, path_only) {
         ("GET", "/health") => handle_health(&mut stream, &stats, &request, server_token),
         ("GET", "/") => handle_root(&mut stream),
@@ -166,14 +179,24 @@ fn main() {
         std::process::exit(1);
     });
 
-    // Parse command line arguments
-    let (mut auth_token, mut admin_token, daemon_mode, pid_file, bind_host, thread_count) =
-        parse_args(&args[2..]);
+    let ServerArgs {
+        auth_token,
+        admin_token,
+        cors_origin,
+        daemon_mode,
+        pid_file,
+        bind_host,
+        thread_count,
+    } = parse_args(&args[2..]);
 
     // Apply intelligent token logic
     let token_config = TokenConfig::new(auth_token, admin_token);
-    auth_token = token_config.auth_token.clone();
-    admin_token = token_config.admin_token.clone();
+    let auth_token = token_config.auth_token.clone();
+    let admin_token = token_config.admin_token.clone();
+
+    let allowed_origin =
+        http_server::cors::allowed_origin(cors_origin.as_deref(), auth_token.is_some());
+    http_server::cors::init(allowed_origin.as_deref());
 
     // Handle daemon mode before any output
     if daemon_mode {
@@ -209,9 +232,8 @@ fn main() {
         daemon_mode,
         port,
         &bind_host,
-        &auth_token,
-        &admin_token,
         &token_config,
+        allowed_origin.as_deref(),
         thread_count,
     );
 
@@ -265,7 +287,14 @@ fn print_usage() {
     eprintln!("  --log-file <file>    Write logs to file (daemon mode only)");
     eprintln!("  --token <value>      Require token for eval requests (or set SKILLET_AUTH_TOKEN;");
     eprintln!("                       the flag wins)");
-    eprintln!("  --admin-token <val>  Require admin token for JS function management");
+    eprintln!("  --admin-token <val>  Require admin token for JS function management and");
+    eprintln!("                       DELETE /cache (or set SKILLET_ADMIN_TOKEN; the flag wins)");
+    eprintln!("  --cors-origin <org>  Access-Control-Allow-Origin value, e.g. https://app.example");
+    eprintln!("                       or * (or set SKILLET_CORS_ORIGIN; the flag wins). Default:");
+    eprintln!("                       * when a token is set, otherwise no CORS headers");
+    eprintln!();
+    eprintln!("Requests with a body must send Content-Type: application/json (415 otherwise);");
+    eprintln!("/upload-js and /update-js also accept multipart/form-data.");
     eprintln!();
     eprintln!("Examples:");
     eprintln!("  sk_http_server 5074");
@@ -284,115 +313,105 @@ fn print_usage() {
     eprintln!("  DELETE /cache         - Clear expression cache (admin token required)");
 }
 
-fn parse_args(args: &[String]) -> (Option<String>, Option<String>, bool, String, String, usize) {
-    let mut auth_token: Option<String> = None;
-    let mut admin_token: Option<String> = None;
-    let mut daemon_mode = false;
-    let mut pid_file = "skillet-http-server.pid".to_string();
-    let mut bind_host = "127.0.0.1".to_string();
-    let mut thread_count = num_cpus::get();
-    let mut _log_file: Option<String> = None;
+struct ServerArgs {
+    auth_token: Option<String>,
+    admin_token: Option<String>,
+    cors_origin: Option<String>,
+    daemon_mode: bool,
+    pid_file: String,
+    bind_host: String,
+    thread_count: usize,
+}
+
+fn exit_with(message: &str) -> ! {
+    eprintln!("Error: {message}");
+    std::process::exit(1);
+}
+
+/// The value after flag `args[*i]`; advances `i` past it.
+fn flag_value(args: &[String], i: &mut usize, what: &str) -> String {
+    *i += 1;
+    match args.get(*i) {
+        Some(value) => value.clone(),
+        None => exit_with(&format!("{} requires {what}", args[*i - 1])),
+    }
+}
+
+fn parse_args(args: &[String]) -> ServerArgs {
+    let mut parsed = ServerArgs {
+        auth_token: None,
+        admin_token: None,
+        cors_origin: None,
+        daemon_mode: false,
+        pid_file: "skillet-http-server.pid".to_string(),
+        bind_host: "127.0.0.1".to_string(),
+        thread_count: num_cpus::get(),
+    };
     let mut i = 0;
 
     while i < args.len() {
         match args[i].as_str() {
-            "-d" | "--daemon" => daemon_mode = true,
-            "-H" | "--host" => {
-                if i + 1 < args.len() {
-                    bind_host = args[i + 1].clone();
-                    i += 1;
-                } else {
-                    eprintln!("Error: --host requires an address");
-                    std::process::exit(1);
-                }
-            }
+            "-d" | "--daemon" => parsed.daemon_mode = true,
+            "-H" | "--host" => parsed.bind_host = flag_value(args, &mut i, "an address"),
             "-t" | "--threads" => {
-                if i + 1 < args.len() {
-                    thread_count = args[i + 1].parse().unwrap_or_else(|_| {
-                        eprintln!("Error: Invalid thread count");
-                        std::process::exit(1);
-                    });
-                    if thread_count == 0 {
-                        eprintln!("Error: Thread count must be greater than 0");
-                        std::process::exit(1);
-                    }
-                    i += 1;
-                } else {
-                    eprintln!("Error: --threads requires a number");
-                    std::process::exit(1);
+                let n = flag_value(args, &mut i, "a number");
+                parsed.thread_count = n
+                    .parse()
+                    .unwrap_or_else(|_| exit_with("Invalid thread count"));
+                if parsed.thread_count == 0 {
+                    exit_with("Thread count must be greater than 0");
                 }
             }
-            "--pid-file" => {
-                if i + 1 < args.len() {
-                    pid_file = args[i + 1].clone();
-                    i += 1;
-                } else {
-                    eprintln!("Error: --pid-file requires a filename");
-                    std::process::exit(1);
-                }
-            }
-            "--log-file" => {
-                if i + 1 < args.len() {
-                    _log_file = Some(args[i + 1].clone());
-                    i += 1;
-                } else {
-                    eprintln!("Error: --log-file requires a filename");
-                    std::process::exit(1);
-                }
-            }
-            "--token" => {
-                if i + 1 < args.len() {
-                    auth_token = Some(args[i + 1].clone());
-                    i += 1;
-                } else {
-                    eprintln!("Error: --token requires a value");
-                    std::process::exit(1);
-                }
-            }
-            "--admin-token" => {
-                if i + 1 < args.len() {
-                    admin_token = Some(args[i + 1].clone());
-                    i += 1;
-                } else {
-                    eprintln!("Error: --admin-token requires a value");
-                    std::process::exit(1);
-                }
-            }
-            _ => {
-                eprintln!("Error: Unknown argument: {}", args[i]);
-                std::process::exit(1);
-            }
+            "--pid-file" => parsed.pid_file = flag_value(args, &mut i, "a filename"),
+            // Accepted for compatibility; logs go to stderr.
+            "--log-file" => drop(flag_value(args, &mut i, "a filename")),
+            "--token" => parsed.auth_token = Some(flag_value(args, &mut i, "a value")),
+            "--admin-token" => parsed.admin_token = Some(flag_value(args, &mut i, "a value")),
+            "--cors-origin" => parsed.cors_origin = Some(flag_value(args, &mut i, "an origin")),
+            other => exit_with(&format!("Unknown argument: {other}")),
         }
         i += 1;
     }
 
+    // Same as sk_server: the flag wins, the env var is the fallback.
+    env_fallback(&mut parsed.auth_token, "SKILLET_AUTH_TOKEN");
+    env_fallback(&mut parsed.admin_token, "SKILLET_ADMIN_TOKEN");
+    env_fallback(&mut parsed.cors_origin, "SKILLET_CORS_ORIGIN");
+
     // An empty token would match a request with no token, so auth would be off while the
     // banner says it is on (BL-048).
-    if auth_token.is_none() {
-        // Same as sk_server: the flag wins, the env var is the fallback.
-        if let Ok(env_token) = std::env::var("SKILLET_AUTH_TOKEN") {
-            if env_token.is_empty() {
-                eprintln!("Error: SKILLET_AUTH_TOKEN must not be empty; give a non-empty token or unset it");
-                std::process::exit(1);
-            }
-            auth_token = Some(env_token);
-        }
-    }
-    for (flag, token) in [("--token", &auth_token), ("--admin-token", &admin_token)] {
+    for (flag, token) in [
+        ("--token", &parsed.auth_token),
+        ("--admin-token", &parsed.admin_token),
+    ] {
         if token.as_deref() == Some("") {
-            eprintln!("Error: {flag} must not be empty");
-            std::process::exit(1);
+            exit_with(&format!("{flag} must not be empty"));
         }
     }
+    if let Some(origin) = &parsed.cors_origin {
+        if !http_server::cors::valid_origin(origin) {
+            exit_with(
+                "--cors-origin must be a non-empty origin without spaces or control characters",
+            );
+        }
+    }
+    parsed
+}
 
-    (
-        auth_token,
-        admin_token,
-        daemon_mode,
-        pid_file,
-        bind_host,
-        thread_count,
-    )
+/// Fill `slot` from env var `var` when no flag set it. An empty value is an error: it must
+/// not silently turn a setting off (BL-048).
+fn env_fallback(slot: &mut Option<String>, var: &str) {
+    if slot.is_some() {
+        return;
+    }
+    if let Ok(value) = std::env::var(var) {
+        if value.is_empty() {
+            exit_with(&format!(
+                "{var} must not be empty; give a non-empty value or unset it"
+            ));
+        }
+        *slot = Some(value);
+    }
 }
 
 #[cfg(unix)]
@@ -476,9 +495,8 @@ fn print_startup_messages(
     daemon_mode: bool,
     port: u16,
     bind_host: &str,
-    auth_token: &Option<String>,
-    admin_token: &Option<String>,
     token_config: &TokenConfig,
+    allowed_origin: Option<&str>,
     thread_count: usize,
 ) {
     if !daemon_mode {
@@ -487,11 +505,15 @@ fn print_startup_messages(
             bind_host, port
         );
         eprintln!("🧵 Worker threads: {}", thread_count);
-        if auth_token.is_some() {
+        if token_config.auth_token.is_some() {
             eprintln!("🔒 Eval token auth: enabled");
         }
-        if admin_token.is_some() {
+        if token_config.admin_token.is_some() {
             eprintln!("🔐 Admin token auth: enabled");
+        }
+        match allowed_origin {
+            Some(origin) => eprintln!("🌍 CORS: Access-Control-Allow-Origin: {}", origin),
+            None => eprintln!("🌍 CORS: off (no token, no --cors-origin)"),
         }
 
         // Print security warnings

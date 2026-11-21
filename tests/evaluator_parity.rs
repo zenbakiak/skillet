@@ -794,8 +794,8 @@ const DIV_HOF_CUSTOM_PARAM_NAMES: &[(&str, Mode)] = &[
 
 /// D5: the old `evaluation::eval` (no-vars entry point) was a reduced evaluator: string/null
 /// equality failed with "Comparison on non-number", and property access, `&.` (property and
-/// method) and `;` sequences failed with "Use eval_with_vars for ...". Note evaluator.rs returns
-/// `NULL == NULL` -> false, which is pinned here as-is.
+/// method) and `;` sequences failed with "Use eval_with_vars for ...". `NULL == NULL` is `true`
+/// since ADR-0013 (pinned in `tests/null_equality.rs`); here both layers must agree.
 const DIV_EVAL_NO_VARS: &[(&str, Mode)] = &[
     ("'a' == 'a'", Mode::Eval),
     ("NULL == NULL", Mode::Eval),

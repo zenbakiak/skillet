@@ -1,15 +1,24 @@
 //! NaN in data must not panic the evaluator. Sorting needs an order and NaN has none, so every
 //! builtin or method that sorts numbers returns the error "Cannot sort NaN values" instead.
-//! `0/0` evaluates to NaN; these tests build NaN data from it or pass it in as a variable.
+//! Since BL-054 `:nan` is an error (`Division by zero`), so NaN can only arrive from the host:
+//! these tests pass NaN (`:nan`) and infinity (`:inf`) in as variables.
 //!
 //! Before the fix, `partial_cmp(..).unwrap()` panicked in MEDIAN, PERCENTILE_INC, QUARTILE_INC
 //! and SORT. `.sort()` returned unsorted data for short arrays and panicked ("does not correctly
 //! implement a total order") for arrays longer than 20.
 
-use skillet::{evaluate, evaluate_with, Value};
+use skillet::{evaluate_with, Value};
 use std::collections::HashMap;
 
 const NAN_ERROR: &str = "Cannot sort NaN values";
+
+/// Evaluate with `:nan` = NaN and `:inf` = infinity.
+fn evaluate(expr: &str) -> Result<Value, skillet::Error> {
+    let mut vars = HashMap::new();
+    vars.insert("nan".to_string(), Value::Number(f64::NAN));
+    vars.insert("inf".to_string(), Value::Number(f64::INFINITY));
+    evaluate_with(expr, &vars)
+}
 
 fn assert_nan_error(expr: &str) {
     match evaluate(expr) {
@@ -39,7 +48,7 @@ fn long_nan_array() -> String {
     let items: Vec<String> = (1..=25)
         .map(|i| {
             if i % 5 == 0 {
-                "0/0".to_string()
+                ":nan".to_string()
             } else {
                 i.to_string()
             }
@@ -50,33 +59,33 @@ fn long_nan_array() -> String {
 
 #[test]
 fn regression_sec_nan_sort_median() {
-    assert_nan_error("=MEDIAN([1, 0/0, 3])");
-    assert_nan_error("=MEDIAN(1, 0/0, 3)");
+    assert_nan_error("=MEDIAN([1, :nan, 3])");
+    assert_nan_error("=MEDIAN(1, :nan, 3)");
 }
 
 #[test]
 fn regression_sec_nan_sort_percentile_inc() {
-    assert_nan_error("=PERCENTILE_INC([1, 0/0, 3], 0.5)");
-    assert_nan_error("=PERCENTILEINC([1, 0/0, 3], 0.5)");
+    assert_nan_error("=PERCENTILE_INC([1, :nan, 3], 0.5)");
+    assert_nan_error("=PERCENTILEINC([1, :nan, 3], 0.5)");
 }
 
 #[test]
 fn regression_sec_nan_sort_quartile_inc() {
-    assert_nan_error("=QUARTILE_INC([1, 0/0, 3], 2)");
-    assert_nan_error("=QUARTILEINC([1, 0/0, 3], 2)");
+    assert_nan_error("=QUARTILE_INC([1, :nan, 3], 2)");
+    assert_nan_error("=QUARTILEINC([1, :nan, 3], 2)");
 }
 
 #[test]
 fn regression_sec_nan_sort_sort_function() {
-    assert_nan_error("=SORT([3, 0/0, 1])");
-    assert_nan_error("=SORT([3, 0/0, 1], \"DESC\")");
+    assert_nan_error("=SORT([3, :nan, 1])");
+    assert_nan_error("=SORT([3, :nan, 1], \"DESC\")");
     assert_nan_error(&format!("=SORT({})", long_nan_array()));
 }
 
 #[test]
 fn regression_sec_nan_sort_sort_method() {
-    assert_nan_error("=[3, 0/0, 1].sort()");
-    assert_nan_error("=[3, 0/0, 1].sort(\"desc\")");
+    assert_nan_error("=[3, :nan, 1].sort()");
+    assert_nan_error("=[3, :nan, 1].sort(\"desc\")");
     assert_nan_error(&format!("={}.sort()", long_nan_array()));
     assert_nan_error(&format!("={}.sort(\"desc\")", long_nan_array()));
 }
@@ -84,7 +93,7 @@ fn regression_sec_nan_sort_sort_method() {
 /// Method call inside a lambda body (goes through the method/lambda evaluator).
 #[test]
 fn regression_sec_nan_sort_sort_method_in_lambda() {
-    match evaluate("=[[3, 0/0, 1]].map(:x.sort())") {
+    match evaluate("=[[3, :nan, 1]].map(:x.sort())") {
         Err(e) => assert!(e.message.contains(NAN_ERROR), "unexpected error {e:?}"),
         Ok(v) => panic!("expected NaN sort error, got {v:?}"),
     }
@@ -152,7 +161,20 @@ fn nan_sort_fix_keeps_nan_free_results() {
     );
     // Infinities are ordered and still sort.
     assert_eq!(
-        nums(evaluate("=SORT([1/0, 1, -1/0])").unwrap()),
+        nums(evaluate("=SORT([:inf, 1, -:inf])").unwrap()),
         vec![f64::NEG_INFINITY, 1.0, f64::INFINITY]
     );
+}
+
+/// BL-054 (D-1): the operators no longer produce NaN or infinity.
+#[test]
+fn operators_do_not_make_nan_or_infinity() {
+    for expr in ["=0/0", "=1/0", "=5 % 0", "=0^(-1)"] {
+        let e = skillet::evaluate(expr).unwrap_err();
+        assert!(e.message.contains("Division by zero"), "{expr}: {e:?}");
+    }
+    for expr in ["=0^0", "=10^400", "=10^308 * 10", "=(-8)^(1/3)"] {
+        let e = skillet::evaluate(expr).unwrap_err();
+        assert!(e.message.contains("#NUM!"), "{expr}: {e:?}");
+    }
 }

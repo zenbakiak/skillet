@@ -7,6 +7,7 @@ One topic, one home. Start with the [README](../README.md) for the pitch, instal
 - [Installation](guide/installation.md) — prebuilt binaries, install script, build from source
 - [Servers](guide/servers.md) — `sk_server` / `sk_client` (TCP) usage and clients in other languages
 - [Limits](guide/limits.md) — nesting depth, evaluation budget, server deadline, `with_limits`
+- [Migrating to 0.7](guide/migration-0.7.md) — every breaking change in 0.7.0, before and after
 
 ## Reference (`docs/reference/`)
 - [Functions, methods and operators](reference/api.md)
@@ -17,6 +18,9 @@ One topic, one home. Start with the [README](../README.md) for the pitch, instal
 - [Docker](ops/docker.md) — container deployment
 - [Alpine / musl](ops/alpine.md) — static builds and adding Skillet to Alpine images
 - [Binaries](ops/binaries.md) — packaging and distributing release binaries, systemd
+
+## Security (`docs/security/`)
+- [Threat model](security/THREAT_MODEL.md) — surfaces, limits that hold, known gaps, how to report a vulnerability
 
 ## Decisions and requirements
 - [ADRs](adr/README.md) — architecture decisions
