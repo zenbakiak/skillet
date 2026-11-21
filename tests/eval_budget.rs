@@ -836,3 +836,104 @@ fn bl027c_pre_charged_builtins_peak_within_twice_the_budget() {
     }
     assert!(failures.is_empty(), "\n{}", failures.join("\n"));
 }
+
+// ---------------------------------------------------------------- BL-027e: confirmation pass
+//
+// Re-checks the BL-027d fixes. A plain variable used as an operator operand or a
+// method/property/index/slice target is borrowed (not copied, not charged); every other read
+// copies and is charged before the copy. These pin that a borrowed value cannot escape into
+// a result without being charged.
+
+/// Run each case under a 4 MiB budget and collect the ones that did not fail with the budget
+/// error, or peaked above ~2x the budget before failing.
+fn peak_failures(cases: &[(&str, String)]) -> Vec<String> {
+    let budget = 4 * MIB;
+    let mut failures = Vec::new();
+    for (name, src) in cases {
+        let (r, peak) = heap::peak_during(|| {
+            with_limits(limits(budget), || {
+                evaluate_with_assignments(src, &HashMap::new())
+            })
+        });
+        let ok = matches!(&r, Err(e) if e.message.starts_with("Evaluation budget exceeded"));
+        if !ok || peak as u64 > 2 * budget + MIB {
+            failures.push(format!(
+                "{name}: peak {:.1} MB (budget {} MB), result {:?}",
+                peak as f64 / MIB as f64,
+                budget / MIB,
+                r.map(|v| short(&v)).map_err(|e| e.message)
+            ));
+        }
+    }
+    failures
+}
+
+/// Every way a read can leave the expression as a value (ternary/IF branches, spread, nested
+/// assignment, lambda results, reduce accumulator, index/slice/method results) is charged.
+#[test]
+fn bl027e_reads_that_escape_into_a_result_are_charged() {
+    let s = format!(":s := {}; ", big_string("a", 1000)); // 1 MB
+    let a = format!("{s}:a := [:s]; ");
+    let x8 = |e: &str| [e; 8].join(", ");
+    let cases = [
+        ("ternary branch", format!("{s}[{}]", x8("true ? :s : 0"))),
+        ("IF branch", format!("{s}[{}]", x8("IF(true, :s, 0)"))),
+        ("spread into CONCAT", format!("{a}CONCAT({})", x8("...:a"))),
+        ("nested assignment", format!("{s}[{}]", x8("(:b := :s)"))),
+        ("sequence of assignments", {
+            let assigns: Vec<String> = (0..8).map(|i| format!(":v{i} := :s")).collect();
+            format!("{s}{}; 1", assigns.join("; "))
+        }),
+        ("lambda result", format!("{s}{}.map(:s)", ones(8))),
+        (
+            "reduce accumulator",
+            format!("{s}{}.reduce(:s, 0)", ones(8)),
+        ),
+        ("index of a variable", format!("{a}[{}]", x8(":a[0]"))),
+        ("slice of a variable", format!("{a}[{}]", x8(":a[0:1]"))),
+        ("method on a variable", format!("{a}[{}]", x8(":a.first()"))),
+        ("identity method", format!("{s}[{}]", x8(":s.to_s()"))),
+        ("identity cast", format!("{s}[{}]", x8(":s::String"))),
+    ];
+    let failures = peak_failures(&cases);
+    assert!(failures.is_empty(), "\n{}", failures.join("\n"));
+}
+
+/// Borrowed operands only produce scalars, and still tick: `:s == :s` and `NOT` over a large
+/// variable allocate nothing and return a Boolean.
+#[test]
+fn bl027e_borrowed_operands_do_not_copy() {
+    let src = format!(
+        ":s := {}; [{}].length()",
+        big_string("a", 1000),
+        vec!["(:s == :s) == !(:s != :s)"; 200].join(", ")
+    );
+    let (r, peak) = heap::peak_during(|| evaluate_with_assignments(&src, &HashMap::new()));
+    assert_eq!(r, Ok(Value::Number(200.0)));
+    // `:s` (1 MB) plus its stored copy and the SUBSTITUTE intermediates; no per-use copy.
+    assert!((peak as u64) < 5 * MIB, "peak {peak}");
+}
+
+/// F4 (found in BL-027e, open, blocks BL-027): an object literal serializes its values
+/// (JSON escaping, up to 6x for control characters) after the reads are charged and before
+/// the result is checked. Release `sk`, `:s` = 20 MB of `\x01`, `{"k0": :s, …}`: 1 key 199 MB,
+/// 4 keys 599 MB (sk_http_server 602 MB, sk_server 600 MB), 6 keys 866 MB peak; about
+/// +133 MB per key until the reads alone reach the budget (~2 GB). Fix sketch: pre-charge the
+/// serialized size (same as `.to_json()` on arrays) before `serde_json::to_string`.
+#[test]
+#[ignore = "open: F4 object literal escaping (BL-027f)"]
+fn bl027e_object_literal_escaping_is_charged_before_serializing() {
+    let s = format!(":s := {}; ", big_string("\u{1}", 200)); // 200 KB of \x01
+    let a = format!("{s}:a := [:s]; ");
+    // Key counts keep the charged reads under the 4 MiB budget; the escaped text is ~6x.
+    let obj = |v: &str, n: usize| {
+        let pairs: Vec<String> = (0..n).map(|i| format!("\"k{i}\": {v}")).collect();
+        format!("{{{}}}", pairs.join(", "))
+    };
+    let cases = [
+        ("object of 16 string reads", format!("{s}{}", obj(":s", 16))),
+        ("object of 12 array reads", format!("{a}{}", obj(":a", 12))),
+    ];
+    let failures = peak_failures(&cases);
+    assert!(failures.is_empty(), "\n{}", failures.join("\n"));
+}
