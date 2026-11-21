@@ -32,6 +32,28 @@ fn sanitize_json_key(key: &str) -> String {
         .collect()
 }
 
+/// Build the variable map for the `*_json*` entry points: the raw JSON is
+/// exposed as `:arguments` (for `JQ`) and each top-level key becomes a
+/// sanitized variable.
+fn json_vars_to_map(json_vars: &str) -> Result<HashMap<String, Value>, Error> {
+    let json_value: serde_json::Value = serde_json::from_str(json_vars)
+        .map_err(|e| Error::new(format!("Invalid JSON: {}", e), None))?;
+    let serde_json::Value::Object(map) = json_value else {
+        return Err(Error::new(
+            "JSON must be an object with key-value pairs",
+            None,
+        ));
+    };
+
+    let mut vars = HashMap::with_capacity(map.len() + 1);
+    // Add the original JSON data for JQ function
+    vars.insert("arguments".to_string(), Value::Json(json_vars.to_string()));
+    for (key, value) in map {
+        vars.insert(sanitize_json_key(&key), json_to_value(value)?);
+    }
+    Ok(vars)
+}
+
 // Global function registry
 lazy_static::lazy_static! {
     static ref GLOBAL_REGISTRY: Arc<RwLock<FunctionRegistry>> = Arc::new(RwLock::new(FunctionRegistry::new()));
@@ -67,32 +89,7 @@ pub fn evaluate_with(input: &str, vars: &HashMap<String, Value>) -> Result<Value
 /// Supports flat JSON structure with automatic type conversion.
 /// JSON keys with special characters are sanitized to valid variable names.
 pub fn evaluate_with_json(input: &str, json_vars: &str) -> Result<Value, Error> {
-    let json_value: serde_json::Value = serde_json::from_str(json_vars)
-        .map_err(|e| Error::new(format!("Invalid JSON: {}", e), None))?;
-
-    let vars = match json_value {
-        serde_json::Value::Object(map) => {
-            let mut result = HashMap::new();
-
-            // Add the original JSON data for JQ function
-            result.insert("arguments".to_string(), Value::Json(json_vars.to_string()));
-
-            for (key, value) in map {
-                let skillet_value = json_to_value(value)?;
-                let sanitized_key = sanitize_json_key(&key);
-                result.insert(sanitized_key, skillet_value);
-            }
-            result
-        }
-        _ => {
-            return Err(Error::new(
-                "JSON must be an object with key-value pairs",
-                None,
-            ))
-        }
-    };
-
-    evaluate_with(input, &vars)
+    evaluate_with(input, &json_vars_to_map(json_vars)?)
 }
 
 /// Convert serde_json::Value to skillet::Value with type inference
@@ -174,32 +171,7 @@ pub fn evaluate_with_custom(input: &str, vars: &HashMap<String, Value>) -> Resul
 /// Evaluate with JSON and custom functions support
 /// JSON keys with special characters are sanitized to valid variable names.
 pub fn evaluate_with_json_custom(input: &str, json_vars: &str) -> Result<Value, Error> {
-    let json_value: serde_json::Value = serde_json::from_str(json_vars)
-        .map_err(|e| Error::new(format!("Invalid JSON: {}", e), None))?;
-
-    let vars = match json_value {
-        serde_json::Value::Object(map) => {
-            let mut result = HashMap::new();
-
-            // Add the original JSON data for JQ function
-            result.insert("arguments".to_string(), Value::Json(json_vars.to_string()));
-
-            for (key, value) in map {
-                let skillet_value = json_to_value(value)?;
-                let sanitized_key = sanitize_json_key(&key);
-                result.insert(sanitized_key, skillet_value);
-            }
-            result
-        }
-        _ => {
-            return Err(Error::new(
-                "JSON must be an object with key-value pairs",
-                None,
-            ))
-        }
-    };
-
-    evaluate_with_custom(input, &vars)
+    evaluate_with_custom(input, &json_vars_to_map(json_vars)?)
 }
 
 /// Evaluate with assignments and sequences - handles complex expressions with variable assignments
