@@ -11,14 +11,15 @@ separately (library, CLI process, HTTP). All numbers come from the commands unde
 | Machine | Apple M3 Pro, 11 cores, 36 GB RAM |
 | OS | macOS 27.0.1 (26A434) |
 | Toolchain | rustc 1.89.0 / cargo 1.89.0, `bench` profile (= release) |
-| Commit | `32dec00` (`feature/lane3-perf-baseline`: develop `d917ce1` + benches + BL-029 parser change) |
+| Commit | `21a37cc` (develop after #54, #57–#64, #66) |
 | Date | 2026-11-20 |
-| Load | Shared machine, other builds/tests running. 1-min load average 3.7–3.9 during the baseline run, 7.3–8.6 during the BL-029 before/after run |
+| Load | 1-min load average 4.2–5.5 during the baseline, `lambda_scope` and `sk_http_bench` runs (11 cores); 6.3–11.1 during the before/after checks below. One other agent (docs) running |
 
 Method: `RUNS=15` samples per case, rounds interleaved (each round runs every case once), and
-the bench run 3 times. Each table cell is the median over the 3 runs of that run's median / p95
-(nearest rank). Library samples are the mean of a batch sized to ~5 ms; CLI and HTTP samples are
-single evaluations.
+the bench run 6 times, alternating with `lambda_scope`. Each table cell is the median over the
+6 runs of that run's median / p95 (nearest rank). Library samples are the mean of a batch sized
+to ~5 ms; CLI and HTTP samples are single evaluations (HTTP: one new connection per request,
+`Connection: close`).
 
 ## The set
 
@@ -44,60 +45,98 @@ Times are median / p95. µs = microseconds, ms = milliseconds.
 
 | Case | lib `parse` | lib parse + eval | CLI `sk` | CLI `sk` + repo `hooks/` | HTTP cached | HTTP uncached |
 |---|---|---|---|---|---|---|
-| `arith` | 0.38 / 0.38 µs | 0.51 / 0.53 µs | 2.97 / 3.46 ms | 2.89 / 3.20 ms | 1.18 / 1.25 ms | 1.29 / 1.34 ms |
-| `string_builtins` | 0.95 / 0.98 µs | 1.79 / 1.89 µs | 2.91 / 4.16 ms | 2.88 / 3.53 ms | 1.27 / 1.43 ms | 1.30 / 1.38 ms |
-| `array_lambdas` | 1.13 / 1.18 µs | 2.00 / 2.13 µs | 2.90 / 3.51 ms | 2.97 / 3.37 ms | 1.26 / 1.38 ms | 1.29 / 1.34 ms |
-| `jsonpath_jq` | 0.40 / 0.42 µs | 5.36 / 5.60 µs | 2.96 / 3.60 ms | 2.94 / 3.23 ms | 1.31 / 1.53 ms | 1.24 / 1.34 ms |
-| `json_vars` | 0.78 / 0.83 µs | 2.80 / 2.92 µs | 2.88 / 3.85 ms | 2.90 / 3.57 ms | 1.25 / 1.60 ms | 1.27 / 1.32 ms |
-| `json_lambda` | 1.02 / 1.08 µs | 3.60 / 3.82 µs | 2.89 / 3.84 ms | 2.94 / 3.70 ms | 1.27 / 1.36 ms | 1.28 / 1.39 ms |
-| `financial` | 0.27 / 0.29 µs | 0.46 / 0.50 µs | 2.90 / 3.87 ms | 2.90 / 3.68 ms | 1.23 / 1.30 ms | 1.29 / 1.44 ms |
-| `assign_sequence` | 0.80 / 0.83 µs | 1.04 / 1.16 µs | 2.92 / 3.61 ms | 2.98 / 3.72 ms | 1.25 / 1.38 ms | 1.29 / 1.35 ms |
-| `method_chain` | 0.39 / 0.41 µs | 0.69 / 0.73 µs | 2.91 / 3.17 ms | 2.92 / 3.53 ms | 1.26 / 1.37 ms | 1.29 / 1.36 ms |
-| `logic_if` | 0.62 / 0.64 µs | 0.93 / 1.03 µs | 2.89 / 3.50 ms | 2.93 / 3.29 ms | 1.29 / 1.38 ms | 1.26 / 1.46 ms |
-| `parse_heavy` | 23.6 / 24.5 µs | 30.2 / 31.1 µs | 2.97 / 3.51 ms | 2.94 / 3.43 ms | 1.25 / 1.34 ms | 1.35 / 1.43 ms |
+| `arith` | 0.39 / 0.41 µs | 0.50 / 0.57 µs | 3.65 / 7.59 ms | 3.62 / 5.68 ms | 107 / 208 µs | 113 / 219 µs |
+| `string_builtins` | 1.02 / 1.15 µs | 1.77 / 1.96 µs | 3.63 / 4.95 ms | 3.60 / 6.01 ms | 111 / 183 µs | 115 / 177 µs |
+| `array_lambdas` | 1.20 / 1.28 µs | 2.05 / 2.28 µs | 3.54 / 5.37 ms | 3.55 / 5.66 ms | 108 / 182 µs | 115 / 181 µs |
+| `jsonpath_jq` | 0.42 / 0.47 µs | 5.68 / 6.50 µs | 3.75 / 6.84 ms | 3.67 / 5.55 ms | 136 / 227 µs | 130 / 208 µs |
+| `json_vars` | 0.83 / 0.91 µs | 2.92 / 3.37 µs | 3.67 / 5.79 ms | 3.60 / 6.03 ms | 122 / 186 µs | 127 / 199 µs |
+| `json_lambda` | 1.11 / 1.25 µs | 3.80 / 4.52 µs | 3.67 / 5.19 ms | 3.67 / 6.10 ms | 131 / 191 µs | 136 / 211 µs |
+| `financial` | 0.29 / 0.32 µs | 0.44 / 0.51 µs | 3.72 / 4.92 ms | 3.77 / 6.17 ms | 107 / 190 µs | 111 / 171 µs |
+| `assign_sequence` | 0.84 / 0.94 µs | 1.10 / 1.17 µs | 3.53 / 4.74 ms | 3.60 / 5.22 ms | 106 / 173 µs | 115 / 187 µs |
+| `method_chain` | 0.42 / 0.46 µs | 0.73 / 0.79 µs | 3.64 / 5.28 ms | 3.69 / 6.25 ms | 108 / 174 µs | 108 / 176 µs |
+| `logic_if` | 0.65 / 0.70 µs | 0.95 / 1.02 µs | 3.59 / 5.22 ms | 3.79 / 5.74 ms | 124 / 226 µs | 115 / 196 µs |
+| `parse_heavy` | 24.7 / 28.1 µs | 29.7 / 31.8 µs | 3.62 / 5.04 ms | 3.75 / 5.17 ms | 109 / 180 µs | 147 / 243 µs |
 
 Reference points:
-- Process-start floor (`/usr/bin/true`): 0.92 / 1.24 ms.
-- `GET /health` (`curl -w %{time_total}`, 15 requests): 1.08 ms median, so HTTP has the same
-  ~1.1–1.3 ms floor without evaluating anything.
-- `sk_http_bench 127.0.0.1:PORT -n 1000` (expression `10*5+sqrt(25)`), 2 runs each:
+- Process-start floor (`/usr/bin/true`): 1.12 / 1.50 ms (per-run medians 0.95–1.70 ms).
+- `GET /health` (`curl -w %{time_total}`, 15 requests): 0.29 ms median.
+- `sk_http_bench 127.0.0.1:PORT -n 1000` (expression `10*5+sqrt(25)`), 9 runs each, cached and
+  `--no-cache` alternating. Each run sweeps 1, 5, 10, 20 and 50 concurrent connections;
+  median (min–max) req/s:
 
   | Concurrent connections | 1 | 5 | 10 | 20 | 50 |
   |---|---|---|---|---|---|
-  | Cached, req/s | 770–777 | 3710–3875 | 6312–6776 | 8055–13464 | 16090–17332 |
-  | `--no-cache`, req/s | 764–779 | 3658–3750 | 5884–7065 | 8511–13739 | 16620–20933 |
+  | Cached | 14071 (10026–15625) | 34929 (25816–39412) | 36944 (28883–39849) | 36897 (30110–39617) | 35835 (34170–39056) |
+  | `--no-cache` | 13519 (7555–15264) | 35942 (32950–37507) | 36774 (31374–40419) | 37331 (34582–40451) | 37068 (10088–44346) |
 
-  The cached/uncached ranges overlap: under this load, the cache makes no measurable difference
-  for this expression.
+  Every request succeeded, including "Range operations" (fixed in #57). Throughput stops
+  growing at ~5 connections: the server runs with `--threads 4`.
+
+### `lambda_scope` (large inputs, library layer)
+
+`RUNS=9 cargo bench --bench lambda_scope`, 6 runs interleaved with the baseline; median over the
+runs of median / p95. `:nums` is 100k numbers (700 KB of JSON), `:rows` 10k objects (449 KB).
+
+| Formula | median / p95 |
+|---|---|
+| `:nums.map(:x * 1).sum()` | 2.10 / 2.44 ms |
+| `:nums.map(:x.abs()).sum()` | 4.52 / 5.05 ms |
+| `:rows.map(:x.price).sum()` | 2.94 / 3.07 ms |
+| `:rows.map(:x.price.round(1)).sum()` | 3.44 / 3.93 ms |
+| `:rows.map(:x.price / :rows.length()).sum()` | 3.62 / 3.79 ms |
+
+## Changes since the first baseline
+
+The first baseline was taken on `32dec00` (develop `d917ce1` + benches + BL-029) at load 3.7–3.9.
+Before → after, median:
+
+| What | `32dec00` | `21a37cc` | Why |
+|---|---|---|---|
+| HTTP request, cached (`arith`) | 1.18 ms | 0.107 ms | #54: the accept loop blocks in `accept` instead of sleeping 1 ms when no connection is waiting |
+| HTTP request, uncached (`arith`) | 1.29 ms | 0.113 ms | same |
+| HTTP, all 11 cases, cached / uncached | 1.18–1.31 / 1.24–1.35 ms | 106–136 / 108–147 µs | same |
+| `GET /health` (curl) | 1.08 ms | 0.29 ms | same |
+| `sk_http_bench`, 1 connection | 764–779 req/s | 13519–14071 req/s (medians) | same; ~18× |
+| `sk_http_bench`, 50 connections | 16090–20933 req/s | 35835–37068 req/s (medians) | same; ~2.2× |
+| Library, all cases (parse + eval) | 0.46–30.2 µs | −4% … +6% per case | different sessions, not an A/B; #64's same-session A/B found −4% … +3% |
+| CLI `sk` | 2.9 ms | 3.5–3.8 ms in the table; unchanged in a direct A/B | see below |
+| `lambda_scope` vs `bf7c20a` (before the evaluation budget) | +5–12% (after BL-027) | −4% (`:x * 1`), +7–8% (the others) | #64 (BL-038) took back part of the BL-027 cost |
+
+The CLI row in the table is higher than the first baseline, but so is the process-start floor
+(0.92 → 1.12 ms), and the per-run medians spread from 3.1 to 4.2 ms. A direct check, `sk` built
+at `32dec00` and at `21a37cc`, alternated 300 times each with `/usr/bin/true` (Python
+`subprocess`, so all three include ~1.3 ms of launcher overhead; load 9.7–11.1), gave
+4.81 → 4.94 ms and 4.51 → 4.56 ms in two runs: +1–3%, within noise. The CLI did not get slower;
+the machine was busier.
+
+The `lambda_scope` row is a direct check as well: the bench built at `bf7c20a` and at `21a37cc`,
+6 alternating rounds of `RUNS=9`, load 6.3: 2.08 → 2.00, 4.13 → 4.42, 2.69 → 2.87,
+3.11 → 3.32, 3.31 → 3.59 ms. What is left in the `:rows` cases is mostly the up-front charge for
+parsing JSON text (BL-036 would remove it).
 
 ## What the numbers say
 
-1. **Library evaluation takes 0.5–6 µs** for typical expressions, and ~30 µs for 2.6 KB of text.
-   On short expressions, parsing is 40–75% of the total.
-2. **The CLI takes ~2.9 ms per call no matter which expression runs.** About 0.9 ms of that is
-   OS process start; the other ~2 ms is `sk` start-up. Loading the repo's one JS hook does not
-   change it measurably, so the JS plugin file itself is not the cost. Not profiled yet;
-   QuickJS runtime creation is the main suspect.
-3. **HTTP takes ~1.25 ms per request no matter which expression runs, cached or not.** `/health`
-   costs the same, so the time goes to the server's accept loop, not to evaluation: the listener
-   is non-blocking and sleeps 1 ms whenever `accept` would block (`src/bin/sk_http_server.rs`,
-   accept loop). With evaluation at 1–30 µs, the expression cache cannot show a benefit until
-   that floor is gone.
-4. **One `sk_http_bench` case is broken**: "Range operations" (`range(1,50).sum()`) fails on
-   every request, because there is no `RANGE` function.
+1. **Library evaluation takes 0.4–6 µs** for typical expressions, and ~30 µs for 2.6 KB of text.
+   On short expressions, parsing is 40–80% of the total.
+2. **The CLI takes ~3–4 ms per call no matter which expression runs.** About 1 ms of that is
+   OS process start; the other ~2–2.5 ms is `sk` start-up. Loading the repo's one JS hook does
+   not change it: QuickJS only starts when an expression calls a hook (BL-040). The time goes to
+   loading system libraries (CoreFoundation) before `main` runs (BL-055).
+3. **HTTP takes ~0.1 ms per request** (new connection each time), 10× less than the first
+   baseline. Evaluation is still only 0.5–30 µs of that, so cached and uncached requests cost
+   about the same; the cache shows only for text that is expensive to parse (`parse_heavy`: 109 µs cached, 147 µs uncached).
+   The connection itself (connect, thread hand-off, write, close) is now the floor.
+4. **`sk_http_bench -c` has no effect.** The concurrency sweep is fixed at 1, 5, 10, 20, 50
+   (`run_concurrent_tests` in `src/bin/sk_http_bench.rs`); `-c` is only printed in the header.
 
 ## The "100x" claim
 
-`README.md`, `docs/README.md` and `docs/DEVELOPMENT_GUIDE.md` say "~3 ms evaluation time (100x+
-improvement from original 300 ms)". **It can't be reproduced as written:**
-- No benchmark, commit or script in the repo defines the "original 300 ms", so the 100x ratio has
-  nothing to be checked against.
-- "~3 ms" is not evaluation time. In-process evaluation of this set is 0.5–30 µs, about 100–6000×
-  less than 3 ms. ~3 ms is what one `sk` **process** takes (2.9 ms here), and almost all of it
-  is process start.
-
-A claim backed by this file would read: "evaluation is microseconds in-process
-(`cargo bench --bench baseline`); one CLI call is ~3 ms, mostly process start."
+Earlier versions of `README.md`, `docs/README.md` and `docs/DEVELOPMENT_GUIDE.md` said "~3 ms
+evaluation time (100x+ improvement from original 300 ms)". No benchmark defined the "original
+300 ms", and ~3 ms is the time of one `sk` process, not of evaluation (0.4–30 µs in-process). The
+claim was removed in `fa5ad50` (BL-006). A claim backed by this file reads: "evaluation is
+microseconds in-process (`cargo bench --bench baseline`); one CLI call is ~3–4 ms, mostly
+process start; one HTTP request is ~0.1 ms."
 
 ## BL-029: parser stack and parse speed
 
@@ -164,10 +203,17 @@ LAYERS=cli,http CASE=json cargo bench --bench baseline
 #   target/release/deps/baseline-<hash> aside, then alternate the two binaries:
 for r in 1 2 3 4 5 6; do RUNS=15 LAYERS=lib ./baseline_before; RUNS=15 LAYERS=lib ./baseline_after; done
 
-# HTTP throughput, with and without the expression cache:
-SKILLET_HOOKS_DIR=$(mktemp -d) target/release/sk_http_server 5872 --threads 4 &
-target/release/sk_http_bench 127.0.0.1:5872 -n 1000
-target/release/sk_http_bench 127.0.0.1:5872 -n 1000 --no-cache
+# This baseline: 6 rounds, baseline and lambda_scope alternating (check the port is free first:
+#   lsof -nP -iTCP:5873 -sTCP:LISTEN):
+for r in 1 2 3 4 5 6; do
+  uptime; RUNS=15 PORT=5873 cargo bench --bench baseline; RUNS=9 cargo bench --bench lambda_scope
+done
+
+# HTTP throughput, with and without the expression cache (9 runs each, alternating):
+SKILLET_HOOKS_DIR=$(mktemp -d) target/release/sk_http_server 5874 --threads 4 &
+target/release/sk_http_bench 127.0.0.1:5874 -n 1000
+target/release/sk_http_bench 127.0.0.1:5874 -n 1000 --no-cache
+for i in $(seq 15); do curl -s -o /dev/null -w '%{time_total}\n' http://127.0.0.1:5874/health; done
 kill %1
 
 # Stack per nesting level (BL-029):
