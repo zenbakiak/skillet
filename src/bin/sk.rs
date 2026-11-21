@@ -1,5 +1,7 @@
 use serde_json::json;
-use skillet::{evaluate_with_assignments, evaluate_with_custom, JSPluginLoader, Value};
+#[cfg(feature = "plugins")]
+use skillet::JSPluginLoader;
+use skillet::{evaluate_with_assignments, evaluate_with_custom, Value};
 use std::collections::HashMap;
 use std::time::Instant;
 
@@ -21,18 +23,21 @@ fn main() {
 
     // Register built-in Rust functions (none by default)
 
-    // Auto-load JavaScript functions from hooks directory
-    let hooks_dir = std::env::var("SKILLET_HOOKS_DIR").unwrap_or_else(|_| "hooks".to_string());
-    let js_loader = JSPluginLoader::new(hooks_dir);
+    // Auto-load JavaScript functions from hooks directory (only with the `plugins` feature)
+    #[cfg(feature = "plugins")]
+    {
+        let hooks_dir = std::env::var("SKILLET_HOOKS_DIR").unwrap_or_else(|_| "hooks".to_string());
+        let js_loader = JSPluginLoader::new(hooks_dir);
 
-    match js_loader.auto_register() {
-        Ok(count) => {
-            if count > 0 {
-                eprintln!("Loaded {} custom JavaScript function(s)", count);
+        match js_loader.auto_register() {
+            Ok(count) => {
+                if count > 0 {
+                    eprintln!("Loaded {} custom JavaScript function(s)", count);
+                }
             }
-        }
-        Err(e) => {
-            eprintln!("Warning: Failed to load JavaScript functions: {}", e);
+            Err(e) => {
+                eprintln!("Warning: Failed to load JavaScript functions: {}", e);
+            }
         }
     }
 

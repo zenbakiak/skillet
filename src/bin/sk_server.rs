@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
-use skillet::{evaluate_with_assignments, evaluate_with_custom, JSPluginLoader, Value};
+#[cfg(feature = "plugins")]
+use skillet::JSPluginLoader;
+use skillet::{evaluate_with_assignments, evaluate_with_custom, Value};
 use std::collections::{BTreeMap, HashMap};
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::net::{TcpListener, TcpStream};
@@ -504,19 +506,22 @@ fn main() {
     // Setup signal handlers and running flag
     let running = setup_signal_handlers();
 
-    // Auto-load JavaScript functions
-    let hooks_dir = std::env::var("SKILLET_HOOKS_DIR").unwrap_or_else(|_| "hooks".to_string());
-    let js_loader = JSPluginLoader::new(hooks_dir);
+    // Auto-load JavaScript functions (only with the `plugins` feature)
+    #[cfg(feature = "plugins")]
+    {
+        let hooks_dir = std::env::var("SKILLET_HOOKS_DIR").unwrap_or_else(|_| "hooks".to_string());
+        let js_loader = JSPluginLoader::new(hooks_dir);
 
-    match js_loader.auto_register() {
-        Ok(count) => {
-            if count > 0 && !daemon_mode {
-                eprintln!("Loaded {} custom JavaScript function(s)", count);
+        match js_loader.auto_register() {
+            Ok(count) => {
+                if count > 0 && !daemon_mode {
+                    eprintln!("Loaded {} custom JavaScript function(s)", count);
+                }
             }
-        }
-        Err(e) => {
-            if !daemon_mode {
-                eprintln!("Warning: Failed to load JavaScript functions: {}", e);
+            Err(e) => {
+                if !daemon_mode {
+                    eprintln!("Warning: Failed to load JavaScript functions: {}", e);
+                }
             }
         }
     }

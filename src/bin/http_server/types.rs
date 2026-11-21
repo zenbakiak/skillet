@@ -152,6 +152,7 @@ pub struct CacheStatsResponse {
     pub total_saved_time_ms: f64,
 }
 
+#[cfg(feature = "plugins")]
 #[derive(Debug, Deserialize)]
 pub struct UploadJSRequest {
     pub filename: String,
@@ -161,6 +162,7 @@ pub struct UploadJSRequest {
     pub file_content: Option<String>, // For file uploads as base64 or direct content
 }
 
+#[cfg(feature = "plugins")]
 #[derive(Debug, Serialize)]
 pub struct UploadJSResponse {
     pub success: bool,
@@ -170,6 +172,7 @@ pub struct UploadJSResponse {
     pub error: Option<String>,
 }
 
+#[cfg(feature = "plugins")]
 #[derive(Debug, Deserialize)]
 pub struct UpdateJSRequest {
     pub filename: String,
@@ -179,6 +182,7 @@ pub struct UpdateJSRequest {
     pub file_content: Option<String>, // For file uploads as base64 or direct content
 }
 
+#[cfg(feature = "plugins")]
 #[derive(Debug, Serialize)]
 pub struct UpdateJSResponse {
     pub success: bool,
@@ -188,11 +192,13 @@ pub struct UpdateJSResponse {
     pub error: Option<String>,
 }
 
+#[cfg(feature = "plugins")]
 #[derive(Debug, Deserialize)]
 pub struct DeleteJSRequest {
     pub filename: String,
 }
 
+#[cfg(feature = "plugins")]
 #[derive(Debug, Serialize)]
 pub struct DeleteJSResponse {
     pub success: bool,
@@ -200,6 +206,7 @@ pub struct DeleteJSResponse {
     pub error: Option<String>,
 }
 
+#[cfg(feature = "plugins")]
 #[derive(Debug, Serialize)]
 pub struct JSFunctionInfo {
     pub filename: String,
@@ -214,6 +221,7 @@ pub struct JSFunctionInfo {
     pub validation_error: Option<String>,
 }
 
+#[cfg(feature = "plugins")]
 #[derive(Debug, Serialize)]
 pub struct ListJSResponse {
     pub success: bool,
@@ -222,6 +230,7 @@ pub struct ListJSResponse {
     pub error: Option<String>,
 }
 
+#[cfg(feature = "plugins")]
 #[derive(Debug, Serialize)]
 pub struct ReloadHooksResponse {
     pub success: bool,
@@ -230,6 +239,7 @@ pub struct ReloadHooksResponse {
     pub error: Option<String>,
 }
 
+#[cfg(feature = "plugins")]
 #[derive(Debug, Serialize)]
 pub struct ValidationResults {
     pub syntax_valid: bool,
