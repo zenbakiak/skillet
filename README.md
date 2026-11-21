@@ -28,7 +28,7 @@ Skillet is a high-performance, embeddable expression engine written in Rust, ins
 **Operations**: Arithmetic, logical, comparisons, method chaining, array operations, lambdas
 **Extensions**: JavaScript plugins, Rust custom functions, HTTP/TCP server modes
 
-📚 **[Full Documentation](DOCUMENTATION.md)** | 📖 **[API Reference](API_REFERENCE.md)**
+📚 **[Full Documentation](DOCUMENTATION.md)** | 📖 **[API Reference](API_REFERENCE.md)** | 🛡️ **[Limits](docs/guide/limits.md)**
 
 ## Build
 

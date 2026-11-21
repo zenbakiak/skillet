@@ -12,6 +12,9 @@ Complete reference for all Skillet functions, methods, and operators.
 6. [Type Casting](#type-casting)
 7. [Variable Syntax](#variable-syntax)
 
+Evaluation limits (nesting depth 128, 256 MiB budget, server deadline) and their error texts are
+documented in [docs/guide/limits.md](docs/guide/limits.md).
+
 ---
 
 ## Operators
