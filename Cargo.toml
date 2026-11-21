@@ -8,6 +8,7 @@ license = "MIT OR Apache-2.0"
 readme = "README.md"
 # documentation will work after first publish
 documentation = "https://docs.rs/skillet"
+repository = "https://github.com/zenbakiak/skillet"
 keywords = ["excel", "formula", "expression", "language", "eval"]
 
 # Keep the published crate small and clean
