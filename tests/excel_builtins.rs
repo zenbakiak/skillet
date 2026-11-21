@@ -39,14 +39,18 @@ fn string(expr: &str) -> String {
 // ---- D-2: TIME, IPMT, COUNTIF (B-1, B-2, B-3) ----
 
 #[test]
-fn time_uses_excel_truncation_and_wraps_at_24_hours() {
-    close("=TIME(14, 30, 0)", 52200.0);
-    close("=TIME(25, 0, 0)", 3600.0); // Excel: TIME(25,0,0) = TIME(1,0,0)
-    close("=TIME(0, 750, 0)", 45000.0); // 750 minutes = 12:30
-    close("=TIME(0, 0, 2000)", 2000.0); // 0:33:20
-    close("=TIME(1, -30, 0)", 1800.0); // a negative part is fine while the total is not
-    close("=TIME(1.9, 0, 0)", 3600.0); // parts are truncated
-    close("=TIME(48, 0, 1)", 1.0);
+fn time_is_a_fraction_of_a_day_with_excel_truncation_and_wrap() {
+    let day = 86400.0;
+    close("=TIME(14, 30, 0)", 52200.0 / day); // 0.6041666...
+    close("=TIME(12, 0, 0)", 0.5);
+    close("=TIME(25, 0, 0)", 3600.0 / day); // Excel: TIME(25,0,0) = TIME(1,0,0)
+    close("=TIME(0, 750, 0)", 0.520833333333333); // Microsoft: 750 minutes = 12:30
+    close("=TIME(0, 0, 2000)", 2000.0 / day); // Microsoft: 0:33:20
+    close("=TIME(1, -30, 0)", 1800.0 / day); // a negative part is fine while the total is not
+    close("=TIME(1.9, 0, 0)", 3600.0 / day); // parts are truncated
+    close("=TIME(48, 0, 1)", 1.0 / day);
+    let now = num("=TIME()");
+    assert!((0.0..1.0).contains(&now), "TIME() = {now}");
     err("=TIME(0, -1, 0)", "#NUM!");
     err("=TIME(32768, 0, 0)", "#NUM!");
     err("=TIME(-1, 0, 0)", "#NUM!");
@@ -211,15 +215,29 @@ fn empty_aggregates_match_excel() {
 
 #[test]
 fn percentile_and_quartile_reject_nan_and_out_of_range() {
-    err("=PERCENTILE_INC([1, 2, 3], 0/0)", "between 0 and 1");
-    err("=PERCENTILE_INC([], 0/0)", "between 0 and 1");
+    let nan_err = |expr: &str, needle: &str| {
+        let mut vars = std::collections::HashMap::new();
+        vars.insert("nan".to_string(), Value::Number(f64::NAN));
+        vars.insert("inf".to_string(), Value::Number(f64::INFINITY));
+        match skillet::evaluate_with(expr, &vars) {
+            Err(e) => assert!(e.message.contains(needle), "{expr}: {e:?}"),
+            Ok(v) => panic!("{expr}: expected an error, got {v:?}"),
+        }
+    };
+    nan_err("=PERCENTILE_INC([1, 2, 3], :nan)", "between 0 and 1");
+    nan_err("=PERCENTILE_INC([], :nan)", "between 0 and 1");
     err("=PERCENTILE_INC([1, 2, 3], 1.5)", "between 0 and 1");
-    err("=QUARTILE_INC([1, 2, 3, 4], 0/0)", "0-4");
+    nan_err("=QUARTILE_INC([1, 2, 3, 4], :nan)", "0-4");
     err("=QUARTILE_INC([1, 2, 3, 4], -0.5)", "0-4");
     err("=QUARTILE_INC([1, 2, 3, 4], 4.9)", "0-4");
     close("=QUARTILE_INC([1, 2, 3, 4], 2.7)", 2.5); // truncated after the range check
-    close("=MEDIAN([1, 1/0, 3])", 3.0); // infinity is legal data
-    err("=MEDIAN([1, 0/0, 3])", "NaN");
+    let mut vars = std::collections::HashMap::new();
+    vars.insert("inf".to_string(), Value::Number(f64::INFINITY));
+    assert_eq!(
+        skillet::evaluate_with("=MEDIAN([1, :inf, 3])", &vars).unwrap(),
+        Value::Number(3.0)
+    ); // infinity from the host is legal data
+    nan_err("=MEDIAN([1, :nan, 3])", "NaN");
 }
 
 // ---- D-7 and the rest: MOD, TRIM, ROUND, INT, CEILING, FLOOR ----
@@ -326,4 +344,21 @@ fn sort_accepts_excel_sort_order() {
             Value::Number(3.0)
         ])
     );
+}
+
+// ---- D-1 for operators (ADR-0018) ----
+
+#[test]
+fn operators_error_instead_of_nan_or_infinity() {
+    err("=1 / 0", "Division by zero");
+    err("=0 / 0", "Division by zero");
+    err("=5 % 0", "Division by zero");
+    err("=0 ^ (-1)", "Division by zero");
+    err("=0 ^ 0", "#NUM!");
+    err("=10 ^ 400", "#NUM!");
+    err("=10 ^ 308 * 10", "#NUM!");
+    err("=(-8) ^ (1 / 3)", "#NUM!");
+    close("=7 / 2", 3.5);
+    close("=-10 % 3", -1.0); // % keeps the left operand's sign; MOD is Excel's
+    close("=2 ^ -1", 0.5);
 }
