@@ -340,15 +340,7 @@ impl Evaluator {
                 let bn = b
                     .as_number()
                     .ok_or_else(|| Error::new("Arithmetic op on non-number", None))?;
-                Ok(Value::Number(match op {
-                    BinaryOp::Add => an + bn,
-                    BinaryOp::Sub => an - bn,
-                    BinaryOp::Mul => an * bn,
-                    BinaryOp::Div => an / bn,
-                    BinaryOp::Mod => an % bn,
-                    BinaryOp::Pow => an.powf(bn),
-                    _ => unreachable!(),
-                }))
+                crate::runtime::arithmetic::checked_binary(op, an, bn).map(Value::Number)
             }
             BinaryOp::Eq
             | BinaryOp::Ne

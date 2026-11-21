@@ -2,6 +2,7 @@
 //! `#VALUE!`, `#NUM!` or `#DIV/0!` these return an `Error`, and where Excel returns a value
 //! (for example `MAX` of no numbers is 0) they return the same value.
 
+use crate::ast::BinaryOp;
 use crate::error::Error;
 use crate::runtime::utils::{number_arg, optional_number_arg};
 use crate::types::Value;
@@ -235,4 +236,31 @@ fn modulo(args: &[Value]) -> Result<Value, Error> {
     let r = a - b * (a / b).floor();
     // Rounding can land exactly on the divisor (MOD(-1e-20, 3)); the result must stay below it.
     Ok(Value::Number(if r == b { 0.0 } else { r }))
+}
+
+/// An arithmetic operator (`+ - * / % ^`) on two numbers, with Excel's errors (BL-054, D-1):
+/// division or `%` by 0 and `0 ^ negative` are `#DIV/0!`, `0 ^ 0` is `#NUM!`, and any result
+/// that is not a finite number (overflow to infinity, NaN) is `#NUM!`. `%` keeps the sign of
+/// the left operand; `MOD` is the Excel remainder.
+pub(crate) fn checked_binary(op: BinaryOp, a: f64, b: f64) -> Result<f64, Error> {
+    let div_zero = || Error::new("Division by zero (#DIV/0!)", None);
+    let r = match op {
+        BinaryOp::Add => a + b,
+        BinaryOp::Sub => a - b,
+        BinaryOp::Mul => a * b,
+        BinaryOp::Div | BinaryOp::Mod if b == 0.0 => return Err(div_zero()),
+        BinaryOp::Div => a / b,
+        BinaryOp::Mod => a % b,
+        BinaryOp::Pow if a == 0.0 && b < 0.0 => return Err(div_zero()),
+        BinaryOp::Pow if a == 0.0 && b == 0.0 => {
+            return Err(Error::new("0 ^ 0 is undefined (#NUM!)", None))
+        }
+        BinaryOp::Pow => a.powf(b),
+        _ => return Err(Error::new("Not an arithmetic operator", None)),
+    };
+    if r.is_finite() {
+        Ok(r)
+    } else {
+        Err(Error::new("Result is not a finite number (#NUM!)", None))
+    }
 }
