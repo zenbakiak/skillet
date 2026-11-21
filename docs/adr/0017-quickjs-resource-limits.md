@@ -1,6 +1,6 @@
 # 0017. Resource limits for JavaScript plugins (QuickJS)
 
-- Status: Proposed
+- Status: Accepted (2026-11-21: limits option B, §6 option H1, `httpGet` is removed)
 - Date: 2026-11-20
 - Deciders: Maintainer (accepts), Security Reviewer (author), Rust Engineer
 - Related: BL-018, ADR-0007 (extensibility), ADR-0011 (evaluation budget and deadline),
@@ -62,7 +62,7 @@ outside the repo depending on `rquickjs = "=0.11.0"` (same version, same feature
 | 20M-iteration JS loop, best of 5 | with vs. without handler | 1155 ms vs. 1484 ms (no measurable overhead; difference is noise) |
 | Create runtime + context, eval `1` | with vs. without limits | 86 µs vs. 84 µs |
 
-## Decision (proposed)
+## Decision (accepted: §1–§5 as written, option B; §6 option H1)
 
 ### 1. Memory: `JS_MEMORY_LIMIT = 64 MiB` per call
 Call `set_memory_limit(64 MiB)` on every runtime. Hooks are small pure functions: a runtime

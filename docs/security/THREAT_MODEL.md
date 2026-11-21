@@ -9,6 +9,14 @@ This page describes the system **as built today**: what an attacker controls on 
 what already holds (with the tests that prove it), and what does not hold yet (with backlog ids).
 Gaps that are not fixed yet are described by what is missing, not by how to exploit them.
 
+**Status 2026-11-21.** Fixed since this review: the PID file no longer follows symlinks
+(#63, #72); BL-046, BL-047 and BL-048 (#62); BL-045 (#54); BL-043 (#57); BL-044 (#53); the
+registry lock is released before a custom function runs. In progress under BL-051, maintainer
+decisions taken: QuickJS limits and bounded result conversion (ADR-0017, Accepted), `httpGet`
+removed, upload path validation, CORS and development mode, `SKILLET_ADMIN_TOKEN`, and
+fail-closed Docker defaults. Until those land, run servers with tokens set and do not expose
+the Docker image without them.
+
 ## 1. Assets and trust levels
 
 | Who | Trust | Can do |
