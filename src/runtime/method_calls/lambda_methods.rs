@@ -5,6 +5,7 @@
 
 use crate::ast::Expr;
 use crate::error::Error;
+use crate::limits::charge_value;
 use crate::runtime::evaluator::{EvaluationContext, Evaluator, Scope};
 use crate::types::Value;
 
@@ -42,6 +43,7 @@ pub fn exec_filter(
     let mut scope = lambda_scope(ctx);
     let mut filtered = Vec::with_capacity(items.len());
     for item in items {
+        charge_value(item)?;
         scope.set(&param, item.clone());
         if let Value::Boolean(true) = Evaluator::eval(lambda_expr, &scope)? {
             filtered.push(item.clone());
@@ -65,6 +67,7 @@ pub fn exec_map(
     let mut scope = lambda_scope(ctx);
     let mut mapped = Vec::with_capacity(items.len());
     for item in items {
+        charge_value(item)?;
         scope.set(&param, item.clone());
         mapped.push(Evaluator::eval(lambda_expr, &scope)?);
     }
@@ -85,6 +88,7 @@ pub fn exec_find(
 
     let mut scope = lambda_scope(ctx);
     for item in items {
+        charge_value(item)?;
         scope.set(&param, item.clone());
         if let Value::Boolean(true) = Evaluator::eval(lambda_expr, &scope)? {
             return Ok(item.clone());
@@ -113,6 +117,7 @@ pub fn exec_reduce(
     let acc_param = param_name(args_expr, 3, "acc");
 
     for item in items {
+        charge_value(item)?;
         // Same order as before: when both names are equal the accumulator wins.
         scope.set(&val_param, item.clone());
         scope.set(&acc_param, accumulator);

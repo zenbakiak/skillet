@@ -14,7 +14,7 @@ pub use custom::{CustomFunction, FunctionRegistry};
 pub use error::Error;
 #[cfg(feature = "plugins")]
 pub use js_plugin::{JSPluginLoader, JavaScriptFunction};
-pub use limits::MAX_NESTING_DEPTH;
+pub use limits::{with_limits, EvalLimits, MAX_EVAL_BYTES, MAX_NESTING_DEPTH};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 pub use types::Value;
