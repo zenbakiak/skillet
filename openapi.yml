@@ -22,7 +22,10 @@ info:
       `Content-Length` over 1 MB, gets HTTP 400 with `"error": "413 Payload Too Large"`.
     - The whole request must arrive within 30 s of the first read. Otherwise the server answers
       HTTP 400 with `"error": "408 Request Timeout"`.
-    - Each socket write of a response times out after 10 s; the connection is then dropped.
+    - Writing one response may take at most 10 s in total. If the client reads more slowly, the
+      server stops writing and closes the connection: the client gets a body shorter than
+      `Content-Length` and no error message. Reading the largest results (up to the 256 MiB
+      budget) in time needs about 25 MB/s.
     - Evaluation limits (nesting depth, 256 MiB budget, 10 s evaluation deadline) are described
       on `/eval` and in docs/guide/limits.md.
 
@@ -249,6 +252,9 @@ paths:
       summary: Upload JavaScript function
       description: |
         Upload and validate a new JavaScript function. Supports both JSON and multipart form-data uploads.
+
+        `filename` must be a plain name matching `^[A-Za-z0-9_-]+\.js$`; the file is saved
+        directly in the hooks directory. Any other name gets HTTP 400 (see the 400 example).
         
         ## JavaScript Function Format
         Functions must include metadata comments:
@@ -283,7 +289,8 @@ paths:
               properties:
                 filename:
                   type: string
-                  description: Name of the JavaScript file (must end with .js)
+                  pattern: '^[A-Za-z0-9_-]+\.js$'
+                  description: 'Plain file name matching `^[A-Za-z0-9_-]+\.js$` (letters, digits, `_`, `-`, ending in `.js`; no directories). Anything else gets HTTP 400.'
                   example: "add_numbers.js"
                 js_code:
                   type: string
@@ -311,11 +318,21 @@ paths:
                   example_test_passed: true
                   example_result: "Expected: 8, Got: 8 ✓"
         '400':
-          description: Invalid function or validation failed
+          description: |
+            Invalid filename, invalid function, or validation failed. A name that does not end
+            in `.js` gets `"message": "Filename must end with .js extension"` and
+            `"error": "Invalid file extension"`; any other name outside the pattern (a dot or
+            `/` in the stem, an empty stem) gets the example below.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/UploadJSResponse'
+              example:
+                success: false
+                message: "Filename must be a plain name of letters, digits, '_' or '-' ending in .js (no directories)"
+                function_name: null
+                validation_results: null
+                error: "Invalid filename"
         '401':
           description: Admin authentication required
           content:
@@ -339,6 +356,10 @@ paths:
       description: |
         Update an existing JavaScript function. The file must already exist.
         Supports both JSON and multipart form-data formats.
+
+        `filename` must be a plain name matching `^[A-Za-z0-9_-]+\.js$`, so only files
+        directly in the hooks directory can be updated. Hooks in subdirectories are still
+        loaded and listed by `/list-js`, but this endpoint answers 400 for them.
       security:
         - adminToken: []
       requestBody:
@@ -352,7 +373,8 @@ paths:
               properties:
                 filename:
                   type: string
-                  description: Name of the JavaScript file to update
+                  pattern: '^[A-Za-z0-9_-]+\.js$'
+                  description: 'Name of the JavaScript file to update. Plain file name matching `^[A-Za-z0-9_-]+\.js$` (letters, digits, `_`, `-`, ending in `.js`; no directories). Anything else gets HTTP 400.'
                 js_code:
                   type: string
                   description: Updated JavaScript function code
@@ -370,11 +392,17 @@ paths:
               schema:
                 $ref: '#/components/schemas/UpdateJSResponse'
         '400':
-          description: Invalid function or validation failed
+          description: Invalid filename (same messages as `/upload-js`), invalid function, or validation failed
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/UpdateJSResponse'
+              example:
+                success: false
+                message: "Filename must be a plain name of letters, digits, '_' or '-' ending in .js (no directories)"
+                function_name: null
+                validation_results: null
+                error: "Invalid filename"
         '404':
           description: |
             Function file not found, or JavaScript plugins are not enabled in this build
@@ -388,7 +416,11 @@ paths:
     delete:
       tags: [javascript]
       summary: Delete JavaScript function
-      description: Delete an existing JavaScript function file from the hooks directory
+      description: |
+        Delete an existing JavaScript function file from the hooks directory.
+        `filename` must be a plain name matching `^[A-Za-z0-9_-]+\.js$`, so only files
+        directly in the hooks directory can be deleted. Hooks in subdirectories are still
+        loaded and listed by `/list-js`, but this endpoint answers 400 for them.
       security:
         - adminToken: []
       requestBody:
@@ -407,11 +439,15 @@ paths:
               schema:
                 $ref: '#/components/schemas/DeleteJSResponse'
         '400':
-          description: Invalid filename
+          description: Invalid filename (same messages as `/upload-js`)
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/DeleteJSResponse'
+              example:
+                success: false
+                message: "Filename must be a plain name of letters, digits, '_' or '-' ending in .js (no directories)"
+                error: "Invalid filename"
         '404':
           description: |
             Function file not found, or JavaScript plugins are not enabled in this build
@@ -429,6 +465,9 @@ paths:
       description: |
         List all JavaScript functions in the hooks directory with detailed metadata,
         including validation status, function signatures, and file information.
+        Subdirectories are included; their `filename` is the relative path
+        (for example `math/double_it.js`). Such files cannot be updated or deleted through
+        `/update-js` or `/delete-js`.
       security:
         - adminToken: []
       responses:
@@ -660,7 +699,8 @@ components:
       properties:
         filename:
           type: string
-          description: JavaScript filename (must end with .js)
+          pattern: '^[A-Za-z0-9_-]+\.js$'
+          description: 'Plain file name matching `^[A-Za-z0-9_-]+\.js$` (letters, digits, `_`, `-`, ending in `.js`; no directories). Anything else gets HTTP 400.'
           example: "my_function.js"
         js_code:
           type: string
@@ -694,7 +734,8 @@ components:
       properties:
         filename:
           type: string
-          description: JavaScript filename to update
+          pattern: '^[A-Za-z0-9_-]+\.js$'
+          description: 'JavaScript file to update. Plain file name matching `^[A-Za-z0-9_-]+\.js$` (letters, digits, `_`, `-`, ending in `.js`; no directories). Anything else gets HTTP 400.'
         js_code:
           type: string
           description: Updated JavaScript function code
@@ -726,7 +767,8 @@ components:
       properties:
         filename:
           type: string
-          description: JavaScript filename to delete
+          pattern: '^[A-Za-z0-9_-]+\.js$'
+          description: 'JavaScript file to delete. Plain file name matching `^[A-Za-z0-9_-]+\.js$` (letters, digits, `_`, `-`, ending in `.js`; no directories). Anything else gets HTTP 400.'
       required:
         - filename
 
