@@ -6,6 +6,7 @@ pub mod eval;
 pub mod js_management;
 #[cfg(feature = "plugins")]
 pub mod multipart;
+pub mod pid_file;
 pub mod request_limits;
 pub mod response_size;
 pub mod stats;

@@ -74,6 +74,10 @@ use request_limits::{DeadlineReader, DeadlineWriter, MAX_REQUEST_SIZE};
 mod token_eq;
 use token_eq::tokens_match;
 
+#[path = "http_server/pid_file.rs"]
+mod pid_file;
+use pid_file::write_pid_file;
+
 /// Wall-clock limit for one evaluation (ADR-0011), same as `sk_http_server`. No flag or env var.
 const SERVER_EVAL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
@@ -444,16 +448,6 @@ fn daemonize() -> Result<(), Box<dyn std::error::Error>> {
         libc::dup2(null_fd, libc::STDERR_FILENO);
     }
 
-    Ok(())
-}
-
-fn write_pid_file(pid_file: &str) -> Result<(), Box<dyn std::error::Error>> {
-    use std::fs::File;
-    use std::io::Write;
-
-    let pid = std::process::id();
-    let mut file = File::create(pid_file)?;
-    writeln!(file, "{}", pid)?;
     Ok(())
 }
 

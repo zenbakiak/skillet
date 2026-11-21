@@ -11,12 +11,13 @@ use std::sync::{
 use threadpool::Builder as ThreadPoolBuilder;
 
 use http_server::auth::TokenConfig;
-use http_server::daemon::{setup_signal_handlers, wake_address, write_pid_file};
+use http_server::daemon::{setup_signal_handlers, wake_address};
 use http_server::eval::{handle_cache_clear, handle_eval_get, handle_eval_post, handle_health};
 #[cfg(feature = "plugins")]
 use http_server::js_management::{
     handle_delete_js, handle_list_js, handle_reload_hooks, handle_update_js, handle_upload_js,
 };
+use http_server::pid_file::write_pid_file;
 use http_server::stats::ServerStats;
 use http_server::utils::{
     handle_cors_preflight, load_html_file, read_complete_http_request, send_http_error,
