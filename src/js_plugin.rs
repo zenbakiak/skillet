@@ -3,8 +3,9 @@ use crate::error::Error;
 use crate::types::Value;
 use crate::MAX_NESTING_DEPTH;
 use rquickjs::{Ctx, FromJs, Function as JsFunction, IntoJs, Runtime};
+use std::collections::HashSet;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// A custom function implemented in JavaScript
 pub struct JavaScriptFunction {
@@ -352,14 +353,21 @@ impl JSPluginLoader {
             return Ok(Vec::new());
         }
 
+        let root = hooks_path
+            .canonicalize()
+            .map_err(|e| Error::new(format!("Failed to read hooks directory: {}", e), None))?;
+        let mut visited = HashSet::from([root.clone()]);
         let mut functions = Vec::new();
-        Self::load_functions_recursive(hooks_path, &mut functions)?;
+        Self::load_functions_recursive(&root, &root, &mut visited, &mut functions)?;
         Ok(functions)
     }
 
-    /// Recursively load JavaScript functions from a directory
+    /// Recursively load JavaScript functions from a directory. Entries are resolved first:
+    /// anything that resolves outside `root` is skipped, and each directory is read once.
     fn load_functions_recursive(
         dir: &Path,
+        root: &Path,
+        visited: &mut HashSet<PathBuf>,
         functions: &mut Vec<Box<dyn CustomFunction>>,
     ) -> Result<(), Error> {
         let entries = fs::read_dir(dir)
@@ -370,12 +378,24 @@ impl JSPluginLoader {
                 .map_err(|e| Error::new(format!("Failed to read directory entry: {}", e), None))?;
 
             let path = entry.path();
+            let real = match path.canonicalize() {
+                Ok(real) if real.starts_with(root) => real,
+                Ok(_) => {
+                    eprintln!("Warning: Skipping {:?}: outside the hooks directory", path);
+                    continue;
+                }
+                Err(e) => {
+                    eprintln!("Warning: Skipping {:?}: {}", path, e);
+                    continue;
+                }
+            };
 
-            if path.is_dir() {
-                // Recursively search subdirectories
-                Self::load_functions_recursive(&path, functions)?;
+            if real.is_dir() {
+                if visited.insert(real.clone()) {
+                    Self::load_functions_recursive(&real, root, visited, functions)?;
+                }
             } else if path.extension().and_then(|s| s.to_str()) == Some("js") {
-                match JavaScriptFunction::from_file(&path) {
+                match JavaScriptFunction::from_file(&real) {
                     Ok(js_func) => {
                         functions.push(Box::new(js_func) as Box<dyn CustomFunction>);
                     }
@@ -534,5 +554,35 @@ mod tests {
             MAX_NESTING_DEPTH
         );
         assert!(hook_returning(&body).execute(vec![]).is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn loader_skips_links_that_leave_the_hooks_dir() {
+        let hook =
+            |name: &str| format!("// @name: {}\nfunction execute(args) {{ return 1; }}", name);
+        let base = tempfile::tempdir().unwrap();
+        let hooks = base.path().join("hooks");
+        let elsewhere = base.path().join("elsewhere");
+        fs::create_dir_all(hooks.join("sub")).unwrap();
+        fs::create_dir(&elsewhere).unwrap();
+        fs::write(hooks.join("inside.js"), hook("INSIDE")).unwrap();
+        fs::write(hooks.join("sub").join("nested.js"), hook("NESTED")).unwrap();
+        fs::write(elsewhere.join("far.js"), hook("FAR")).unwrap();
+        fs::write(base.path().join("outside.js"), hook("OUTSIDE")).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, hooks.join("linked_dir")).unwrap();
+        std::os::unix::fs::symlink(base.path().join("outside.js"), hooks.join("linked.js"))
+            .unwrap();
+        std::os::unix::fs::symlink(&hooks, hooks.join("sub").join("loop")).unwrap();
+
+        let loader = JSPluginLoader::new(hooks.to_str().unwrap().to_string());
+        let mut names: Vec<String> = loader
+            .load_functions()
+            .unwrap()
+            .iter()
+            .map(|f| f.name().to_string())
+            .collect();
+        names.sort();
+        assert_eq!(names, ["INSIDE", "NESTED"]);
     }
 }
