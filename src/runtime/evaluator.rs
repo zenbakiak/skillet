@@ -296,20 +296,19 @@ impl Evaluator {
         }
     }
 
-    /// Evaluate an operator operand. A plain variable is borrowed (one deadline tick, no copy),
-    /// so `:s == :s` on a large string compares in place instead of cloning it twice.
+    /// Evaluate an operator operand or a method/property target. A plain variable is borrowed
+    /// (no copy, no charge), so `:s == :s` on a large string compares in place instead of
+    /// cloning it twice. The borrowed read does not tick by itself: the operation that uses it
+    /// does (the operator's tick, or the method/property result charge), one tick per use.
     fn eval_operand<'c, C: EvaluationContext>(
         expr: &Expr,
         context: &'c C,
     ) -> Result<Cow<'c, Value>, Error> {
         match expr {
-            Expr::Variable(name) => {
-                limits::tick()?;
-                context
-                    .get_variable(name)
-                    .map(Cow::Borrowed)
-                    .ok_or_else(|| missing_variable(name))
-            }
+            Expr::Variable(name) => context
+                .get_variable(name)
+                .map(Cow::Borrowed)
+                .ok_or_else(|| missing_variable(name)),
             _ => Self::eval(expr, context).map(Cow::Owned),
         }
     }
