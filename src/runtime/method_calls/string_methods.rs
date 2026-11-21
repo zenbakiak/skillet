@@ -78,11 +78,7 @@ pub fn exec_string_method(
                 Value::String(s) => s,
                 _ => return Err(Error::new("split method expects string argument", None)),
             };
-            let parts: Vec<Value> = recv_string
-                .split(&delimiter)
-                .map(|s| Value::String(s.to_string()))
-                .collect();
-            Ok(Value::Array(parts))
+            crate::runtime::string::split_charged(recv_string.split(delimiter.as_str()))
         }
 
         "replace" => {
@@ -95,6 +91,7 @@ pub fn exec_string_method(
                 (Value::String(f), Value::String(t)) => (f, t),
                 _ => return Err(Error::new("replace method expects string arguments", None)),
             };
+            crate::limits::charge_replace(&recv_string, &from, &to)?;
             Ok(Value::String(recv_string.replace(&from, &to)))
         }
 

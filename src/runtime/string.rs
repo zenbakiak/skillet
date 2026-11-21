@@ -1,4 +1,5 @@
 use crate::error::Error;
+use crate::limits;
 use crate::runtime::utils::is_blank;
 use crate::types::Value;
 
@@ -17,6 +18,33 @@ fn char_count(s: &str) -> usize {
     s.chars().count()
 }
 
+/// Write the `CONCAT` of `args` to `w`: strings, numbers, booleans (`TRUE`/`FALSE`) and arrays
+/// (flattened); null, currency, datetime and JSON contribute nothing.
+fn concat_into(w: &mut impl std::fmt::Write, args: &[Value]) {
+    for v in args {
+        let _ = match v {
+            Value::String(st) => w.write_str(st),
+            Value::Number(n) => write!(w, "{}", n),
+            Value::Array(arr) => {
+                concat_into(w, arr);
+                Ok(())
+            }
+            Value::Boolean(b) => w.write_str(if *b { "TRUE" } else { "FALSE" }),
+            Value::Null | Value::Currency(_) | Value::DateTime(_) | Value::Json(_) => Ok(()),
+        };
+    }
+}
+
+/// Collect split parts, charging `32 + part.len` for each one while collecting (ADR-0011).
+pub(crate) fn split_charged<'s>(parts: impl Iterator<Item = &'s str>) -> Result<Value, Error> {
+    let mut out = Vec::new();
+    for p in parts {
+        limits::charge_string(p.len())?;
+        out.push(Value::String(p.to_string()));
+    }
+    Ok(Value::Array(out))
+}
+
 pub fn exec_string(name: &str, args: &[Value]) -> Result<Value, Error> {
     match name {
         "SUBSTITUTE" => {
@@ -26,7 +54,10 @@ pub fn exec_string(name: &str, args: &[Value]) -> Result<Value, Error> {
                     Some(Value::String(text)),
                     Some(Value::String(substr)),
                     Some(Value::String(repl)),
-                ) => Ok(Value::String(text.replace(substr, repl))),
+                ) => {
+                    limits::charge_replace(text, substr, repl)?;
+                    Ok(Value::String(text.replace(substr, repl)))
+                }
                 _ => Err(Error::new(
                     "SUBSTITUTE expects (text: string, substr: string, replacement: string)",
                     None,
@@ -40,7 +71,10 @@ pub fn exec_string(name: &str, args: &[Value]) -> Result<Value, Error> {
                     Some(Value::String(text)),
                     Some(Value::String(substr)),
                     Some(Value::String(repl)),
-                ) => Ok(Value::String(text.replace(substr, repl))),
+                ) => {
+                    limits::charge_replace(text, substr, repl)?;
+                    Ok(Value::String(text.replace(substr, repl)))
+                }
                 _ => Err(Error::new(
                     "SUBSTITUTEM expects (text: string, substr: string, replacement: string)",
                     None,
@@ -150,39 +184,10 @@ pub fn exec_string(name: &str, args: &[Value]) -> Result<Value, Error> {
             Some(_) | None => Err(Error::new("LENGTH expects array or string", None)),
         },
         "CONCAT" => {
+            // Count the exact output length first, then build it (ADR-0011 amendment 2).
+            limits::charge_formatted(|c| concat_into(c, args))?;
             let mut out = String::new();
-            fn push_val(s: &mut String, v: &Value) -> Result<(), Error> {
-                match v {
-                    Value::String(st) => {
-                        s.push_str(st);
-                        Ok(())
-                    }
-                    Value::Number(n) => {
-                        s.push_str(&n.to_string());
-                        Ok(())
-                    }
-                    Value::Array(arr) => {
-                        for it in arr {
-                            push_val(s, it)?;
-                        }
-                        Ok(())
-                    }
-                    Value::Boolean(b) => {
-                        s.push_str(if *b { "TRUE" } else { "FALSE" });
-                        Ok(())
-                    }
-                    Value::Null => Ok(()),
-                    Value::Currency(_) => Ok(()),
-                    Value::DateTime(_) => Ok(()),
-                    Value::Json(_) => Ok(()),
-                }
-            }
-            for a in args {
-                if let Value::Null = a { /* skip */
-                } else {
-                    push_val(&mut out, a)?;
-                }
-            }
+            concat_into(&mut out, args);
             Ok(Value::String(out))
         }
         "UPPER" => match args.first() {
@@ -244,14 +249,10 @@ pub fn exec_string(name: &str, args: &[Value]) -> Result<Value, Error> {
             }
         }
         "SPLIT" => match (args.first(), args.get(1)) {
-            (Some(Value::String(s)), Some(Value::String(sep))) => Ok(Value::Array(
-                s.split(sep).map(|p| Value::String(p.to_string())).collect(),
-            )),
-            (Some(Value::String(s)), None) => Ok(Value::Array(
-                s.split(',')
-                    .map(|p| Value::String(p.trim().to_string()))
-                    .collect(),
-            )),
+            (Some(Value::String(s)), Some(Value::String(sep))) => {
+                split_charged(s.split(sep.as_str()))
+            }
+            (Some(Value::String(s)), None) => split_charged(s.split(',').map(str::trim)),
             _ => Err(Error::new("SPLIT expects string, [separator]", None)),
         },
         "REPLACE" => {

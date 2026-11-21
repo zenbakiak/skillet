@@ -434,7 +434,7 @@ always return arrays; breaking change needs an ADR.
 BL-003 with `#[allow(clippy::manual_range_contains)]`). Decide: error on NaN (likely), then use
 `!(0.0..=1.0).contains(&p)` and drop the allow.
 
-### BL-027 · Exponential value growth and evaluation budget · P1 · `in-progress` · security-reviewer → language-designer → rust-engineer
+### BL-027 · Exponential value growth and evaluation budget · P1 · `done` · security-reviewer → language-designer → rust-engineer
 Found in BL-017a: `[1,…].reduce([:acc, :acc], 0)` doubles per item (20 items → 1M elements, 175 MB;
 ~26 items → ~11 GB). Needs a total-size/step budget per evaluation (and a server-side timeout).
 Language Designer decides the limits and error; Rust implements; Security re-tests.
@@ -463,8 +463,377 @@ Brief (orchestrator, 2026-11-20):
     Out of scope: src/ changes.
   Decision (maintainer, 2026-11-20): ADR-0011 accepted with amendment: BL-030 first, then 027b
     without the variable-read charge (A12 must pass). A11 behaviour change accepted.
-  BL-027b · rust-engineer · `ready` (BL-030 done)
-  BL-027c · security-reviewer · `todo` (re-attack after 027b)
+  BL-027b · rust-engineer (Claude Opus 5.5) · `done` · Branch: bugfix/bl-027-budget-impl (from develop after #45)
+    Spec: docs/adr/0011-evaluation-budget.md as accepted, INCLUDING the amendment at the top
+          (variable reads are not charged; A12 must pass). The ADR's site table, pre-charge list,
+          error texts, deadline mechanism, cache cap and `with_limits` API are the contract.
+    Tests: new tests/eval_budget.rs implementing the ADR example table (P rows pass with exact
+          Values, A rows return the budget error, C rows via `with_limits`). Attacks must stay cheap
+          in the test (they fail early by design); keep each test < 1 s in debug.
+          Server timeout (T1): one test against sk_http_server is enough; if it is slow, gate it with
+          `#[ignore = "slow: server timeout"]` and list it.
+    Perf: re-run `cargo bench --bench lambda_scope` before → after; overhead target ≤ 10%.
+    Acceptance: ./harness/check.sh green; existing tests unchanged; bench table in handoff.
+  BL-027c · security-reviewer (Claude Opus 5.5) · `done` · same branch (bugfix/bl-027-budget-impl)
+    Do: re-attack the budget as built. Start from 027b's own leads (uncharged-read n² CPU in
+        library/CLI, ~2× budget peak via CONCAT/MERGE post-charge, uncharged index/slice, thread
+        handoff in custom fns, single slow builtins like SORT), then look for anything else
+        (string methods, casts, JSON round-trips, cache, HTTP path, sk_server path).
+        For each finding: severity, repro, measured time/peak (never > ~1 GB on this machine).
+        Add regression tests for anything that is fixed or must stay fixed to tests/eval_budget.rs
+        or tests/security_limits.rs; do not edit expectations of existing tests.
+    Decide per finding: fix-now (blocks this PR; route back to rust-engineer) vs backlog item.
+        Rule: anything that lets one HTTP request exceed ~2× MAX_EVAL_BYTES or run past the
+        server deadline by more than ~2 s blocks the PR.
+
+  BL-027d · rust-engineer (Claude Opus 5.5) · `done` · same branch
+    Decision (maintainer, 2026-11-20): option A, recorded as ADR-0011 Amendment 2 — charge reads that
+    copy, keep borrowed method/property targets free; tick the deadline on every read and binary op;
+    pre-charge .to_a()/.to_json()/::String/CONCAT/MERGE; reject oversized serialized HTTP results.
+    Acceptance: both ignored bl027c tests un-ignored and green; add a server test for F3; every P row
+    in tests/eval_budget.rs still passes (A12 included); add a test pinning the new
+    `:rows.map(SUM(:rows))` budget error on big input and the hoisted form passing;
+    ./harness/check.sh green; lambda_scope bench overhead vs develop ≤ 10%.
+    Found in BL-027c; BLOCKS this PR (brief rule: > ~2x MAX_EVAL_BYTES or > ~2 s past the deadline).
+    F1 Reads never tick the deadline. `:s := <80 MB>; [:s == :s, … ×4000]` (42 KB request): binary
+       ops and variable reads charge nothing, so 8000 full clones run before the one array charge.
+       Release sk_http_server and sk_server: 20.4 s / 20.7 s, `success: true` (deadline 10 s);
+       linear in N up to the 1 MB request cap (~8 min). Fix sketch: tick (charge 0 + clock-read
+       counter) on every variable read and binary op, or make reads borrow (`Rc`/`Cow`).
+    F2 Heap allocated before the budget check grows with expression length. Uncharged read clones
+       feed charge-after sites: CONCAT(:s ×k) with `:s` = 80 MB measured 314/467/619/772 MB peak
+       RSS for k = 1..4 (~+153 MB per arg, unbounded in k); `[:s ×k]`, `{…: :s ×k}`, MERGE likewise.
+       Single amplifiers charged after allocating: `.to_a()` on a string (~47 real bytes per char:
+       15 MB string -> 711 MB peak; 128 MB max input -> ~6 GB), `.to_json()` on control chars
+       (6x: 80 MB -> 619 MB), `[s]::String` (Debug escaping 5x). Fix sketch: charge reads (or
+       their size) when they are moved into an argument list/literal, and pre-charge `.to_a()`,
+       `.to_json()`, `::String`, CONCAT, MERGE (upper bound before allocating).
+    F3 HTTP response serialization is outside the budget. A 40 MB result of `\x01` chars becomes a
+       240 MB JSON body (`\u0001`); sk_http_server peak RSS 1061 MB for one request (plain 20 MB
+       string: 374 MB). Max in-budget result (~128 MB) -> ~3 GB. Fix sketch: cap the serialized
+       response (e.g. stream or reject results whose escaped size > N MB) or count it in the budget.
+    Tests (ignored until fixed, un-ignore when done): tests/eval_budget.rs
+       `bl027c_flat_uncharged_reads_meet_the_deadline` (F1),
+       `bl027c_peak_heap_stays_within_twice_the_budget` (F2, per-thread counting allocator, 4 MiB
+       budget: CONCAT 40 reads 131.6 MB, array literal 40.1, object literal 66.8, MERGE 75.2,
+       to_a 47.2, to_json 13.9, ::String 13.0). F3 needs a server test (none yet; add with the fix).
+
+  BL-027e · security-reviewer · `done`
+  BL-027f · rust-engineer (Claude Opus 5.5) · `done` · same branch · Found in BL-027e; BLOCKS this PR (same rule).
+    F4 Object literals serialize their values after the reads are charged and before the result
+       is checked; JSON escaping grows control characters 6x. `:s := <20 MB \x01>; {"k0": :s, …}`
+       release: 1 key 199 MB, 4 keys 599 MB (sk_http_server 602 MB, sk_server 600 MB, 120 KB
+       request), 6 keys 866 MB; ~+133 MB per key until the reads reach the budget (~2 GB).
+       Arrays as values (`{"k": [:s]}`) likewise. Fix sketch: pre-charge the escaped size of the
+       object (count with `serde_json::to_writer` into `ByteCounter`, as `.to_json()` on arrays)
+       before `serde_json::to_string` in `Expr::ObjectLiteral`.
+       Test: tests/eval_budget.rs `bl027e_object_literal_escaping_is_charged_before_serializing`
+       (ignored, un-ignore when fixed; today 51.5 MB / 26.9 MB peak on a 4 MiB budget).
+    F5 sk_server response for nested arrays: inner arrays are sent as their `Debug` text, built
+       in full and then JSON-escaped by `serde_json::to_string` (growing buffer). The F3 sizer
+       accepts it (bound is correct) but memory is ~2.8x: `[[<40 MB \x01>]]` 657 MB,
+       `[[<44 MB \x01>]]` 722 MB (sk_http_server same value: 353 MB). Bounded (sizer caps it),
+       but over the ~2x rule. Fix sketch: build sk_server's response with `to_json_exact` and
+       write the Debug text straight into the escaper (or count it lower). No in-process test
+       possible (bin code); repro with the release server, 1 worker.
+
+Handoff (rust-engineer, Claude Opus 5.5, 2026-11-20) — BL-027f:
+  Did: - F4: `Expr::ObjectLiteral` pre-charges the exact serialized size (new
+         `limits::charge_json_text`: serde_json into `ByteCounter`, no allocation; `.to_json()` on
+         arrays now uses the same helper) before `serde_json::to_string`. That charge is the
+         result's cost, so the result is not charged again by `check_value` (Json has no depth).
+         Arrays as values are covered (they are part of the counted tree). The literal moved to an
+         out-of-line helper `eval_object_literal` (inline it measured +6% on `:nums.map(:x * 1)`).
+       - F5: sk_server's `result` is a small `Serialize` type (`Wire`): arrays nested in an array
+         are written as their `Debug` text through `serializer.collect_str`, i.e. formatted
+         straight into serde_json's escaper, never built as a String; the response is streamed
+         to the socket via `BufWriter` (no response copy in memory at all). Deviation from the
+         brief: streaming instead of `to_json_exact` (that lives in http_server/utils.rs with the
+         buffer-pool deps; streaming needs no shared module and holds 0 instead of 240 MB). The
+         F3 sizer (response_size.rs, nested_debug=true) still rejects oversized results first.
+         Wire format unchanged: 18 requests (nested arrays with control chars/quotes/unicode,
+         output_json, DateTime both modes, Json, empty array, errors, bad JSON) diffed byte for
+         byte against the previous release build: identical. The serialize-failure fallback line
+         is gone (unreachable: serde_json::Value and Debug text cannot fail; IO errors end the
+         connection as before).
+       - Other JSON-text serialization inside evaluation (grep `serde_json::to_string|to_writer|
+         to_value` in src/runtime, src/lib.rs, src/limits.rs):
+         | Site | Before | Now |
+         | evaluator.rs `Expr::ObjectLiteral` | charged after (F4) | pre-charged exact (fixed) |
+         | conversion_methods.rs `.to_json()` String | pre-charged exact (027d) | unchanged |
+         | conversion_methods.rs `.to_json()` Array | pre-charged exact (027d) | same, via helper |
+         | conversion_methods.rs `.to_json()` Number/Bool/Currency/DateTime | tiny, constant | unchanged |
+         | jsonpath.rs `json_to_value` Object (JQ match) | charged by parts (unescaped, up to 6x low; `$..*` on nested objects re-serializes every level) | `charge_json_node` charges an object at least 32 + its serialized size (fixed, new test) |
+         | lib.rs `json_to_value` Object (property access `:j.a`, `.dig`, JSON(), method_calls/mod.rs) | input charged by `charge_json_parse` (text length); a re-serialized sub-object is never longer than its source text | unchanged (bounded 1x per parse) |
+         | lib.rs / sk.rs / sk_client / http_server js_management | outside evaluation (inputs, CLI output, admin replies) | unchanged |
+  Evidence: `cargo build --release --bin sk` + ./harness/check.sh (full, strict) green (==> OK).
+         `cargo test --test eval_budget`: 31 passed, 1 ignored (T1 slow server timeout).
+         `bl027e_object_literal_escaping_is_charged_before_serializing` un-ignored, passes (fails
+         on the previous code: 51.5 / 26.9 MB peak); new `bl027f_jq_object_matches_are_charged_as_json_text`
+         (fails on the previous code: 21.3 MB peak on a 4 MiB budget; now budget error < 9 MiB).
+         No existing expectations changed.
+         Release spot checks, before = a738bee, after = this branch; sk via /usr/bin/time -l,
+         servers 1 worker on 127.0.0.1, peak RSS by ps sampling, 2 runs each (same results):
+         | Case                                         | before                 | after                  |
+         |----------------------------------------------|------------------------|------------------------|
+         | F4 sk: `{"k0": :s, …×4}`, :s = 20 MB \x01     | 0.11-0.25 s, 629 MB, budget err | 0.17-0.33 s, 148 MB, budget err |
+         | F4 sk_http_server, same                       | 0.11-0.15 s, 633 MB, budget err | 0.21 s, 150 MB, budget err |
+         | F4 sk_server, same                            | 0.14-0.15 s, 631 MB, budget err | 0.21-0.22 s, 149 MB, budget err |
+         | F4 one key (passes): sk / http / sk_server    | 209 / 233 / 351 MB, ok | 209 / 233 / 231 MB, ok |
+         | F5 sk_server: `[[40 MB \x01]]` (240 MB body)  | 1.36-1.41 s, 770 MB, ok | 1.42-1.46 s, 129 MB, ok |
+         | F5 sk_http_server, same (reference)           | 0.23 s, 371 MB, ok     | 0.20-0.27 s, 370 MB, ok |
+         F4 is ~0.07 s slower when it fails: the counting pass makes many small writes; it then
+         stops before allocating 480 MB.
+         Bench `RUNS=5` lambda_scope, release, 15 interleaved rounds develop (bf7c20a) / before
+         (a738bee) / after, median of per-round medians (load ~5.5-9, syspolicyd at 100%):
+         | Formula                                      | develop | before  | after   | vs develop | vs before |
+         |----------------------------------------------|---------|---------|---------|------------|-----------|
+         | `:nums.map(:x * 1).sum()` (100k)             | 2.00 ms | 2.13 ms | 2.13 ms | +6%        | +0%       |
+         | `:nums.map(:x.abs()).sum()`                  | 4.01 ms | 4.46 ms | 4.50 ms | +12%       | +1%       |
+         | `:rows.map(:x.price).sum()` (10k)            | 2.62 ms | 2.77 ms | 2.76 ms | +5%        | -0%       |
+         | `:rows.map(:x.price.round(1)).sum()`         | 3.03 ms | 3.23 ms | 3.21 ms | +6%        | -1%       |
+         | `:rows.map(:x.price / :rows.length()).sum()` | 3.23 ms | 3.53 ms | 3.53 ms | +9%        | +0%       |
+         BL-027f adds 0-1%. `:x.abs()` is +12% vs develop on this machine today, but the branch
+         head before this item measured the same (+11%; BL-027d recorded +9% at load ~5): the
+         overhead is BL-027d's per-op tick, not this change.
+  Risks/Follow-ups: - `:x.abs()` row slightly over the 10% bench target vs develop (pre-existing,
+         see above); orchestrator to decide whether a quieter re-measure is needed.
+       - BL-033 (sk_server read timeout / line cap) unchanged.
+       - Docs (BL-028): nothing new user-visible (object literals just fail earlier on escapes).
+  ADR: none (implements ADR-0011 amendment 2)
+
+Handoff (security-reviewer, Claude Opus 5.5, 2026-11-20) — BL-027e:
+  Did: confirmation pass on release builds (sk via /usr/bin/time -l; sk_http_server and
+       sk_server on 127.0.0.1, 1 worker, peak RSS by ps sampling); every run < 1 GB.
+       tests/eval_budget.rs: `bl027e_reads_that_escape_into_a_result_are_charged` (ternary, IF,
+       spread, nested/sequence assignment, map, reduce, index, slice, method, `.to_s()`,
+       `::String`; all budget error, peak < 2x), `bl027e_borrowed_operands_do_not_copy`, and the
+       ignored F4 test above.
+  Results (before = BL-027c; after = this branch, release):
+       | Case | before | after | rule |
+       | F1 http 80 MB `[:s == :s ×4000]` | 20.4 s, ok | 6.2 s, 163 MB, ok | pass |
+       | F1 sk_server same | 20.7 s, ok | 6.2 s, 162 MB, ok | pass |
+       | F1 both ×16000 | ~80 s | 10.3 s, ~166 MB, timed out | pass |
+       | F1 sk 20 MB ×2000 | 2.6 s, 89 MB | 0.77 s, 46 MB, ok | pass |
+       | F2 CONCAT(:s ×4) 80 MB (sk / http / sk_server) | 772 MB | 160 / 162 / 161 MB, budget err | pass |
+       | F2 `[:s ×4]`, `{…: :s ×4}` (plain chars) 80 MB | 488 MB | 160 MB, budget err | pass |
+       | F2 MERGE(:a ×8), 1M items | — | 331 MB, budget err | pass |
+       | F2 `.to_a()` 15 MB | 711 MB | 36 MB, budget err | pass |
+       | F2 `.to_json()` 80 MB \x01 | 619 MB | 160 MB, budget err | pass |
+       | F2 `[40 MB \x01]::String` / `.to_s()` | 249 MB | 122 / 160 MB, budget err | pass |
+       | F2 `:s.to_s()` / `:s::String` ×4 80 MB | — | 236 / 160 MB, budget err | pass |
+       | index `[:a[0] ×20]` / slice `[:a[0:4] ×5]` | uncharged | 122 MB, budget err | pass |
+       | ternary / IF / spread / assignments / map / reduce / `.first()` | — | 160 MB, budget err | pass |
+       | F3 40 MB \x01 result (http / sk_server) | 1061 MB | 315 / 314 MB, ok | pass |
+       | F3 46 MB \x01 result | serialized | 53 / 52 MB, budget err | pass |
+       | F3 include_variables 2×30 MB \x01 / output_json 40 MB / Json obj 30 MB (http) | — | 125 MB err / 353 MB ok / 268 MB ok | pass |
+       | F3 6.5M 1-char strings (SPLIT "") | — | 314 MB, budget err | pass |
+       | F3 http `[[40 MB \x01]]` | — | 353 MB, ok | pass |
+       | F5 sk_server `[[40 / 44 MB \x01]]` | — | 657 / 722 MB, ok | FAIL (>2x) |
+       | F4 `{k: <20 MB \x01>}` ×4 (sk / http / sk_server), ×6 (sk) | — | 599 / 602 / 600, 866 MB | FAIL (>2x) |
+  Borrow paths: binary/unary ops only return Number/Boolean, so a borrowed operand never
+       escapes; method/property/index/slice results go through `check_value`; every other read
+       (`Expr::Variable`: ternary/IF branches, spread, args to builtins, custom and JS functions,
+       `:arguments`, assignment values, lambda results) is charged before the copy.
+  Sockets (58cc5b7): needed for correctness. On Linux accepted sockets were already blocking,
+       so nothing changes there; on macOS it makes the pre-existing idle-client hold reachable.
+       Measured, 1 worker, idle client that sends nothing: sk_http_server serves the next
+       client after 29.7 s (30 s per-read timeout; a client trickling a byte every < 30 s holds
+       it indefinitely -> BL-037); sk_server never serves it (no read timeout, BL-033).
+       Not worse than Linux today; BL-033 stays P1.
+  Deviations (027d handoff): borrowed reads tick via the operation using them (verified: F1
+       times out at 10.3 s); MERGE/CONCAT prepaid then depth-checked (charge_merge counts every
+       arg >= result; a custom MERGE/CONCAT is charged normally); `.to_s()` on arrays
+       pre-charged; T1 workload change; F3 upper bound rejects slightly early; blocking accepted
+       sockets. All acceptable: each errs towards charging more, or is a test-only change.
+  Verdict: block. F4 (High) and F5 (Medium, bounded ~2.8x) exceed the ~2x rule -> BL-027f.
+       F1, F2, F3 closed.
+  Evidence: `cargo test --test eval_budget bl027e -- --include-ignored`: 2 pass, F4 fails as
+       expected; ./harness/check.sh --fast green.
+  Risks/Follow-ups: BL-027f (blocking), BL-033 (P1, unchanged), BL-037 filed.
+  ADR: none
+
+Handoff (rust-engineer, Claude Opus 5.5, 2026-11-20) — BL-027d:
+  Did: - F1: every unary/binary op ticks the deadline (zero-byte charge); a copying variable read
+         is charged cost(value) before the clone (that charge ticks too). Operator operands and
+         method/property/index/slice targets that are plain variables are BORROWED (`Cow`), so
+         `:s == :s` no longer clones `:s` at all; a borrowed read relies on the tick/charge of the
+         operation using it (one tick per use, see deviations).
+       - F2: copying reads charged (ADR amendment 2); index/slice results charged (L3). Pre-charged
+         before allocating: CONCAT (exact length, counted with a no-alloc fmt pass), MERGE (cost of
+         its args; result then only depth-checked, not charged twice), `.to_a()` on strings
+         (32 + 32/char + bytes), `.to_json()` on strings (exact escaped size) and arrays
+         (serde_json to a byte counter first), `.to_s()` and `::String` on arrays (exact
+         formatted length, counted first).
+       - F3: src/bin/http_server/response_size.rs (shared by both servers via #[path]): upper bound
+         on the escaped JSON size of the result (+ returned variables), no allocation; over
+         MAX_EVAL_BYTES -> "Evaluation budget exceeded (max 256 MB)" (HTTP 400 / success:false).
+         sk_http_server also builds the response JSON at its exact size and writes headers and
+         body separately (no extra copies).
+       - Found while spot-checking (pre-existing, fixed, small): both servers poll a non-blocking
+         listener and macOS/BSD accepted sockets inherit O_NONBLOCK, so sk_server dropped
+         requests whose line had not fully arrived and sk_http_server truncated big responses.
+         Accepted sockets are set blocking. This is very likely the cause of BL-034 (240 MB
+         responses now arrive complete) -> QA to confirm and close BL-034.
+       - tests/eval_budget.rs: un-ignored `bl027c_flat_uncharged_reads_meet_the_deadline` and
+         `bl027c_peak_heap_stays_within_twice_the_budget` (both pass); added
+         `f3_servers_reject_responses_larger_than_the_budget` (both servers, 127.0.0.1, ~1.4 s, not
+         ignored) and `copying_a_large_variable_per_item_fails_hoisting_passes`
+         (`:nums.map(SUM(:nums))` 5k -> budget error; `:t := SUM(:nums); :nums.map(:t)` and
+         `:nums.map(:nums.sum())` pass). Server helpers factored into a `Server` struct.
+  Evidence: ./harness/check.sh (full, strict) green (==> OK); `cargo test --test eval_budget`
+         27 passed, 1 ignored (T1 slow server timeout; passes with --ignored in 10.3 s).
+         All P/A/C rows unchanged and green (A12 included). A11 boundary is now between 2,800
+         and 2,900 items (ADR model ~2,900; BL-027b had ~4,090): copying `:acc` is charged.
+         Bench `RUNS=5 cargo bench --bench lambda_scope`, release, same machine (MacBook, 11
+         cores, load ~5), 9 interleaved rounds develop (bf7c20a) / BL-027b head (9ce4c5c) / after,
+         median of the per-round medians:
+         | Formula                                      | develop | BL-027b | after   | vs develop |
+         |----------------------------------------------|---------|---------|---------|------------|
+         | `:nums.map(:x * 1).sum()` (100k)             | 2.02 ms | 2.12 ms | 2.13 ms | +5%        |
+         | `:nums.map(:x.abs()).sum()`                  | 4.13 ms | 4.37 ms | 4.49 ms | +9%        |
+         | `:rows.map(:x.price).sum()` (10k)            | 2.64 ms | 2.76 ms | 2.77 ms | +5%        |
+         | `:rows.map(:x.price.round(1)).sum()`         | 3.04 ms | 3.16 ms | 3.25 ms | +7%        |
+         | `:rows.map(:x.price / :rows.length()).sum()` | 3.28 ms | 3.35 ms | 3.55 ms | +8%        |
+         (results identical. A first version that also ticked inside every borrowed read measured
+         +10..14%; the extra tick was dropped in 28b9825.)
+         Release spot checks, before = BL-027b head (9ce4c5c), after = this branch.
+         `sk` via /usr/bin/time -l; servers 1 worker, peak RSS by ps sampling:
+         | Case                                              | before               | after                       |
+         |---------------------------------------------------|----------------------|-----------------------------|
+         | F1 sk: 20 MB `:s`, `[:s == :s ×2000]`              | 2.62 s, 89 MB, ok    | 0.75 s, 49 MB, ok           |
+         | F1 sk_server: 80 MB, ×4000                         | 22.4 s, 315 MB, ok   | 6.3 s, 162 MB, ok (no copy) |
+         | F1 sk_http_server: 80 MB, ×4000                    | 20.4 s (027c), ok    | 6.2 s, 164 MB, ok           |
+         | F1 both servers: 80 MB, ×16000                     | ~80 s (linear)       | 10.0 / 10.2 s, timed out    |
+         | F2 CONCAT of 4 reads of 80 MB (sk)                 | 0.11 s, 808 MB       | 0.01 s, 168 MB              |
+         | F2 `[:s ×4]` 80 MB (sk)                            | 0.04 s, 488 MB       | 0.01 s, 168 MB              |
+         | F2 `.to_a()` on 15 MB (sk)                         | 0.28 s, 745 MB       | 0.00 s, 23 MB               |
+         | F2 `.to_json()` on 80 MB of \x01 (sk)              | 0.11 s, 649 MB       | 0.02 s, 88 MB               |
+         | F2 `[40 MB \x01]::String` (sk)                     | 0.46 s, 249 MB       | 0.26 s, 48 MB               |
+         | F3 http: 40 MB \x01 result (240 MB body)           | 545 MB, body truncated (1061 MB in 027c) | 315 MB, 240 MB delivered |
+         | F3 http / sk_server: 46 MB \x01 (276 MB escaped)   | serialized           | 0.1 s, 54 / 53 MB, budget error |
+         | `:n.map(LENGTH(:n))`, 20k items (sk)               | 5.88 s, ok           | 0.12 s, budget error        |
+         | hoisted `:t := LENGTH(:n); :n.map(:t)` (sk)        | 0.00 s, ok           | 0.00 s, ok                  |
+         All budget-error rows return `Evaluation budget exceeded (max 256 MB)` in both columns
+         except where marked ok.
+  Deviations / readings of Amendment 2:
+       - "Every variable read ticks": a copying read ticks through its cost charge; a borrowed read
+         (operand/target) does not make its own tick, the operation using it does (operator tick,
+         method/property/index result charge). Net: one tick per use, never zero; F1 test passes.
+       - MERGE and CONCAT results are pre-charged and then only depth-checked (not charged twice).
+         A custom function named MERGE/CONCAT is charged as a normal function result.
+       - `.to_s()` on arrays pre-charged too (same amplification class as `::String`; not listed).
+       - T1 test workload changed (expectations unchanged): `:nums.map(SUM(:nums))` now fails with
+         the budget error in ~0.1 s by design, so T1 uses 1M comparisons of two borrowed 400 KB
+         strings to run past 10 s.
+       - F3 size is an upper bound (numbers 26 bytes, Json text + 32/node); a result just under the
+         budget may be rejected slightly early; a 40 MB control-char result still passes.
+  Risks/Follow-ups:
+       - sk_server still has no read timeout and no line cap (BL-033, unchanged).
+       - BL-034 likely fixed by the blocking-socket change; QA to confirm with its repro and close.
+       - BL-036 (shared values) would let copying reads be dropped again.
+       - Docs (BL-028): copying-read charge and the hoisting pattern, new A11 boundary, server
+         response-size rejection.
+  ADR: none (implements ADR-0011 amendment 2)
+
+Handoff (security-reviewer, Claude Opus 5.5, 2026-11-20) — BL-027c:
+  Did: - Re-attacked the budget on release builds (sk, in-process probe, sk_http_server and
+         sk_server on 127.0.0.1, 1 worker each); every run < ~1.1 GB peak.
+       - tests/eval_budget.rs: per-thread counting allocator + 4 BL-027c tests. Passing (pin what
+         holds): lambda over uncharged reads meets a 50 ms deadline; SPLIT/SUBSTITUTE/JOIN
+         pre-charges peak < 2x budget. Ignored, open (BL-027d): F1 flat reads vs deadline, F2 peak.
+  Findings (peak RSS via /usr/bin/time -l or ps sampling; release):
+       | # | Finding | Sev | Peak / time | Blocks | Tracking |
+       | F1 | uncharged reads never tick the deadline (`[:s == :s ×4000]`) | High | 317 MB, 20.4 s HTTP / 20.7 s sk_server, success | yes | BL-027d, test F1 |
+       | F2 | k uncharged reads into CONCAT/MERGE/literals; `.to_a()`/`.to_json()`/`::String` charged after | High | CONCAT k=4: 772 MB (+153 MB/arg); to_a 15 MB: 711 MB; to_json 80 MB: 619 MB | yes | BL-027d, test F2 |
+       | F3 | HTTP response JSON escaping outside budget | High | 40 MB `\x01` result: 1061 MB server RSS | yes | BL-027d |
+       | L1 | (027b lead 1) `:nums.map(SUM(:nums))` O(n^2) CPU | Low | 10k: 0.32 s, 8 MB; server deadline holds (T1) | no | test lambda/deadline |
+       | L3 | (lead 3) index/slice results uncharged | — | same class as F1/F2 reads (slices are array-only) | via F1/F2 | BL-027d |
+       | L4 | (lead 4) custom fn work on another thread escapes the budget | Low | library-only; no HTTP path | no | BL-035 (docs) |
+       | L5 | (lead 5) one slow builtin runs to completion | Low | SORT/.sort/UNIQUE of 3M items: 0.11-0.12 s, 320 MB | no | BL-035 |
+       | N1 | sk_server reads request lines unbounded (no size cap, no read timeout) | High (pre-existing) | 300 MB line -> 308 MB RSS, grows with input | no (not this PR's code) | BL-033 |
+       | N2 | sk_http_server truncates large responses (Content-Length 20 MB, 327 KB delivered) | Low | — | no | BL-034 |
+       | N3 | cost model undercounts tiny strings (33 charged vs ~48 real per 1-char string); UPPER of U+0390 is 3x, charged after | Low | SPLIT "" 10 MB: 361 MB; UPPER 64 MB: 253 MB | no | BL-035 |
+       Checked and fine: cache key (`Debug` of vars, bounded by the 1 MB request), cache stores
+       only <= 64 KiB entries, budget/timeout errors are not cached, timed-out HTTP worker serves
+       the next request (T1), errors return 400 with the limit text and no internal paths.
+  Evidence: `cargo test --test eval_budget` 23 passed, 3 ignored (T1 slow + 2 open);
+         `--include-ignored bl027c` shows the two open tests failing with the numbers above.
+         ./harness/check.sh --fast green (strict clippy + fmt).
+  Risks/Follow-ups: BL-027d (blocking), BL-033, BL-034, BL-035 filed. F1/F2 conflict with the ADR
+         amendment ("reads are not charged"); a zero-byte tick on reads keeps A12 passing, a size
+         charge on reads moved into arg lists may not — language-designer to decide, may need an
+         ADR-0011 amendment.
+  ADR: none (ADR-0011 amendment may be needed for F2)
+
+Handoff (rust-engineer, Claude Opus 5.5, 2026-11-20) — BL-027b:
+  Did: - src/limits.rs: thread-local budget (used/max/deadline/ticks + sticky trip); `check_value`
+         replaces `check_value_depth` (one walk: depth + cost, stops early); every runtime
+         `eval*` entry point opens a default scope or joins the active one and returns the
+         recorded limit error even when the evaluation swallowed it (SUMIF, custom fn catching
+         a nested evaluate). Pub API: `MAX_EVAL_BYTES`, `#[non_exhaustive] EvalLimits`,
+         `with_limits` (nested only tightens; inner charges count to the outer scope).
+       - Charge sites per ADR table (minus variable read): array/object literal, function,
+         method, safe-method, cast, property/safe-property, assignment, every lambda iteration
+         (FILTER/MAP/FIND/REDUCE/SUMIF/AVGIF/COUNTIF and .filter/.map/.find/.reduce).
+         Pre-charge: SUBSTITUTE/SUBSTITUTEM/.replace (exact length), JOIN/.join, SPLIT/.split
+         (per part), JQ (per match), every Json parse (property access, object literal, DIG,
+         .keys/.values/.has_key/.dig, .to_json, JQ input).
+       - Servers: `with_limits(default + 10 s)` around every evaluation (sk_http_server cache
+         miss path, sk_server); cache stores only entries <= 64 KiB (key + result + vars).
+       - tests/eval_budget.rs: P1-P12 (exact Values), A1-A12, C1-C6, T1 (server, ignored),
+         swallowed-error and nested-evaluation cases. Each < 1 s in debug; suite 3.3 s.
+  Evidence: ./harness/check.sh (full, strict) green; `cargo test --test eval_budget` 21 passed,
+         1 ignored; T1 run with --ignored: passes in 10.5 s (400 + "Evaluation timed out (max 10 s)",
+         single worker answers the next request). Existing tests/ untouched.
+         Bench `RUNS=5 cargo bench --bench lambda_scope`, release, median of 5, before = HEAD
+         worktree (bf7c20a) and after alternated 3x on the same machine (MacBook 11 cores):
+         | Formula                                      | before  | after   | delta |
+         |----------------------------------------------|---------|---------|-------|
+         | `:nums.map(:x * 1).sum()` (100k)             | 2.02 ms | 2.11 ms | +4%   |
+         | `:nums.map(:x.abs()).sum()`                  | 4.15 ms | 4.40 ms | +6%   |
+         | `:rows.map(:x.price).sum()` (10k)            | 2.65 ms | 2.77 ms | +5%   |
+         | `:rows.map(:x.price.round(1)).sum()`         | 3.05 ms | 3.20 ms | +5%   |
+         | `:rows.map(:x.price / :rows.length()).sum()` | 3.30 ms | 3.35 ms | +2%   |
+         (first after-run after a rebuild is noisier; results identical before/after.)
+         Release `sk` spot check (/usr/bin/time -l): A1 `[1x26].reduce([:acc, :acc], 0)` budget
+         error in 0.33 s, 209 MB max RSS; A2 CONCAT doubling 0.04 s / 540 MB; A3 MERGE doubling
+         0.07 s / 540 MB; A4 object doubling 0.40 s / 393 MB; A5 assignment doubling 0.05 s /
+         334 MB; A7 SUBSTITUTE 0.00 s / 7 MB; A10 1e9 iterations 0.05 s / 7 MB.
+  Deviations / readings of the ADR (simplest reading that keeps every P row):
+       - T1 formula `:nums.map(:x.abs()).sum()` no longer times out on the server: BL-030 made it
+         ~5 ms. The server test uses `:nums.map(SUM(:nums)).sum()` (100k) instead: each
+         `SUM(:nums)` clones the variable (reads are not charged), ~100k clones >> 10 s.
+         C6 uses 4 chained `.map(:x.abs())` passes so a fast machine still runs > 1 ms.
+       - P6: 121 matches with 121 nested objects (120 wrappers around `{"s": <100 KB>}`); the
+         ADR's "120 nested objects" gives 121 only if the innermost one is counted as a wrapper.
+       - A11 boundary moved: without the read charge, `reduce(MERGE(:acc, [:x]), [])` fails above
+         ~4,090 items (ADR model: ~2,900). 10k still fails, 2,800 still passes (both tested).
+       - Error text: "max N MB" only when the limit is a whole number of MiB, else "max N bytes"
+         (ADR only defines < 1 MiB). Timeout: "N s" when whole seconds, else "N ms".
+       - JQ match cost: Null/Bool/Number 32, String 32 + len, Array 32 + items, Object
+         32 + sum(key len + value). The ADR says "cost of each match"; an object match becomes a
+         Json string, whose length we estimate this way instead of serializing it.
+       - Lambda items are charged per iteration (not once per array) on purpose: each charge is
+         a deadline tick, so O(n^2) lambda bodies built only from uncharged reads still time out.
+       - Charges outside any scope are no-ops (direct `Evaluator::eval` / `runtime::method_calls`
+         callers bypass the budget; depth still applies). Every runtime `eval*` fn opens a scope.
+       - `deadline_passed()` added (crate-private, unused yet) for BL-018's QuickJS interrupt.
+       - `SERVER_EVAL_TIMEOUT` is defined in both binaries (sk_server has no shared module).
+  Risks/Follow-ups (for BL-027c to re-attack):
+       - Uncharged reads: `:nums.map(SUM(:nums))`, `:nums.map(:nums == :x)` are O(n^2) CPU with
+         no memory growth. Bounded only by the server deadline; the library/`sk` have none.
+         Making reads borrow (or Rc values) would fix it; out of scope here.
+       - Peak heap can reach ~2x budget (CONCAT/MERGE doubling: 540 MB RSS) because the two
+         argument reads are uncharged clones and CONCAT/MERGE are charged after allocating.
+         Pre-charging CONCAT/MERGE would cut that; ADR lists them as charge-after.
+       - Index/slice results (`:big[0:]`) are not charged (not in the ADR table; same class as reads).
+       - Inside a scope, a single builtin (SORT of a huge variable) still runs to completion
+         before the next deadline check.
+       - Docs (BL-028): budget, error texts, `EvalLimits`/`with_limits`, server timeout, the two
+         rewrite patterns, and the A11 behaviour change.
+       - Changelog: `with_limits`/`EvalLimits`/`MAX_EVAL_BYTES` added; A11 behaviour change.
+  ADR: none (implements ADR-0011)
 
 Handoff (language-designer, Claude Opus 5.5, 2026-11-20) — BL-027a:
   Did: - docs/adr/0011-evaluation-budget.md (Proposed) + README row; PRD-001 NFR-4…NFR-7 + open questions.
@@ -498,6 +867,15 @@ Handoff (language-designer, Claude Opus 5.5, 2026-11-20) — BL-027a:
        - BL-018 interrupt handler should reuse the same thread-local deadline.
        - BL-028 (docs) should add the budget, timeout and the two rewrite patterns.
   ADR: ADR-0011 proposed (maintainer to accept before BL-027b).
+
+Review (orchestrator, 2026-11-20): BL-027 accepted. 027b budget, 027c/e re-attacks, 027d/f fixes.
+  All F1-F5 closed (F4 test + JQ test pass, fail on old code; F5 770 → 129 MB with byte-identical
+  wire format). eval_budget 31 passed / 1 slow ignored; strict gate green.
+  Perf vs develop (orchestrator re-run, 5 interleaved rounds, load ~6): +6% to +11%
+  (`:x * 1` +10%, `:x.abs()` +11%). Slightly over the 10% target; accepted for a DoS fix
+  (absolute +0.2–0.45 ms per 100k items), recovery filed as BL-038.
+  Changelog "Added": MAX_EVAL_BYTES, EvalLimits, with_limits; "Changed": copying-read charge,
+  A11 boundary, server 10 s deadline, 64 KiB cache cap, oversized-response rejection.
 
 ### BL-028 · Document the nesting depth limit · P3 · `todo` · docs-engineer
 BL-017b added `MAX_NESTING_DEPTH = 128` (`skillet::MAX_NESTING_DEPTH`) and the error
@@ -600,3 +978,40 @@ Decide whether that is intended; likely not (one evaluator, one function namespa
 ### BL-032 · `sk_concurrency` flakes when the release `sk` is stale · P2 · `todo` · qa-engineer
 `tests/sk_concurrency.rs` runs `cargo run --release` from parallel tests; if the release binary is out
 of date they rebuild concurrently and some fail. Build once up front (or use `CARGO_BIN_EXE_*`).
+
+### BL-033 · sk_server reads request lines without a size cap or read timeout · P1 · `todo` · rust-engineer
+Found in BL-027c (pre-existing). `handle_client` uses `BufReader::lines()` on the raw socket: one
+connection sending a 300 MB line without `\n` grew the process to 308 MB RSS (linear in input; no
+cap like sk_http_server's 1 MB, no read timeout). One client can OOM the server. Fix: bounded line
+reader (e.g. 1 MB, same as HTTP) + `set_read_timeout`; regression test with an oversized line.
+
+### BL-034 · sk_http_server truncates large responses · P3 · `todo` · rust-engineer
+Found in BL-027c. A 20 MB string result: headers say `Content-Length: 20000086`, curl receives
+~327 KB and the connection closes. Probably the write path/close sequence in
+`http_server/utils.rs::send_http_response`. Not a memory issue; correctness for large results.
+
+### BL-035 · Budget hardening, low-severity leftovers from BL-027c · P3 · `todo` · rust-engineer → docs-engineer
+- A single builtin runs to completion before the next deadline check (SORT/UNIQUE of 3M items:
+  ~0.12 s release; fine today, revisit if a superlinear builtin is added).
+- Custom functions that move work to another thread escape the budget (document on
+  `CustomFunction`/`with_limits`).
+- Cost model undercounts tiny heap strings (charged 33 B, ~48 B real per 1-char string) and
+  case mapping can grow 3x (`UPPER` of U+0390) after the charge; both stay < ~2x budget today.
+
+### BL-036 · Share values instead of copying on variable reads · P2 · `todo` · language-designer (ADR) → rust-engineer → performance-engineer
+Option B from the BL-027c decision. Reads deep-clone `Value` (e.g. `SUM(:rows)`, `CONCAT(:s, :s)`).
+Making values shared (`Rc`/`Arc` inside `Value`, or a borrowed-read evaluation path) would make reads
+O(1), remove the ADR-0011 Amendment 2 read charge, and speed up every formula over large variables.
+Changes the core `Value` type, so it needs an ADR and a characterization pass first.
+
+### BL-037 · sk_http_server: no total deadline for reading a request (slowloris) · P2 · `todo` · rust-engineer
+Found in BL-027e (pre-existing on Linux; reachable on macOS since 58cc5b7 made accepted sockets
+blocking). The 30 s read timeout is per `read`, so a client sending one byte every < 30 s holds a
+worker until it has sent 1 MB. Measured, 1 worker: an idle client delays the next request 29.7 s.
+Fix: a total deadline for reading one request (e.g. 30 s from accept), checked between reads;
+regression test with a trickling client. Same fix shape as BL-033 for sk_server.
+
+### BL-038 · Recover evaluation-budget overhead (~10% on lambda-heavy formulas) · P3 · `todo` · performance-engineer → rust-engineer
+BL-027 added a per-operation deadline tick and charge calls; `lambda_scope` shows +6–11% vs
+develop bf7c20a. Profile and trim (e.g. batch ticks per lambda iteration instead of per op, cheaper
+fast path in `check_value`). BL-036 (shared values) would also remove the copying-read charge.

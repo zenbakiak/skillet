@@ -42,7 +42,13 @@ pub fn cast_value(v: Value, ty: &TypeName) -> Result<Value, Error> {
             Value::Number(n) => Value::String(n.to_string()),
             Value::Boolean(b) => Value::String(if b { "TRUE".into() } else { "FALSE".into() }),
             Value::Null => Value::String(String::new()),
-            Value::Array(items) => Value::String(format!("{:?}", items)),
+            Value::Array(items) => {
+                // `Debug` escapes control characters up to 6x: count it, charge, then build.
+                crate::limits::charge_formatted(|c| {
+                    let _ = std::fmt::Write::write_fmt(c, format_args!("{:?}", items));
+                })?;
+                Value::String(format!("{:?}", items))
+            }
             Value::Currency(n) => Value::String(format!("{:.4}", n)),
             Value::DateTime(ts) => Value::String(ts.to_string()),
             Value::Json(s) => Value::String(s),

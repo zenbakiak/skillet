@@ -193,6 +193,7 @@ fn exec_json_method(
 
     match lname.as_str() {
         "keys" => {
+            crate::limits::charge_json_parse(json_str)?;
             let parsed: serde_json::Value = serde_json::from_str(json_str)
                 .map_err(|e| Error::new(format!("Invalid JSON: {}", e), None))?;
 
@@ -205,6 +206,7 @@ fn exec_json_method(
         }
 
         "values" => {
+            crate::limits::charge_json_parse(json_str)?;
             let parsed: serde_json::Value = serde_json::from_str(json_str)
                 .map_err(|e| Error::new(format!("Invalid JSON: {}", e), None))?;
 
@@ -229,6 +231,7 @@ fn exec_json_method(
                 _ => return Err(Error::new("has_key method expects string argument", None)),
             };
 
+            crate::limits::charge_json_parse(json_str)?;
             let parsed: serde_json::Value = serde_json::from_str(json_str)
                 .map_err(|e| Error::new(format!("Invalid JSON: {}", e), None))?;
 
@@ -264,6 +267,7 @@ fn exec_json_method(
                 }
             };
 
+            crate::limits::charge_json_parse(json_str)?;
             let parsed: serde_json::Value = serde_json::from_str(json_str)
                 .map_err(|e| Error::new(format!("Invalid JSON: {}", e), None))?;
             let mut cur = &parsed;

@@ -183,6 +183,9 @@ fn main() {
     while running.load(Ordering::Relaxed) {
         match listener.accept() {
             Ok((stream, _addr)) => {
+                // The listener is non-blocking; on macOS/BSD accepted sockets inherit that, and
+                // a read that finds no data yet would fail instead of waiting.
+                let _ = stream.set_nonblocking(false);
                 let stats = Arc::clone(&stats);
                 let request_counter = Arc::clone(&request_counter);
                 let server_token = Arc::clone(&server_token);

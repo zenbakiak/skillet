@@ -9,11 +9,14 @@ use std::time::Instant;
 
 use super::auth::check_authentication;
 use super::cache::{clear_cache, evaluate_cached, get_cache_stats};
+use super::response_size;
 use super::stats::ServerStats;
 use super::types::{
     CacheStatsResponse, EvalRequest, EvalResponse, HealthResponse, IncludeVariables,
 };
-use super::utils::{parse_json_body, sanitize_json_key, send_http_error, send_http_response};
+use super::utils::{
+    parse_json_body, sanitize_json_key, send_http_error, send_http_response, to_json_exact,
+};
 
 pub fn handle_eval_post(
     stream: &mut TcpStream,
@@ -37,7 +40,7 @@ pub fn handle_eval_post(
     };
 
     let response = process_eval_request(eval_request, stats, request_counter);
-    let json = serde_json::to_string(&response).unwrap_or_default();
+    let json = to_json_exact(&response);
     send_http_response(
         stream,
         if response.success { 200 } else { 400 },
@@ -137,7 +140,7 @@ pub fn handle_eval_get(
     };
 
     let response = process_eval_request(eval_request, stats, request_counter);
-    let json = serde_json::to_string(&response).unwrap_or_default();
+    let json = to_json_exact(&response);
     send_http_response(
         stream,
         if response.success { 200 } else { 400 },
@@ -256,8 +259,22 @@ fn process_eval_request(
     let execution_time_ms = execution_time.as_secs_f64() * 1000.0;
     stats.record_request(execution_time.as_micros() as u64);
 
+    let failed = |error: String| EvalResponse {
+        success: false,
+        result: None,
+        variables: None,
+        error: Some(error),
+        execution_time_ms,
+        request_id,
+    };
+
     match result {
         Ok(val) => {
+            // Size the response before building it: escaping can make it up to 6x the value.
+            let mut response_bytes = response_size::json_size(&val, false);
+            if let Err(e) = response_size::check(response_bytes) {
+                return failed(e);
+            }
             let result_json = if req.output_json.unwrap_or(false) {
                 format_structured_output(&val, execution_time_ms)
             } else {
@@ -281,6 +298,12 @@ fn process_eval_request(
                         };
 
                         if should_include {
+                            response_bytes = response_bytes
+                                .saturating_add(key.len() as u64 + 4)
+                                .saturating_add(response_size::json_size(&value, false));
+                            if let Err(e) = response_size::check(response_bytes) {
+                                return failed(e);
+                            }
                             json_vars.insert(key, format_simple_output(&value));
                         }
                     }
@@ -303,14 +326,7 @@ fn process_eval_request(
                 request_id,
             }
         }
-        Err(e) => EvalResponse {
-            success: false,
-            result: None,
-            variables: None,
-            error: Some(e.to_string()),
-            execution_time_ms,
-            request_id,
-        },
+        Err(e) => failed(e.to_string()),
     }
 }
 

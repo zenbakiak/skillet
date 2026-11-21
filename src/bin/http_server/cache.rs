@@ -4,7 +4,43 @@ use std::collections::HashMap;
 use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex};
 
-use skillet::{evaluate_with_assignments, evaluate_with_assignments_and_context, Value};
+use skillet::{
+    evaluate_with_assignments, evaluate_with_assignments_and_context, with_limits, EvalLimits,
+    Value,
+};
+
+/// Wall-clock limit for one evaluation (ADR-0011): 6x the slowest realistic workload measured
+/// and well below the 30 s socket read timeout. No flag or env var on purpose.
+pub const SERVER_EVAL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Largest entry the cache stores: key + result + variable context, by the budget cost model.
+const MAX_CACHE_ENTRY_BYTES: u64 = 64 * 1024;
+
+/// Limits for every server evaluation: default budget plus [`SERVER_EVAL_TIMEOUT`].
+pub fn server_limits() -> EvalLimits {
+    let mut limits = EvalLimits::default();
+    limits.timeout = Some(SERVER_EVAL_TIMEOUT);
+    limits
+}
+
+/// Same cost model as the evaluation budget (32 per value + string bytes, arrays sum items).
+fn approx_size(value: &Value) -> u64 {
+    32 + match value {
+        Value::String(s) | Value::Json(s) => s.len() as u64,
+        Value::Array(items) => items.iter().map(approx_size).sum(),
+        _ => 0,
+    }
+}
+
+/// True when an entry is small enough to cache (ADR-0011 §4).
+fn fits_in_cache(key: &str, result: &Value, vars: Option<&HashMap<String, Value>>) -> bool {
+    let vars_size: u64 = vars.map_or(0, |vars| {
+        vars.iter()
+            .map(|(k, v)| k.len() as u64 + approx_size(v))
+            .sum()
+    });
+    key.len() as u64 + approx_size(result) + vars_size <= MAX_CACHE_ENTRY_BYTES
+}
 
 /// Cached expression result with optional variable context
 #[derive(Clone, Debug)]
@@ -128,23 +164,29 @@ pub fn evaluate_cached(
     // Cache miss - evaluate the expression
     let start_time = std::time::Instant::now();
 
-    let (result, variable_context) = if expression.contains(";") || expression.contains(":=") {
-        if include_variables {
-            match evaluate_with_assignments_and_context(expression, variables) {
-                Ok((val, ctx)) => (Ok(val), Some(ctx)),
-                Err(e) => (Err(e), None),
+    let (result, variable_context) = with_limits(server_limits(), || {
+        if expression.contains(";") || expression.contains(":=") {
+            if include_variables {
+                match evaluate_with_assignments_and_context(expression, variables) {
+                    Ok((val, ctx)) => (Ok(val), Some(ctx)),
+                    Err(e) => (Err(e), None),
+                }
+            } else {
+                (evaluate_with_assignments(expression, variables), None)
             }
         } else {
-            (evaluate_with_assignments(expression, variables), None)
+            (skillet::evaluate_with_custom(expression, variables), None)
         }
-    } else {
-        (skillet::evaluate_with_custom(expression, variables), None)
-    };
+    });
 
     let execution_time_ms = start_time.elapsed().as_secs_f64() * 1000.0;
 
-    // Store successful results in cache
-    if let Ok(ref value) = result {
+    // Store small successful results only; errors (incl. budget/timeout) are never cached.
+    let cacheable = match &result {
+        Ok(value) => fits_in_cache(&cache_key, value, variable_context.as_ref()),
+        Err(_) => false,
+    };
+    if let (true, Ok(value)) = (cacheable, &result) {
         let cache_entry = CacheEntry {
             result: value.clone(),
             variable_context: variable_context.clone(),
@@ -254,6 +296,20 @@ mod tests {
         assert_eq!(stats.hits, 1);
         assert_eq!(stats.misses, 1);
         assert!(stats.hit_rate() > 0.0);
+    }
+
+    #[test]
+    fn large_results_are_not_cached() {
+        // Pure check: the global cache is shared with test_expression_cache running in parallel.
+        assert!(!fits_in_cache(
+            "k",
+            &Value::String("a".repeat(64 * 1024)),
+            None
+        ));
+        assert!(fits_in_cache("k", &Value::String("a".repeat(1000)), None));
+        let mut ctx = HashMap::new();
+        ctx.insert("v".to_string(), Value::String("a".repeat(64 * 1024)));
+        assert!(!fits_in_cache("k", &Value::Null, Some(&ctx)));
     }
 
     #[test]

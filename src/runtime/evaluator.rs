@@ -1,12 +1,12 @@
 use crate::ast::{BinaryOp, Expr, UnaryOp};
 use crate::custom::FunctionRegistry;
 use crate::error::Error;
-use crate::limits::check_value_depth;
+use crate::limits::{self, charge_value, check_value};
 use crate::runtime::{
     function_dispatch::exec_builtin_fast,
     method_calls::exec_method_in,
     type_casting::cast_value,
-    utils::{index_array, slice_array},
+    utils::{clamp_index, slice_items},
 };
 use crate::types::Value;
 use std::borrow::Cow;
@@ -167,28 +167,35 @@ impl Evaluator {
             Expr::Null => Ok(Value::Null),
 
             Expr::Unary(op, e) => {
-                let v = Self::eval(e, context)?;
-                Self::eval_unary_op(*op, v)
+                let v = Self::eval_operand(e, context)?;
+                limits::tick()?;
+                Self::eval_unary_op(*op, &v)
             }
 
             Expr::Binary(l, op, r) => {
-                let a = Self::eval(l, context)?;
-                let b = Self::eval(r, context)?;
-                Self::eval_binary_op(*op, a, b)
+                let a = Self::eval_operand(l, context)?;
+                let b = Self::eval_operand(r, context)?;
+                limits::tick()?;
+                Self::eval_binary_op(*op, &a, &b)
             }
 
-            Expr::Variable(name) => context
-                .get_variable(name)
-                .cloned()
-                .ok_or_else(|| missing_variable(name)),
+            // A read that copies is charged the cost of the copy, before it is made
+            // (ADR-0011 amendment 2). Borrowed reads (`eval_operand`) only tick.
+            Expr::Variable(name) => {
+                let v = context
+                    .get_variable(name)
+                    .ok_or_else(|| missing_variable(name))?;
+                charge_value(v)?;
+                Ok(v.clone())
+            }
 
             Expr::PropertyAccess { target, property } => Self::with_target(target, context, |v| {
-                Self::eval_property_access(v, property, false)
+                Self::eval_property_access(v, property, false).and_then(check_value)
             }),
 
             Expr::SafePropertyAccess { target, property } => {
                 Self::with_target(target, context, |v| {
-                    Self::eval_property_access(v, property, true)
+                    Self::eval_property_access(v, property, true).and_then(check_value)
                 })
             }
 
@@ -197,7 +204,7 @@ impl Evaluator {
                     if matches!(recv, Value::Null) {
                         return Ok(Value::Null);
                     }
-                    exec_method_in(name, false, recv, args, context).and_then(check_value_depth)
+                    exec_method_in(name, false, recv, args, context).and_then(check_value)
                 })
             }
 
@@ -206,55 +213,50 @@ impl Evaluator {
                 for e in items {
                     out.push(Self::eval(e, context)?);
                 }
-                check_value_depth(Value::Array(out))
+                check_value(Value::Array(out))
             }
 
-            Expr::ObjectLiteral(pairs) => {
-                let mut json_map = serde_json::Map::new();
-                for (key, value_expr) in pairs {
-                    let value = Self::eval(value_expr, context)?;
-                    let json_value = Self::value_to_json(&value)?;
-                    json_map.insert(key.clone(), json_value);
-                }
-                let json_obj = serde_json::Value::Object(json_map);
-                let json_str = serde_json::to_string(&json_obj)
-                    .map_err(|e| Error::new(format!("Failed to serialize object: {}", e), None))?;
-                Ok(Value::Json(json_str))
-            }
+            Expr::ObjectLiteral(pairs) => Self::eval_object_literal(pairs, context),
 
             Expr::TypeCast { expr, ty } => {
                 let v = Self::eval(expr, context)?;
-                cast_value(v, ty).and_then(check_value_depth)
+                cast_value(v, ty).and_then(check_value)
             }
 
-            Expr::Index { target, index } => {
-                let recv = Self::eval(target, context)?;
+            Expr::Index { target, index } => Self::with_target(target, context, |recv| {
                 let idx_v = Self::eval(index, context)?;
                 let idx = idx_v
                     .as_number()
                     .ok_or_else(|| Error::new("Index must be number", None))?
                     as isize;
                 match recv {
-                    Value::Array(items) => index_array(items, idx),
+                    Value::Array(items) => match clamp_index(items.len(), idx) {
+                        Some(i) => check_value(items[i].clone()),
+                        None => Err(Error::new("Index out of bounds", None)),
+                    },
                     _ => Err(Error::new("Index on non-array", None)),
                 }
-            }
+            }),
 
             Expr::Slice { target, start, end } => {
-                let recv = Self::eval(target, context)?;
-                match recv {
+                Self::with_target(target, context, |recv| match recv {
                     Value::Array(items) => {
                         let start_val =
                             start.as_ref().map(|e| Self::eval(e, context)).transpose()?;
                         let end_val = end.as_ref().map(|e| Self::eval(e, context)).transpose()?;
-                        slice_array(items, start_val, end_val)
+                        slice_items(items, start_val, end_val).and_then(check_value)
                     }
                     _ => Err(Error::new("Slice on non-array", None)),
-                }
+                })
             }
 
             Expr::FunctionCall { name, args } => {
-                Self::eval_function_call(name, args, context).and_then(check_value_depth)
+                let v = Self::eval_function_call(name, args, context)?;
+                if Self::is_prepaid_builtin(name, context) {
+                    limits::check_prepaid(v)
+                } else {
+                    check_value(v)
+                }
             }
 
             Expr::MethodCall {
@@ -263,7 +265,7 @@ impl Evaluator {
                 args,
                 predicate,
             } => Self::with_target(target, context, |recv| {
-                exec_method_in(name, *predicate, recv, args, context).and_then(check_value_depth)
+                exec_method_in(name, *predicate, recv, args, context).and_then(check_value)
             }),
 
             Expr::Spread(_) => Err(Error::new("Spread not allowed here", None)),
@@ -283,8 +285,25 @@ impl Evaluator {
         }
     }
 
+    /// Evaluate an operator operand or a method/property target. A plain variable is borrowed
+    /// (no copy, no charge), so `:s == :s` on a large string compares in place instead of
+    /// cloning it twice. The borrowed read does not tick by itself: the operation that uses it
+    /// does (the operator's tick, or the method/property result charge), one tick per use.
+    fn eval_operand<'c, C: EvaluationContext>(
+        expr: &Expr,
+        context: &'c C,
+    ) -> Result<Cow<'c, Value>, Error> {
+        match expr {
+            Expr::Variable(name) => context
+                .get_variable(name)
+                .map(Cow::Borrowed)
+                .ok_or_else(|| missing_variable(name)),
+            _ => Self::eval(expr, context).map(Cow::Owned),
+        }
+    }
+
     /// Evaluate unary operations
-    fn eval_unary_op(op: UnaryOp, v: Value) -> Result<Value, Error> {
+    fn eval_unary_op(op: UnaryOp, v: &Value) -> Result<Value, Error> {
         match op {
             UnaryOp::Plus => {
                 Ok(Value::Number(v.as_number().ok_or_else(|| {
@@ -305,7 +324,7 @@ impl Evaluator {
     }
 
     /// Evaluate binary operations
-    fn eval_binary_op(op: BinaryOp, a: Value, b: Value) -> Result<Value, Error> {
+    fn eval_binary_op(op: BinaryOp, a: &Value, b: &Value) -> Result<Value, Error> {
         match op {
             BinaryOp::Add
             | BinaryOp::Sub
@@ -385,17 +404,34 @@ impl Evaluator {
 
     /// Run `f` on the value of a method/property target. A plain variable is borrowed
     /// instead of cloned, so `:rows.length()` inside a lambda does not copy `:rows`.
+    /// `{"k": v, …}`: a `Json` object. Escaping can grow the text 6x (`\u0001`), so its exact
+    /// size is charged before it is built; that charge is the result's cost (not checked again).
+    /// Out of line so this cold path does not change code layout of the hot `eval` match
+    /// (measured: inline, `lambda_scope` `:nums.map(:x * 1)` was +6%).
+    #[inline(never)]
+    fn eval_object_literal<C: EvaluationContext>(
+        pairs: &[(String, Expr)],
+        context: &C,
+    ) -> Result<Value, Error> {
+        let mut json_map = serde_json::Map::new();
+        for (key, value_expr) in pairs {
+            let value = Self::eval(value_expr, context)?;
+            let json_value = Self::value_to_json(&value)?;
+            json_map.insert(key.clone(), json_value);
+        }
+        let json_obj = serde_json::Value::Object(json_map);
+        limits::charge_json_text(&json_obj)?;
+        let json_str = serde_json::to_string(&json_obj)
+            .map_err(|e| Error::new(format!("Failed to serialize object: {}", e), None))?;
+        Ok(Value::Json(json_str))
+    }
+
     fn with_target<C: EvaluationContext>(
         target: &Expr,
         context: &C,
         f: impl FnOnce(&Value) -> Result<Value, Error>,
     ) -> Result<Value, Error> {
-        match target {
-            Expr::Variable(name) => f(context
-                .get_variable(name)
-                .ok_or_else(|| missing_variable(name))?),
-            _ => f(&Self::eval(target, context)?),
-        }
+        f(Self::eval_operand(target, context)?.as_ref())
     }
 
     /// Evaluate property access (both safe and unsafe)
@@ -406,6 +442,7 @@ impl Evaluator {
     ) -> Result<Value, Error> {
         match target_value {
             Value::Json(json_str) => {
+                limits::charge_json_parse(json_str)?;
                 let parsed: serde_json::Value = serde_json::from_str(json_str)
                     .map_err(|e| Error::new(format!("Invalid JSON: {}", e), None))?;
                 if let Some(prop_value) = parsed.get(property) {
@@ -422,6 +459,16 @@ impl Evaluator {
             Value::Null if safe => Ok(Value::Null),
             _ => Err(Error::new("Property access requires JSON object", None)),
         }
+    }
+
+    /// Builtins that charge their own result before building it (ADR-0011 amendment 2); their
+    /// result is only depth-checked. A custom function of the same name is charged as usual.
+    fn is_prepaid_builtin<C: EvaluationContext>(name: &str, context: &C) -> bool {
+        matches!(name, "MERGE" | "CONCAT")
+            && !context
+                .get_custom_registry()
+                .and_then(|r| r.read().ok().map(|reg| reg.has_function(name)))
+                .unwrap_or(false)
     }
 
     /// Evaluate function calls with optimized dispatch
@@ -556,6 +603,7 @@ impl Evaluator {
                 let mut out = Vec::with_capacity(items.len());
                 let mut scope = Scope::new(context, None);
                 for it in items {
+                    charge_value(&it)?;
                     scope.set(&param_name, it.clone());
                     let matches = matches!(Self::eval(lambda, &scope)?, Value::Boolean(true));
                     if matches {
@@ -588,6 +636,7 @@ impl Evaluator {
             Value::Array(items) => {
                 let mut scope = Scope::new(context, None);
                 for it in items {
+                    charge_value(&it)?;
                     scope.set(&param_name, it.clone());
                     let matches = matches!(Self::eval(lambda, &scope)?, Value::Boolean(true));
                     if matches {
@@ -621,6 +670,7 @@ impl Evaluator {
                 let mut out = Vec::with_capacity(items.len());
                 let mut scope = Scope::new(context, None);
                 for it in items {
+                    charge_value(&it)?;
                     scope.set(&param_name, it);
                     let result = Self::eval(lambda, &scope)?;
                     out.push(result);
@@ -661,6 +711,7 @@ impl Evaluator {
             Value::Array(items) => {
                 let mut scope = Scope::new(context, None);
                 for it in items {
+                    charge_value(&it)?;
                     scope.set(&val_param, it);
                     scope.set(&acc_param, acc);
                     acc = Self::eval(lambda, &scope)?;
@@ -711,6 +762,7 @@ impl Evaluator {
                 let mut acc = 0.0;
                 let mut scope = Scope::new(context, None);
                 for it in items {
+                    charge_value(&it)?;
                     scope.set("x", it.clone());
                     let matches =
                         matches!(Self::eval(criteria_expr, &scope)?, Value::Boolean(true));
@@ -870,6 +922,7 @@ impl Evaluator {
                 let mut count = 0usize;
                 let mut scope = Scope::new(context, None);
                 for it in items {
+                    charge_value(&it)?;
                     scope.set("x", it.clone());
                     let matches = matches!(Self::eval(lambda, &scope)?, Value::Boolean(true));
                     if matches {
@@ -904,6 +957,7 @@ impl Evaluator {
                 let mut count = 0usize;
                 let mut scope = Scope::new(context, None);
                 for it in items {
+                    charge_value(&it)?;
                     scope.set("x", it);
                     let matches = matches!(Self::eval(lambda, &scope)?, Value::Boolean(true));
                     if matches {
@@ -932,21 +986,22 @@ impl Evaluator {
                 }
                 Ok(serde_json::Value::Array(json_arr))
             }
-            Value::Json(s) => serde_json::from_str(s)
-                .map_err(|e| Error::new(format!("Invalid JSON: {}", e), None)),
+            Value::Json(s) => {
+                limits::charge_json_parse(s)?;
+                serde_json::from_str(s)
+                    .map_err(|e| Error::new(format!("Invalid JSON: {}", e), None))
+            }
         }
     }
 }
 
 // Convenience functions for backward compatibility
 pub fn eval(expr: &Expr) -> Result<Value, Error> {
-    let context = EmptyContext;
-    Evaluator::eval(expr, &context)
+    limits::evaluation(|| Evaluator::eval(expr, &EmptyContext))
 }
 
 pub fn eval_with_vars(expr: &Expr, vars: &HashMap<String, Value>) -> Result<Value, Error> {
-    let context = VariableContext::new(vars);
-    Evaluator::eval(expr, &context)
+    limits::evaluation(|| Evaluator::eval(expr, &VariableContext::new(vars)))
 }
 
 pub fn eval_with_vars_and_custom(
@@ -954,14 +1009,17 @@ pub fn eval_with_vars_and_custom(
     vars: &HashMap<String, Value>,
     custom_registry: &Arc<RwLock<FunctionRegistry>>,
 ) -> Result<Value, Error> {
-    let context = VariableContext::with_custom(vars, custom_registry);
-    Evaluator::eval(expr, &context)
+    limits::evaluation(|| {
+        Evaluator::eval(expr, &VariableContext::with_custom(vars, custom_registry))
+    })
 }
 
 /// Evaluate with support for assignments and sequences
 pub fn eval_with_assignments(expr: &Expr, vars: &HashMap<String, Value>) -> Result<Value, Error> {
-    let mut context = VariableContext::with_owned(vars.clone());
-    eval_with_assignments_context(expr, &mut context)
+    limits::evaluation(|| {
+        let mut context = VariableContext::with_owned(vars.clone());
+        eval_with_assignments_context(expr, &mut context)
+    })
 }
 
 /// Evaluate with support for assignments and sequences, returning both result and variable context
@@ -969,10 +1027,11 @@ pub fn eval_with_assignments_and_context(
     expr: &Expr,
     vars: &HashMap<String, Value>,
 ) -> Result<(Value, HashMap<String, Value>), Error> {
-    let mut context = VariableContext::with_owned(vars.clone());
-    let result = eval_with_assignments_context(expr, &mut context)?;
-    let final_vars = context.into_variables();
-    Ok((result, final_vars))
+    limits::evaluation(|| {
+        let mut context = VariableContext::with_owned(vars.clone());
+        let result = eval_with_assignments_context(expr, &mut context)?;
+        Ok((result, context.into_variables()))
+    })
 }
 
 fn eval_with_assignments_context(
@@ -982,6 +1041,7 @@ fn eval_with_assignments_context(
     match expr {
         Expr::Assignment { variable, value } => {
             let result = Evaluator::eval(value, context)?;
+            charge_value(&result)?; // the stored clone
             context.make_mut().insert(variable.clone(), result.clone());
             Ok(result)
         }
