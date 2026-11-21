@@ -1222,6 +1222,21 @@ sk 'MIN(JQ(:arguments, "$.temperatures[*].reading"))' --json '{"temperatures":[{
 # -> 18.7
 ```
 
+**Result shape:** the path, not the data, decides what `JQ` returns.
+- A singular path (only `.name`, `['name']` and `[n]` steps) returns the value, or `NULL` when it is missing.
+- Any other path (`[*]`, `..`, slices, filters, unions) always returns an array, even with 0 or 1 matches.
+  So array methods such as `.sum()`, `.length()` and `.map()` work for every input. Use `.first()` to
+  get the first match.
+
+```bash
+sk 'JQ(:arguments, "$.user.name")' --json '{"user":{"name":"Ann"}}'
+# -> "Ann"
+sk 'JQ(:arguments, "$.user.email")' --json '{"user":{"name":"Ann"}}'
+# -> NULL
+sk 'JQ(:arguments, "$.items[*].price").sum()' --json '{"items":[{"price":10}]}'
+# -> 10   (the wildcard returns [10], not 10)
+```
+
 **JSONPath Syntax Support:**
 - Basic property access: `$.property`
 - Array indexing: `$.array[0]`, `$.array[*]` (all elements)
