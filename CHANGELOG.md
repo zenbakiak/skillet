@@ -16,6 +16,10 @@ were reconstructed from git tags and commit messages, so they are brief.
 Planned as 0.7.0 (it contains breaking changes, see "Removed").
 
 ### Added
+- `benches/baseline.rs` and `benches/BASELINE.md`: a reproducible performance baseline for the
+  library, CLI and HTTP layers (#48).
+- `docs/guide/limits.md`: one place for every limit (nesting depth, evaluation budget, server
+  deadlines, request and response sizes) (#49).
 - `skillet::MAX_NESTING_DEPTH` (128): expressions and runtime-built arrays deeper than this fail
   with `Expression nested too deeply (max 128)` instead of overflowing the stack (#44).
 - Per-evaluation memory budget (ADR-0011): `skillet::MAX_EVAL_BYTES` (256 MB of created values),
@@ -32,6 +36,13 @@ Planned as 0.7.0 (it contains breaking changes, see "Removed").
   Rustdoc examples for the public API (#60).
 
 ### Changed
+- The parser uses about 4x less stack per nesting level, so debug builds handle the maximum
+  depth on a default 2 MB thread; parsing is 4-35% faster (#48).
+- Documentation moved into `docs/guide/`, `docs/reference/` and `docs/ops/`; the published crate
+  now includes the licence files (#49).
+- `evaluate_with_json` and `evaluate_with_json_custom` share one internal helper; no behaviour
+  change (#47).
+- The minimum supported Rust version is 1.85 (`rust-version` in `Cargo.toml`, ADR-0012) (#50).
 - One evaluator: method and lambda calls now use the same evaluator as the top level. Inside
   lambdas, `JQ`, `DIG`, `REDUCE` with the default `:acc`, custom parameter names and similar
   cases now behave as they do at the top level; for example, `[1,2].map(DIG(...))` no longer fails
@@ -85,6 +96,8 @@ Planned as 0.7.0 (it contains breaking changes, see "Removed").
 - Unused dependencies `dashmap`, `string-interner`, `typed-arena` and `beef` (#43).
 
 ### Fixed
+- `sk_http_server` reported a request read timeout as "500 Internal Server Error"; it now
+  reports "408 Request Timeout" (#51).
 - Deeply nested input (`((((…))))`, `1+1+…`, long `.a.b…` chains, `.reduce([:acc], 0)`) no longer
   crashes the process with a stack overflow; on `sk_http_server` one request could take the
   server down (#44).
@@ -102,6 +115,10 @@ Planned as 0.7.0 (it contains breaking changes, see "Removed").
 - The "Range operations" case in `sk_http_bench` failed every request (#57).
 
 ### Security
+- `sk_server` limits each request line to 1 MB and both servers limit reading one request to
+  30 s in total (#51).
+- Auth tokens are compared in constant time on both servers (#51).
+- `crossbeam-epoch` updated to 0.9.21 for RUSTSEC-2026-0204 (#50).
 - Stack-overflow DoS through nesting depth is closed (#44).
 - CPU and allocation DoS through lambdas copying the scope is closed (#45).
 - Memory and CPU exhaustion from a single evaluation is bounded by the evaluation budget and, on
