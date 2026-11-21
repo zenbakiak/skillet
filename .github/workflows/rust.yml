@@ -1,22 +1,49 @@
-name: Rust
+name: CI
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "develop" ]
   pull_request:
-    branches: [ "main" ]
+    branches: [ "main", "develop" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
+  # Toolchain the gate runs on. Clippy runs with -D warnings, so this is pinned
+  # (a floating `stable` would break CI whenever a new lint ships). Bump it
+  # together with the local toolchain; MSRV is a separate decision (BL-014).
+  RUST_TOOLCHAIN: "1.89.0"
 
 jobs:
-  build:
-
+  gate:
+    name: harness gate (./harness/check.sh)
     runs-on: ubuntu-latest
-
+    timeout-minutes: 45
     steps:
-    - uses: actions/checkout@v4
-    - name: Build
-      run: cargo build --verbose
-    - name: Run tests
-      run: cargo test --verbose
+      - uses: actions/checkout@v4
+
+      - name: Install Rust ${{ env.RUST_TOOLCHAIN }}
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      # Fails if Cargo.lock is missing or out of date, so every later cargo
+      # command in check.sh builds exactly the locked dependency set.
+      - name: Fetch dependencies (locked)
+        run: cargo fetch --locked
+
+      # Full mode: includes the slow sk_concurrency / sk_performance suites,
+      # both feature sets (default and --no-default-features), strict clippy and fmt.
+      - name: Run harness gate
+        run: ./harness/check.sh
+
