@@ -210,10 +210,28 @@ impl Meter<'_> {
     }
 }
 
-/// True when the active scope has a deadline that has passed (for BL-018's QuickJS interrupt).
-#[allow(dead_code)]
+/// True when the active scope has a deadline that has passed (read by the QuickJS interrupt
+/// handler, ADR-0017 §3).
+#[cfg_attr(not(feature = "plugins"), allow(dead_code))]
 pub(crate) fn deadline_passed() -> bool {
     BUDGET.with(|b| b.active.get() && b.deadline.get().is_some_and(|d| Instant::now() >= d))
+}
+
+/// Record that code outside the evaluator (a JS plugin stopped by its interrupt handler) found
+/// the deadline passed, and return the ADR-0011 timeout error. The trip is sticky like any other:
+/// the evaluation entry point reports it even if a formula swallows the returned error.
+#[cfg_attr(not(feature = "plugins"), allow(dead_code))]
+pub(crate) fn trip_deadline() -> Error {
+    BUDGET.with(|b| b.trip(Trip::Timeout))
+}
+
+/// `10 s`, or `1500 ms` when not a whole number of seconds (the form used in limit errors).
+pub(crate) fn format_duration(d: Duration) -> String {
+    if d.subsec_nanos() == 0 {
+        format!("{} s", d.as_secs())
+    } else {
+        format!("{} ms", d.as_millis())
+    }
 }
 
 /// Charge the cost of an existing value (lambda item binding, assignment).
@@ -704,12 +722,10 @@ fn budget_error(max: u64) -> Error {
 
 /// `Evaluation timed out (max 10 s)`; `N ms` when not a whole number of seconds.
 fn timeout_error(timeout: Duration) -> Error {
-    let shown = if timeout.subsec_nanos() == 0 {
-        format!("{} s", timeout.as_secs())
-    } else {
-        format!("{} ms", timeout.as_millis())
-    };
-    Error::new(format!("Evaluation timed out (max {})", shown), None)
+    Error::new(
+        format!("Evaluation timed out (max {})", format_duration(timeout)),
+        None,
+    )
 }
 
 #[cfg(test)]
