@@ -229,11 +229,11 @@ Review (orchestrator, 2026-11-20): accepted. fmt commit verified as pure `cargo 
 `.github/workflows/rust.yml` only runs build/test on `main`. Run `./harness/check.sh` on push/PR
 to `main` and `develop`, add cargo cache, and a `--no-default-features` job.
 
-### BL-005 · Performance baseline · P1 · `review` (PR #48) · performance-engineer
+### BL-005 · Performance baseline · P1 · `done` (PR #48) · performance-engineer
 Pick 10 representative expressions (arithmetic, string, array lambda, JQ, JSON vars, financial)
 and record eval latency (lib, CLI, HTTP) in `benches/BASELINE.md`. All perf items depend on this.
 
-### BL-006 · Fix false or broken documentation · P1 · `review` (PR #49) · docs-engineer
+### BL-006 · Fix false or broken documentation · P1 · `done` (PR #49) · docs-engineer
 - `Cargo.toml` `include` lists `DAEMON_DEPLOYMENT_GUIDE.md`, `DAEMON_FLAG_GUIDE.md` (deleted).
 - `docs/README.md` links `performance-optimization.prd.md` (missing).
 - `docs/DEVELOPMENT_GUIDE.md` claims lexer string interning and AST memory pooling — not true in code.
@@ -244,11 +244,11 @@ and record eval latency (lib, CLI, HTTP) in `benches/BASELINE.md`. All perf item
 ### BL-007 · Rustdoc for the public API · P2 · `todo` · docs-engineer
 Every `pub fn` in `src/lib.rs` gets docs + runnable doctest; fix `parse` docstring ("arithmetic").
 
-### BL-008 · De-duplicate `lib.rs` entry points · P2 · `review` (PR #47) · rust-engineer
+### BL-008 · De-duplicate `lib.rs` entry points · P2 · `done` (PR #47) · rust-engineer
 `evaluate_with_json` and `evaluate_with_json_custom` copy the same JSON→vars block. Extract one
 private helper. Consider an `Engine`/builder API via ADR (keep old fns as thin wrappers).
 
-### BL-009 · Consolidate docs into `docs/` tree · P2 · `review` (PR #49) · docs-engineer
+### BL-009 · Consolidate docs into `docs/` tree · P2 · `done` (PR #49) · docs-engineer
 11 root-level `.md` files overlap (`ALPINE_*` ×3, `DOCUMENTATION.md` vs `API_REFERENCE.md`
 vs `docs/DEVELOPMENT_GUIDE.md`). Move to layout in `harness/roles/docs-engineer.md`.
 
@@ -271,7 +271,7 @@ Re-add Windows target to `release-binaries.yml`.
 Rust 1.81 → current stable, edition 2024, `lazy_static`/`once_cell` → `std::sync::LazyLock`,
 `cargo update` + `cargo outdated` review.
 
-### BL-015 · Repo hygiene · P3 · `review` (PR #49) · docs-engineer
+### BL-015 · Repo hygiene · P3 · `done` (PR #49) · docs-engineer
 Remove or relocate `test_js_upload.py`, `test_large_request.py`, `performance_results/*.log`,
 `SETUP_COMPLETE.md`; check `.DS_Store`, `dist/`, `.env` are ignored.
 
@@ -877,13 +877,13 @@ Review (orchestrator, 2026-11-20): BL-027 accepted. 027b budget, 027c/e re-attac
   Changelog "Added": MAX_EVAL_BYTES, EvalLimits, with_limits; "Changed": copying-read charge,
   A11 boundary, server 10 s deadline, 64 KiB cache cap, oversized-response rejection.
 
-### BL-028 · Document the nesting depth limit · P3 · `review` (PR #49) · docs-engineer
+### BL-028 · Document the nesting depth limit · P3 · `done` (PR #49) · docs-engineer
 BL-017b added `MAX_NESTING_DEPTH = 128` (`skillet::MAX_NESTING_DEPTH`) and the error
 "Expression nested too deeply (max 128)". It applies to expression nesting (parens, brackets,
 calls, unary/ternary, operator and `.`/`[]` chains) and to arrays built at runtime. Add it to
 `DOCUMENTATION.md` / `API_REFERENCE.md` (limits section) and the HTTP error docs.
 
-### BL-029 · Debug-build parser stack use (~20 KB per nesting level) · P3 · `review` (PR #48) · performance-engineer → rust-engineer
+### BL-029 · Debug-build parser stack use (~20 KB per nesting level) · P3 · `done` (PR #48) · performance-engineer → rust-engineer
 After BL-017, depth 128 still overflows a default 2 MB thread in **debug** builds (release is fine
 down to 1 MB). Affects embedders spawning threads in debug and in-process tests. Fix by folding the
 binary precedence levels into one precedence-climbing loop and shrinking `parse_atom`'s frame;
@@ -979,13 +979,13 @@ Decide whether that is intended; likely not (one evaluator, one function namespa
 `tests/sk_concurrency.rs` runs `cargo run --release` from parallel tests; if the release binary is out
 of date they rebuild concurrently and some fail. Build once up front (or use `CARGO_BIN_EXE_*`).
 
-### BL-033 · sk_server reads request lines without a size cap or read timeout · P1 · `review` (PR #51) · rust-engineer
+### BL-033 · sk_server reads request lines without a size cap or read timeout · P1 · `done` (PR #51) · rust-engineer
 Found in BL-027c (pre-existing). `handle_client` uses `BufReader::lines()` on the raw socket: one
 connection sending a 300 MB line without `\n` grew the process to 308 MB RSS (linear in input; no
 cap like sk_http_server's 1 MB, no read timeout). One client can OOM the server. Fix: bounded line
 reader (e.g. 1 MB, same as HTTP) + `set_read_timeout`; regression test with an oversized line.
 
-### BL-034 · sk_http_server truncates large responses · P3 · `review` (PR #51) · rust-engineer
+### BL-034 · sk_http_server truncates large responses · P3 · `done` (PR #51) · rust-engineer
 Found in BL-027c. A 20 MB string result: headers say `Content-Length: 20000086`, curl receives
 ~327 KB and the connection closes. Probably the write path/close sequence in
 `http_server/utils.rs::send_http_response`. Not a memory issue; correctness for large results.
@@ -1004,7 +1004,7 @@ Making values shared (`Rc`/`Arc` inside `Value`, or a borrowed-read evaluation p
 O(1), remove the ADR-0011 Amendment 2 read charge, and speed up every formula over large variables.
 Changes the core `Value` type, so it needs an ADR and a characterization pass first.
 
-### BL-037 · sk_http_server: no total deadline for reading a request (slowloris) · P2 · `review` (PR #51) · rust-engineer
+### BL-037 · sk_http_server: no total deadline for reading a request (slowloris) · P2 · `done` (PR #51) · rust-engineer
 Found in BL-027e (pre-existing on Linux; reachable on macOS since 58cc5b7 made accepted sockets
 blocking). The 30 s read timeout is per `read`, so a client sending one byte every < 30 s holds a
 worker until it has sent 1 MB. Measured, 1 worker: an idle client delays the next request 29.7 s.
