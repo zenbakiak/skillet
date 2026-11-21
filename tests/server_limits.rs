@@ -1,0 +1,330 @@
+//! Request size and time limits of `sk_server` and `sk_http_server` (BL-033, BL-037, BL-034),
+//! and their token checks (BL-018).
+//! Servers run on 127.0.0.1 with one worker, so a held worker shows as a delayed next request.
+
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::TcpStream;
+use std::time::{Duration, Instant};
+
+/// A server binary on a free 127.0.0.1 port, killed on drop.
+struct Server {
+    child: std::process::Child,
+    port: u16,
+}
+
+impl Server {
+    fn spawn(bin: &str, args: impl Fn(u16) -> Vec<String>) -> Server {
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let hooks = std::env::temp_dir().join("skillet-server-limits-no-hooks");
+        let child = std::process::Command::new(bin)
+            .args(args(port))
+            .env("SKILLET_HOOKS_DIR", hooks)
+            .env("SKILLET_BIND_HOST", "127.0.0.1")
+            .env_remove("SKILLET_AUTH_TOKEN")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn server");
+        for _ in 0..200 {
+            if TcpStream::connect(("127.0.0.1", port)).is_ok() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        Server { child, port }
+    }
+
+    /// `sk_http_server` with one worker.
+    fn http() -> Server {
+        Server::spawn(env!("CARGO_BIN_EXE_sk_http_server"), |port| {
+            vec![port.to_string(), "--threads".into(), "1".into()]
+        })
+    }
+
+    /// `sk_server` with one worker.
+    fn line() -> Server {
+        Server::spawn(env!("CARGO_BIN_EXE_sk_server"), |port| {
+            vec![port.to_string(), "1".into()]
+        })
+    }
+
+    fn connect(&self) -> TcpStream {
+        let s = TcpStream::connect(("127.0.0.1", self.port)).expect("connect");
+        s.set_read_timeout(Some(Duration::from_secs(60))).unwrap();
+        s
+    }
+
+    /// Send one request line to `sk_server`; returns the response line.
+    fn send_line(&self, body: &str) -> String {
+        let mut s = self.connect();
+        s.write_all(format!("{body}\n").as_bytes()).unwrap();
+        let mut line = String::new();
+        let _ = BufReader::new(s).read_line(&mut line);
+        line
+    }
+
+    /// POST `body` to `/eval`; returns the raw response.
+    fn post(&self, body: &str) -> String {
+        self.post_with_headers(body, "")
+    }
+
+    /// POST `body` to `/eval` with extra header lines (each ending in `\r\n`).
+    fn post_with_headers(&self, body: &str, headers: &str) -> String {
+        let mut s = self.connect();
+        let req = format!(
+            "POST /eval HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\n{headers}Content-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        s.write_all(req.as_bytes()).unwrap();
+        let mut resp = String::new();
+        let _ = s.read_to_string(&mut resp);
+        resp
+    }
+}
+
+impl Drop for Server {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+fn head(resp: &str) -> &str {
+    &resp[..resp.len().min(300)]
+}
+
+/// Sends `data` from another thread (the server may stop reading part-way).
+fn send_in_background(mut s: TcpStream, data: Vec<u8>) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
+        let _ = s.write_all(&data);
+    })
+}
+
+/// Trickles `data` one byte per second from another thread until it is sent or the server
+/// closes the connection.
+fn trickle(mut s: TcpStream, data: &'static [u8]) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
+        for b in data {
+            if s.write_all(&[*b]).is_err() {
+                return;
+            }
+            std::thread::sleep(Duration::from_secs(1));
+        }
+    })
+}
+
+// ---------------------------------------------------------------- BL-033: sk_server
+
+/// A request line over 1 MB is answered with an error and the connection is closed; the
+/// server reads no more than the limit into memory, and the worker serves the next client.
+#[test]
+fn bl033_sk_server_rejects_an_oversized_line() {
+    let server = Server::line();
+    let s = server.connect();
+    let reader = s.try_clone().unwrap();
+    let writer = send_in_background(s, vec![b'x'; 4 * 1024 * 1024]); // no newline
+    let mut resp = String::new();
+    let mut reader = BufReader::new(reader);
+    let _ = reader.read_line(&mut resp);
+    assert!(resp.contains("\"success\":false"), "{}", head(&resp));
+    assert!(
+        resp.contains("Request too large (max 1MB)"),
+        "{}",
+        head(&resp)
+    );
+    // The server closes once the client has finished sending.
+    writer.join().unwrap();
+    let mut rest = String::new();
+    let _ = reader.read_to_string(&mut rest);
+    assert_eq!(rest, "");
+    drop(reader);
+
+    let resp = server.send_line("{\"expression\":\"=2 + 3\"}");
+    assert!(resp.contains("\"success\":true"), "{}", head(&resp));
+}
+
+/// A line of exactly 1 MB (plus the newline) is still accepted.
+#[test]
+fn bl033_sk_server_accepts_a_line_at_the_limit() {
+    let server = Server::line();
+    let start = "{\"expression\":\"=2 + 3\"";
+    let pad = 1024 * 1024 - start.len() - 1;
+    let body = format!("{start}{}}}", " ".repeat(pad));
+    assert_eq!(body.len(), 1024 * 1024);
+    let resp = server.send_line(&body);
+    assert!(resp.contains("\"success\":true"), "{}", head(&resp));
+
+    let resp = server.send_line(&format!("{start}{} }}", " ".repeat(pad)));
+    assert!(
+        resp.contains("Request too large (max 1MB)"),
+        "{}",
+        head(&resp)
+    );
+}
+
+/// Several requests on one connection still work, each read with its own deadline.
+#[test]
+fn bl033_sk_server_keeps_serving_a_persistent_connection() {
+    let server = Server::line();
+    let mut s = server.connect();
+    s.write_all(b"{\"expression\":\"=1 + 1\"}\r\n{\"expression\":\"=2 + 2\"}\n")
+        .unwrap();
+    let mut reader = BufReader::new(s.try_clone().unwrap());
+    let mut first = String::new();
+    let mut second = String::new();
+    reader.read_line(&mut first).unwrap();
+    reader.read_line(&mut second).unwrap();
+    assert!(first.contains("\"result\":2.0"), "{first}");
+    assert!(second.contains("\"result\":4.0"), "{second}");
+    s.write_all(b"{\"expression\":\"=3 + 3\"}\n").unwrap();
+    let mut third = String::new();
+    reader.read_line(&mut third).unwrap();
+    assert!(third.contains("\"result\":6.0"), "{third}");
+}
+
+// ---------------------------------------------------------------- BL-037: total read deadline
+
+/// A client trickling a request line holds the only worker for at most 30 s, then gets a
+/// timeout error; the next client is served.
+#[test]
+#[ignore = "slow: 30 s request read deadline"]
+fn bl037_sk_server_trickling_client_times_out() {
+    let server = Server::line();
+    let slow = server.connect();
+    let slow_reader = slow.try_clone().unwrap();
+    let _t = trickle(slow, &[b'{'; 120]);
+    std::thread::sleep(Duration::from_millis(300));
+
+    let start = Instant::now();
+    let resp = server.send_line("{\"expression\":\"=2 + 3\"}");
+    let took = start.elapsed();
+    assert!(resp.contains("\"success\":true"), "{}", head(&resp));
+    assert!(
+        took >= Duration::from_secs(25) && took < Duration::from_secs(40),
+        "{took:?}"
+    );
+
+    let mut slow_resp = String::new();
+    let _ = BufReader::new(slow_reader).read_line(&mut slow_resp);
+    assert!(
+        slow_resp.contains("Request read timed out (max 30 s)"),
+        "{}",
+        head(&slow_resp)
+    );
+}
+
+/// Same for `sk_http_server`: the 30 s limit covers the whole request, not each read.
+#[test]
+#[ignore = "slow: 30 s request read deadline"]
+fn bl037_sk_http_server_trickling_client_times_out() {
+    let server = Server::http();
+    let slow = server.connect();
+    let mut slow_reader = slow.try_clone().unwrap();
+    let _t = trickle(slow, b"POST /eval HTTP/1.1\r\nHost: localhost\r\nX-Pad: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    std::thread::sleep(Duration::from_millis(300));
+
+    let start = Instant::now();
+    let resp = server.post("{\"expression\":\"=2 + 3\"}");
+    let took = start.elapsed();
+    assert!(resp.starts_with("HTTP/1.1 200"), "{}", head(&resp));
+    assert!(
+        took >= Duration::from_secs(25) && took < Duration::from_secs(40),
+        "{took:?}"
+    );
+
+    let mut slow_resp = String::new();
+    let _ = slow_reader.read_to_string(&mut slow_resp);
+    assert!(
+        slow_resp.contains("408 Request Timeout"),
+        "{}",
+        head(&slow_resp)
+    );
+}
+
+// ---------------------------------------------------------------- BL-034: large responses
+
+/// A 20 MB result arrives complete (it was cut to ~327 KB before accepted sockets were made
+/// blocking in 58cc5b7).
+#[test]
+fn bl034_sk_http_server_sends_large_responses_complete() {
+    let server = Server::http();
+    let expr = format!(
+        "SUBSTITUTE(SUBSTITUTE(\\\"{}\\\", \\\"a\\\", \\\"{}\\\"), \\\"a\\\", \\\"{}\\\")",
+        "a".repeat(10),
+        "a".repeat(1000),
+        "b".repeat(2000)
+    );
+    let resp = server.post(&format!("{{\"expression\":\"{expr}\"}}"));
+    let (headers, body) = resp.split_once("\r\n\r\n").expect("headers");
+    assert!(headers.starts_with("HTTP/1.1 200"), "{}", head(&resp));
+    let length: usize = headers
+        .lines()
+        .find_map(|l| l.strip_prefix("Content-Length: "))
+        .expect("Content-Length")
+        .parse()
+        .unwrap();
+    assert!(length > 20_000_000, "{length}");
+    assert_eq!(body.len(), length);
+    assert!(body.contains(&"b".repeat(20_000_000)));
+}
+
+// ---------------------------------------------------------------- BL-018: token check
+
+/// Tokens are compared in constant time; what is accepted is unchanged: only the exact token.
+#[test]
+fn bl018_servers_accept_only_the_exact_token() {
+    let token = "s3cret-token";
+    let http = Server::spawn(env!("CARGO_BIN_EXE_sk_http_server"), |port| {
+        vec![
+            port.to_string(),
+            "--threads".into(),
+            "1".into(),
+            "--token".into(),
+            token.into(),
+        ]
+    });
+    let body = "{\"expression\":\"=2 + 3\"}";
+    for (auth, ok) in [
+        ("Authorization: Bearer s3cret-token\r\n", true),
+        ("Authorization: s3cret-token\r\n", true),
+        ("Authorization: Bearer s3cret-tokeN\r\n", false),
+        ("Authorization: Bearer s3cret\r\n", false),
+        ("Authorization: Bearer s3cret-token-and-more\r\n", false),
+        ("", false),
+    ] {
+        let resp = http.post_with_headers(body, auth);
+        let want = if ok { "HTTP/1.1 200" } else { "HTTP/1.1 401" };
+        assert!(resp.starts_with(want), "{auth:?}: {}", head(&resp));
+    }
+    drop(http);
+
+    let line = Server::spawn(env!("CARGO_BIN_EXE_sk_server"), |port| {
+        vec![port.to_string(), "1".into(), "--token".into(), token.into()]
+    });
+    for (supplied, ok) in [
+        (Some("s3cret-token"), true),
+        (Some("s3cret-tokeN"), false),
+        (Some("s3cret"), false),
+        (None, false),
+    ] {
+        let req = match supplied {
+            Some(t) => format!("{{\"expression\":\"=2 + 3\",\"token\":\"{t}\"}}"),
+            None => body.to_string(),
+        };
+        let resp = line.send_line(&req);
+        if ok {
+            assert!(resp.contains("\"success\":true"), "{}", head(&resp));
+        } else {
+            assert!(
+                resp.contains("Unauthorized: invalid token"),
+                "{}",
+                head(&resp)
+            );
+        }
+    }
+}
