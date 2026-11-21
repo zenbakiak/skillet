@@ -47,7 +47,6 @@ ctrlc = "3.4"
 urlencoding = "2.1"
 lru = "0.19"
 once_cell = "1.19"
-scalar-doc = "0.1"
 jsonpath-rust = "1.0"
 
 # Targets without the libc local-time path (must match the cfg in src/runtime/local_time.rs).
