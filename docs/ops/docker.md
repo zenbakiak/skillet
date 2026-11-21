@@ -1,120 +1,128 @@
 # Docker Deployment Guide for Skillet HTTP Server
 
-This guide explains how to deploy the Skillet HTTP Server using Docker with full authentication support.
+This guide explains how to run `sk_http_server` from the repository's `Dockerfile`.
+
+The image **fails closed**: it will not start unless both `SKILLET_AUTH_TOKEN` and
+`SKILLET_ADMIN_TOKEN` are set to non-empty values. There is no unauthenticated mode in the
+image. For local experiments without tokens, run the binary directly (`sk_http_server 5074`),
+which binds to `127.0.0.1` by default.
 
 ## Quick Start
 
-### 1. Clone and Configure
+### 1. Configure tokens
 
 ```bash
 git clone <your-repo>
 cd skillet
 
-# Copy the environment template
+# Copy the environment template. .env is gitignored; never commit it.
 cp .env.example .env
-
-# Edit .env with your tokens
-nano .env
 ```
 
-### 2. Set Authentication Tokens
+Fill in both tokens in `.env`:
 
-Edit `.env` file:
 ```bash
-# Generate secure tokens
-AUTH_TOKEN=sk_auth_$(openssl rand -hex 32)
-ADMIN_TOKEN=sk_admin_$(openssl rand -hex 32)
+SKILLET_AUTH_TOKEN=<output of: openssl rand -hex 32>
+SKILLET_ADMIN_TOKEN=<output of: openssl rand -hex 32>
 DOCKER_PORT=8080
 ```
 
-### 3. Deploy with Docker Compose
+`.env` is read by Docker Compose as plain `KEY=value` lines; shell syntax such as `$(...)` is not
+expanded there, so paste the generated values in.
+
+### 2. Start with Docker Compose
 
 ```bash
-# Build and start the server
-docker-compose up -d
+docker compose up -d
+docker compose logs -f skillet-http
 
-# View logs
-docker-compose logs -f skillet-http
-
-# Test the deployment
-curl http://localhost:8080/health
+# Published on the host loopback only
+curl http://127.0.0.1:8080/health
 ```
 
-## Detailed Configuration
+## Configuration
 
-### Environment Variables
+### Environment variables
 
 | Variable | Description | Default | Required |
 |----------|-------------|---------|----------|
-| `AUTH_TOKEN` | Token for `/eval` endpoints | _(none)_ | No |
-| `ADMIN_TOKEN` | Token for JS management | _(none)_ | No |
-| `DOCKER_PORT` | External port mapping | `8080` | No |
+| `SKILLET_AUTH_TOKEN` | Bearer token for `/eval` and the other non-admin endpoints | _(none)_ | **Yes** |
+| `SKILLET_ADMIN_TOKEN` | Bearer token for JS function management and `DELETE /cache` | _(none)_ | **Yes** |
+| `PORT` | Port inside the container | `8080` | No |
+| `HOST` | Bind address inside the container | `0.0.0.0` | No |
+| `SK_THREADS` | Worker threads | `2` | No |
 | `SKILLET_HOOKS_DIR` | JS functions directory | `/app/hooks` | No |
+| `DOCKER_PORT` | Host port (Compose only) | `8080` | No |
+| `SKILLET_PUBLISH_ADDR` | Host address the port is published on (Compose only) | `127.0.0.1` | No |
 
-### Authentication Modes
+The entrypoint (`docker/entrypoint.sh`) passes the tokens to `sk_http_server` through the
+environment only. They are never put on the command line (where `ps` and `docker inspect` would
+show them) and never written to the container log.
 
-#### 1. No Authentication (Development)
-```bash
-# .env
-AUTH_TOKEN=
-ADMIN_TOKEN=
-```
+### Network exposure
 
-#### 2. Eval Authentication Only
-```bash
-# .env
-AUTH_TOKEN=your-secret-token
-ADMIN_TOKEN=
-```
+Inside the container the server binds `0.0.0.0`; that is required for Docker port publishing to
+reach it. What the host exposes is decided by the publish address:
 
-#### 3. Full Authentication (Recommended)
-```bash
-# .env
-AUTH_TOKEN=your-auth-token
-ADMIN_TOKEN=your-admin-token
-```
+- `docker-compose.yml` publishes on `127.0.0.1` by default. Set `SKILLET_PUBLISH_ADDR=0.0.0.0`
+  only when the server is behind TLS and a firewall.
+- With `docker run`, write the address explicitly: `-p 127.0.0.1:8080:8080`. A bare
+  `-p 8080:8080` publishes on every host interface.
 
 ## Deployment Options
 
-### Option 1: Docker Compose (Recommended)
+### Option 1: Docker Compose (recommended)
 
 ```bash
-# Basic deployment
-docker-compose up -d
+# Basic deployment (tokens from .env or the shell environment)
+docker compose up -d
 
-# With custom port
-DOCKER_PORT=9090 docker-compose up -d
+# Different host port
+DOCKER_PORT=9090 docker compose up -d
 
-# With Traefik proxy (for production)
-docker-compose --profile proxy up -d
+# With the Traefik proxy profile
+docker compose --profile proxy up -d
 ```
 
-### Option 2: Direct Docker Run
+### Option 2: docker run
 
 ```bash
-# Build the image
 docker build -t skillet-http .
 
-# Run with authentication
+# Tokens come from an env file so they stay out of shell history
 docker run -d \
   --name skillet-http-server \
-  -p 8080:8080 \
-  -e AUTH_TOKEN="your-auth-token" \
-  -e ADMIN_TOKEN="your-admin-token" \
-  -v ./hooks:/app/hooks:rw \
-  skillet-http
-
-# Run without authentication (development)
-docker run -d \
-  --name skillet-http-server \
-  -p 8080:8080 \
+  -p 127.0.0.1:8080:8080 \
+  --env-file .env \
   -v ./hooks:/app/hooks:rw \
   skillet-http
 ```
+
+Without both tokens the container exits immediately with status 64 and one line on stderr:
+
+```text
+skillet: refusing to start: SKILLET_AUTH_TOKEN and SKILLET_ADMIN_TOKEN must be set to a non-empty value. ...
+```
+
+## Upgrading from images before BL-051
+
+Older images read `AUTH_TOKEN` and `ADMIN_TOKEN`, treated empty values as "authentication off",
+published on all host interfaces, and printed the full command line (tokens included) to the log.
+Now:
+
+- Rename `AUTH_TOKEN` to `SKILLET_AUTH_TOKEN` and `ADMIN_TOKEN` to `SKILLET_ADMIN_TOKEN` in
+  `.env`, Compose files, and orchestrator secrets. The old names are not read; if they are set and
+  the new ones are not, the start-up error says so.
+- Both tokens are required.
+- Compose publishes on `127.0.0.1`; set `SKILLET_PUBLISH_ADDR` to change that.
+- The image has no `curl`. The health check is `./healthcheck.sh`. Images that extended the old
+  one and relied on `curl` need to install it themselves.
+- The image runs `ENTRYPOINT ["./entrypoint.sh"]`. Extra `docker run` arguments are appended to
+  the `sk_http_server` command line.
+- Rotate any token that was used with an older image: it is in that container's log.
 
 ## Volume Mounts
 
-### JavaScript Functions (hooks)
 ```bash
 # Mount local hooks directory
 -v ./hooks:/app/hooks:rw
@@ -125,67 +133,54 @@ docker run -d \
 
 ## API Usage
 
-### Without Authentication
 ```bash
-# Health check
-curl http://localhost:8080/health
+# Health check (no token needed)
+curl http://127.0.0.1:8080/health
 
-# Expression evaluation
-curl "http://localhost:8080/eval?expr=2%2B2*3"
+# Expression evaluation (SKILLET_AUTH_TOKEN)
+curl -H "Authorization: Bearer $SKILLET_AUTH_TOKEN" \
+  "http://127.0.0.1:8080/eval?expr=2%2B2*3"
 
-# JavaScript function listing
-curl http://localhost:8080/list-js
-```
+# JS function management (SKILLET_ADMIN_TOKEN)
+curl -H "Authorization: Bearer $SKILLET_ADMIN_TOKEN" \
+  http://127.0.0.1:8080/list-js
 
-### With Authentication
-```bash
-# Expression evaluation (requires AUTH_TOKEN)
-curl -H "Authorization: Bearer your-auth-token" \
-  "http://localhost:8080/eval?expr=2%2B2*3"
-
-# JS function management (requires ADMIN_TOKEN)
-curl -H "Authorization: Bearer your-admin-token" \
-  http://localhost:8080/list-js
-
-# Upload JS function (requires ADMIN_TOKEN)
+# Upload a JS function (SKILLET_ADMIN_TOKEN)
 curl -X POST \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer your-admin-token" \
+  -H "Authorization: Bearer $SKILLET_ADMIN_TOKEN" \
   -d '{"filename": "custom.js", "js_code": "function DOUBLE(x) { return x * 2; }"}' \
-  http://localhost:8080/upload-js
+  http://127.0.0.1:8080/upload-js
 ```
 
 ## Production Deployment
 
-### 1. Use Strong Tokens
-```bash
-# Generate cryptographically secure tokens
-AUTH_TOKEN=$(openssl rand -hex 32)
-ADMIN_TOKEN=$(openssl rand -hex 32)
-```
+### 1. Strong tokens
 
-### 2. Enable Reverse Proxy
-```bash
-# Deploy with Traefik
-docker-compose --profile proxy up -d
+Generate each token with `openssl rand -hex 32` and keep them in your secret store or a `.env`
+file with restricted permissions (`chmod 600 .env`).
 
+### 2. Reverse proxy
+
+```bash
+docker compose --profile proxy up -d
 # Access via: http://skillet.localhost
-# Traefik dashboard: http://localhost:8090
+# Traefik dashboard (insecure API mode, loopback only): http://127.0.0.1:8090
 ```
 
-### 3. Persistent Storage
+### 3. Persistent storage
+
 ```bash
-# Create persistent hooks directory
 mkdir -p /opt/skillet/hooks
 chmod 755 /opt/skillet/hooks
-
-# Update docker-compose.yml volume
-- /opt/skillet/hooks:/app/hooks:rw
+# In docker-compose.yml:
+#   - /opt/skillet/hooks:/app/hooks:rw
 ```
 
-### 4. Resource Limits
+### 4. Resource limits
+
 ```yaml
-# Add to docker-compose.yml service
+# Add to the docker-compose.yml service
 deploy:
   resources:
     limits:
@@ -193,52 +188,31 @@ deploy:
       cpus: '0.5'
 ```
 
-## Security Best Practices
+## Security Notes
 
-### 1. Network Security
-- Use reverse proxy (Traefik/nginx) for HTTPS
-- Restrict access with firewall rules
-- Use strong authentication tokens
-
-### 2. Container Security
-- Runs as non-root user (`skillet`)
-- Minimal runtime dependencies
-- Regular security updates
-
-### 3. Token Management
-```bash
-# Rotate tokens regularly
-docker-compose down
-# Update .env with new tokens
-docker-compose up -d
-```
+- Runs as the non-root `skillet` user; the binary and scripts are owned by root and not writable
+  by it.
+- Base images: `rust:1.89.0-slim-bookworm` (builder, ADR-0012 toolchain) and `debian:bookworm-slim`
+  (runtime). The build uses `cargo build --locked`.
+- Runtime packages: `ca-certificates` only.
+- Rotate tokens by editing `.env` and running `docker compose up -d` (Compose recreates the
+  container when its environment changes).
 
 ## Monitoring and Logs
 
-### View Logs
 ```bash
-# Real-time logs
-docker-compose logs -f skillet-http
-
-# Last 100 lines
-docker-compose logs --tail 100 skillet-http
+docker compose logs -f skillet-http
+docker compose logs --tail 100 skillet-http
+docker compose ps          # shows the health status
+curl http://127.0.0.1:8080/health
 ```
 
-### Health Monitoring
-```bash
-# Check container health
-docker-compose ps
+`/health` returns basic metrics:
 
-# Manual health check
-curl http://localhost:8080/health
-```
-
-### Metrics
-The server provides basic metrics via `/health` endpoint:
 ```json
 {
   "status": "healthy",
-  "version": "0.3.0",
+  "version": "0.6.3",
   "requests_processed": 1234,
   "avg_execution_time_ms": 0.5
 }
@@ -246,58 +220,50 @@ The server provides basic metrics via `/health` endpoint:
 
 ## Troubleshooting
 
-### Container Won't Start
-```bash
-# Check logs
-docker-compose logs skillet-http
+### Container exits at start
 
-# Check environment variables
-docker exec skillet-http-server env | grep -E "(AUTH_TOKEN|ADMIN_TOKEN|PORT)"
+```bash
+docker compose logs skillet-http
 ```
 
-### Authentication Issues
-```bash
-# Verify token format
-curl -H "Authorization: Bearer $AUTH_TOKEN" http://localhost:8080/eval?expr=1%2B1
+`refusing to start: ... must be set to a non-empty value` means a token is missing or empty.
+Check that `.env` sits next to `docker-compose.yml` and uses the `SKILLET_` names. To check which
+variables are set without printing their values:
 
-# Check server logs for auth attempts
-docker-compose logs skillet-http | grep -i auth
+```bash
+docker compose config | grep -E 'SKILLET_(AUTH|ADMIN)_TOKEN' | sed 's/:.*/: <set>/'
 ```
 
-### Performance Issues
+### Authentication issues
+
 ```bash
-# Check container resources
+curl -H "Authorization: Bearer $SKILLET_AUTH_TOKEN" "http://127.0.0.1:8080/eval?expr=1%2B1"
+```
+
+### Performance
+
+```bash
 docker stats skillet-http-server
-
-# Monitor request metrics
-curl http://localhost:8080/health | jq '.avg_execution_time_ms'
+curl http://127.0.0.1:8080/health | jq '.avg_execution_time_ms'
 ```
 
 ## Updating
 
-### Update Server
 ```bash
-# Pull latest changes
 git pull
-
-# Rebuild and restart
-docker-compose down
-docker-compose build --no-cache
-docker-compose up -d
+docker compose down
+docker compose build --no-cache
+docker compose up -d
 ```
 
-### Backup JavaScript Functions
-```bash
-# Backup hooks directory
-tar -czf hooks-backup-$(date +%Y%m%d).tar.gz hooks/
+### Back up JavaScript functions
 
-# Restore hooks
+```bash
+tar -czf hooks-backup-$(date +%Y%m%d).tar.gz hooks/
 tar -xzf hooks-backup-20240904.tar.gz
 ```
 
 ## Multi-Instance Deployment
-
-For high availability, deploy multiple instances:
 
 ```yaml
 # docker-compose.yml
@@ -305,18 +271,18 @@ services:
   skillet-http-1:
     build: .
     ports:
-      - "8081:8080"
+      - "127.0.0.1:8081:8080"
     environment:
-      - AUTH_TOKEN=${AUTH_TOKEN}
-      - ADMIN_TOKEN=${ADMIN_TOKEN}
-    
+      SKILLET_AUTH_TOKEN: ${SKILLET_AUTH_TOKEN:-}
+      SKILLET_ADMIN_TOKEN: ${SKILLET_ADMIN_TOKEN:-}
+
   skillet-http-2:
     build: .
     ports:
-      - "8082:8080"
+      - "127.0.0.1:8082:8080"
     environment:
-      - AUTH_TOKEN=${AUTH_TOKEN}
-      - ADMIN_TOKEN=${ADMIN_TOKEN}
+      SKILLET_AUTH_TOKEN: ${SKILLET_AUTH_TOKEN:-}
+      SKILLET_ADMIN_TOKEN: ${SKILLET_ADMIN_TOKEN:-}
 ```
 
 Load balance with nginx or Traefik for production usage.
