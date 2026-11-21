@@ -512,3 +512,223 @@ fn t1_server_times_out_and_frees_the_worker() {
     assert!(quick.0.starts_with("HTTP/1.1 200"), "{}", quick.0);
     assert!(quick.0.contains('5'), "{}", quick.0);
 }
+
+// ---------------------------------------------------------------- BL-027c: re-attack
+//
+// Security review of the budget as built. Each attack is scaled down with `with_limits` so it
+// stays fast in debug. Tests marked `#[ignore = "open: …"]` pin a finding that blocks the PR
+// and must pass once it is fixed (route: rust-engineer). Heap is measured per thread by the
+// counting allocator below (other tests in this binary run on other threads).
+
+mod heap {
+    use std::alloc::{GlobalAlloc, Layout, System};
+    use std::cell::Cell;
+
+    thread_local! {
+        static LIVE: Cell<usize> = const { Cell::new(0) };
+        static PEAK: Cell<usize> = const { Cell::new(0) };
+    }
+
+    pub struct Counting;
+
+    fn add(n: usize) {
+        let _ = LIVE.try_with(|l| {
+            let v = l.get().saturating_add(n);
+            l.set(v);
+            let _ = PEAK.try_with(|p| p.set(p.get().max(v)));
+        });
+    }
+
+    fn sub(n: usize) {
+        let _ = LIVE.try_with(|l| l.set(l.get().saturating_sub(n)));
+    }
+
+    unsafe impl GlobalAlloc for Counting {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            add(layout.size());
+            System.alloc(layout)
+        }
+        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+            sub(layout.size());
+            System.dealloc(ptr, layout)
+        }
+        unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+            add(new_size);
+            sub(layout.size());
+            System.realloc(ptr, layout, new_size)
+        }
+    }
+
+    /// Run `f` and return its result plus the peak heap growth (bytes) on this thread.
+    pub fn peak_during<R>(f: impl FnOnce() -> R) -> (R, usize) {
+        let start = LIVE.with(|l| l.get());
+        PEAK.with(|p| p.set(start));
+        let r = f();
+        (r, PEAK.with(|p| p.get()).saturating_sub(start))
+    }
+}
+
+#[global_allocator]
+static HEAP: heap::Counting = heap::Counting;
+
+const MIB: u64 = 1024 * 1024;
+
+/// Expression for a string of `1000 × reps` copies of `unit` (two nested SUBSTITUTEs).
+fn big_string(unit: &str, reps: usize) -> String {
+    format!(
+        "SUBSTITUTE(SUBSTITUTE(\"{a}\", \"a\", \"{b}\"), \"a\", \"{c}\")",
+        a = "a".repeat(10),
+        b = "a".repeat(100),
+        c = unit.repeat(reps)
+    )
+}
+
+fn timeout_limits(ms: u64) -> EvalLimits {
+    let mut l = EvalLimits::default();
+    l.timeout = Some(Duration::from_millis(ms));
+    l
+}
+
+/// Lambda bodies built only from uncharged reads still meet the deadline: every iteration
+/// charges the bound item, and the clock is read every 256 charges.
+#[test]
+fn bl027c_lambda_over_uncharged_reads_meets_the_deadline() {
+    let src = format!(
+        ":s := {}; {}.map(:s == :s).length()",
+        big_string("a", 1000), // 1 MB
+        ones(20_000)
+    );
+    let start = std::time::Instant::now();
+    let r = with_limits(timeout_limits(50), || {
+        evaluate_with_assignments(&src, &HashMap::new())
+    });
+    let took = start.elapsed();
+    assert_eq!(
+        r.map_err(|e| e.message),
+        Err("Evaluation timed out (max 50 ms)".to_string())
+    );
+    assert!(took < Duration::from_secs(2), "{took:?}");
+}
+
+/// F1 (blocks): a flat list of reads with no charge in between never reads the clock.
+/// `:s == :s` clones `:s` twice, and binary operators are not charged, so an array literal
+/// of N comparisons does 2N full clones before its single charge. Measured on the release
+/// server with an 80 MB `:s` and N = 4000 (42 KB request): 20.4 s, `success: true`, past the
+/// 10 s deadline; the time grows linearly with N up to the 1 MB request cap (~8 min).
+#[test]
+#[ignore = "open: BL-027d F1, uncharged reads never tick the deadline"]
+fn bl027c_flat_uncharged_reads_meet_the_deadline() {
+    let cmps = vec![":s == :s"; 3_000].join(", ");
+    let src = format!(":s := {}; [{}].length()", big_string("a", 1000), cmps);
+    let start = std::time::Instant::now();
+    let r = with_limits(timeout_limits(50), || {
+        evaluate_with_assignments(&src, &HashMap::new())
+    });
+    let took = start.elapsed();
+    assert_eq!(
+        r.map_err(|e| e.message),
+        Err("Evaluation timed out (max 50 ms)".to_string())
+    );
+    assert!(took < Duration::from_millis(500), "{took:?}");
+}
+
+/// F2 (blocks): heap allocated before the budget check must stay within ~2× the budget.
+/// Each case fails with the budget error today, but only after allocating far more than the
+/// budget: k uncharged reads in one argument list / literal (CONCAT, MERGE, array and object
+/// literals), and builtins that amplify their input and are charged after allocating
+/// (`.to_a()` on a string ≈ 48 real bytes per char, `.to_json()` escaping ≤ 6×,
+/// `::String` on an array via `Debug` escaping ≤ 5×).
+#[test]
+#[ignore = "open: BL-027d F2, charge-after sites allocate past 2x the budget"]
+fn bl027c_peak_heap_stays_within_twice_the_budget() {
+    let budget = 4 * MIB;
+    let one_mb = big_string("a", 1000);
+    let reads = |n: usize| vec![":s"; n].join(", ");
+    let cases = [
+        (
+            "CONCAT of 40 reads",
+            format!(":s := {one_mb}; CONCAT({})", reads(40)),
+        ),
+        (
+            "array literal of 40 reads",
+            format!(":s := {one_mb}; [{}]", reads(40)),
+        ),
+        (
+            "object literal of 20 reads",
+            format!(
+                ":s := {one_mb}; {{{}}}",
+                (0..20)
+                    .map(|i| format!("\"k{i}\": :s"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        ),
+        (
+            "MERGE of 40 array reads",
+            format!(":a := SPLIT({}, \"a\"); MERGE({})", big_string("a", 30), {
+                vec![":a"; 40].join(", ")
+            }),
+        ),
+        ("to_a on a 1 MB string", format!("{one_mb}.to_a()")),
+        (
+            "to_json on 1 MB of \\x01",
+            format!("{}.to_json()", big_string("\u{1}", 1000)),
+        ),
+        (
+            "::String of [1 MB of \\x01]",
+            format!("[{}]::String", big_string("\u{1}", 1000)),
+        ),
+    ];
+    let mut failures = Vec::new();
+    for (name, src) in &cases {
+        let (r, peak) = heap::peak_during(|| {
+            with_limits(limits(budget), || {
+                evaluate_with_assignments(src, &HashMap::new())
+            })
+        });
+        let ok = matches!(&r, Err(e) if e.message.starts_with("Evaluation budget exceeded"));
+        if !ok || peak as u64 > 2 * budget + MIB {
+            failures.push(format!(
+                "{name}: peak {:.1} MB (budget {} MB), result {:?}",
+                peak as f64 / MIB as f64,
+                budget / MIB,
+                r.map(|v| short(&v)).map_err(|e| e.message)
+            ));
+        }
+    }
+    assert!(failures.is_empty(), "\n{}", failures.join("\n"));
+}
+
+/// Pre-charged builtins stay within ~2× the budget at their peak (these hold today).
+#[test]
+fn bl027c_pre_charged_builtins_peak_within_twice_the_budget() {
+    let budget = 4 * MIB;
+    let cases = [
+        (
+            "SPLIT per char",
+            format!("SPLIT({}, \"\")", big_string("a", 1000)),
+        ),
+        ("SUBSTITUTE blow-up", big_string("a", 10_000)),
+        (
+            "JOIN separator",
+            format!(
+                "JOIN(SPLIT({}, \"a\"), \"{}\")",
+                big_string("a", 100),
+                "x".repeat(100)
+            ),
+        ),
+    ];
+    let mut failures = Vec::new();
+    for (name, src) in &cases {
+        let (r, peak) = heap::peak_during(|| with_limits(limits(budget), || evaluate(src)));
+        let ok = matches!(&r, Err(e) if e.message.starts_with("Evaluation budget exceeded"));
+        if !ok || peak as u64 > 2 * budget + MIB {
+            failures.push(format!(
+                "{name}: peak {:.1} MB, result {:?}",
+                peak as f64 / MIB as f64,
+                r.map(|v| short(&v)).map_err(|e| e.message)
+            ));
+        }
+    }
+    assert!(failures.is_empty(), "\n{}", failures.join("\n"));
+}
