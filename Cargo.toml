@@ -79,3 +79,11 @@ path = "src/bin/sk_http_bench.rs"
 [[bench]]
 name = "lambda_scope"
 harness = false
+
+[[bench]]
+name = "baseline"
+harness = false
+
+[[bench]]
+name = "parser_stack"
+harness = false
