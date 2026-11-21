@@ -10,7 +10,8 @@ use skillet::runtime::function_dispatch::{
 };
 use skillet::Value;
 
-/// Every name in the dispatch sets at d3e6a5d (81 names), grouped by the set it was in.
+/// Every name in the dispatch sets at d3e6a5d (81 names), grouped by the set it was in, plus
+/// `BETWEEN`, registered later to restore its documented behaviour (82 names).
 const DISPATCHED: &[&str] = &[
     // arithmetic (17)
     "SUM",
@@ -30,13 +31,14 @@ const DISPATCHED: &[&str] = &[
     "INT",
     "PRODUCT",
     "MULTIPLY",
-    // logical (6)
+    // logical (7)
     "AND",
     "OR",
     "NOT",
     "XOR",
     "IF",
     "IFS",
+    "BETWEEN",
     // string (17)
     "LENGTH",
     "CONCAT",
@@ -104,8 +106,7 @@ const DISPATCHED: &[&str] = &[
 ];
 
 /// Names that `exec_builtin_fast` does NOT resolve today. The evaluator handles the
-/// higher-order ones and the internal `__…__` names before dispatch; `BETWEEN` has an
-/// implementation in `logical.rs` but is in no set, so it is unreachable.
+/// higher-order ones and the internal `__…__` names before dispatch.
 const NOT_DISPATCHED: &[&str] = &[
     "FILTER",
     "FIND",
@@ -118,7 +119,6 @@ const NOT_DISPATCHED: &[&str] = &[
     "__TERNARY__",
     "__CONST_TRUE__",
     "__CONST_FALSE__",
-    "BETWEEN",
     "NOPE",
     "sum",
     "Sum",
@@ -127,8 +127,8 @@ const NOT_DISPATCHED: &[&str] = &[
 
 #[test]
 fn every_dispatched_name_resolves() {
-    assert_eq!(DISPATCHED.len(), 81);
-    assert_eq!(builtin_function_count(), 81);
+    assert_eq!(DISPATCHED.len(), 82);
+    assert_eq!(builtin_function_count(), 82);
     for name in DISPATCHED {
         assert!(has_builtin_function(name), "{name} should be a builtin");
         // Zero-arg call must reach the right module: no "Unknown … function" from any layer.
@@ -313,7 +313,17 @@ const CASES: &[(&str, &str)] = &[
     ("mode_sngl(1, 1, 2)", "Ok(Number(1.0))"),
     ("IsBlank(NULL)", "Ok(Boolean(true))"),
     ("dateDiff(DATE(2024,1,1), DATE(2024,1,2), 'days')", "Ok(Number(1.0))"),
-    ("BETWEEN(1, 10, 5)", "Err(Error { message: \"Unknown function: BETWEEN\", position: None })"),
+    ("BETWEEN(1, 10, 5)", "Ok(Boolean(true))"),
+    ("BETWEEN(10, 20, 15)", "Ok(Boolean(true))"),
+    ("BETWEEN(1, 10, 15)", "Ok(Boolean(false))"),
+    ("BETWEEN(1, 10, 1)", "Ok(Boolean(true))"),
+    ("BETWEEN(1, 10, 10)", "Ok(Boolean(true))"),
+    ("BETWEEN(1, 10, 0)", "Ok(Boolean(false))"),
+    ("BETWEEN(1, 10)", "Err(Error { message: \"BETWEEN expects 3 arguments: (min, max, value)\", position: None })"),
+    ("BETWEEN(1, 10, 5, 6)", "Err(Error { message: \"BETWEEN expects 3 arguments: (min, max, value)\", position: None })"),
+    ("BETWEEN('a', 10, 5)", "Err(Error { message: \"BETWEEN min must be a number\", position: None })"),
+    ("BETWEEN(1, 'b', 5)", "Err(Error { message: \"BETWEEN max must be a number\", position: None })"),
+    ("BETWEEN(1, 10, 'c')", "Err(Error { message: \"BETWEEN value must be a number\", position: None })"),
     ("NOPE(1)", "Err(Error { message: \"Unknown function: NOPE\", position: None })"),
     ("REVERSE('abc')", "Err(Error { message: \"REVERSE expects array\", position: None })"),
     ("COUNT()", "Err(Error { message: \"COUNT expects 1 argument: array\", position: None })"),

@@ -133,6 +133,7 @@ pub(crate) static BUILTINS: &[Builtin] = &[
     f("XOR", Logical, 2, n(2), "a, b", "TRUE when exactly one argument is truthy.", "XOR(TRUE, FALSE)"),
     f("IF", Logical, 2, n(3), "condition, then, [else]", "`then` when `condition` is truthy, otherwise `else` (default FALSE). Both branches are evaluated.", "IF(1 > 0, 'yes', 'no')"),
     f("IFS", Logical, 2, ANY, "condition, value, …", "Value of the first truthy condition; FALSE when none matches.", "IFS(FALSE, 'a', TRUE, 'b')"),
+    f("BETWEEN", Logical, 3, n(3), "min, max, value", "TRUE when `min <= value <= max` (both bounds inclusive). All three arguments must be numbers.", "BETWEEN(10, 20, 15)"),
     // String
     f("LENGTH", Category::String, 1, n(1), "text_or_array", "Characters in a string or items in an array; 0 for NULL.", "LENGTH('héllo')"),
     f("CONCAT", Category::String, 0, ANY, "values…", "Join strings, numbers, booleans and (flattened) arrays; other values add nothing.", "CONCAT('a', 1, TRUE)"),
