@@ -8,6 +8,11 @@ on:
 permissions:
   contents: read
 
+env:
+  CARGO_TERM_COLOR: always
+  # Same pinned toolchain as the CI gate (rust.yml, ADR-0012). Bump them together.
+  RUST_TOOLCHAIN: "1.89.0"
+
 jobs:
   publish:
     name: Publish to crates.io
@@ -16,8 +21,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust ${{ env.RUST_TOOLCHAIN }}
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
 
       - name: Verify tag matches Cargo.toml version
         shell: bash
@@ -32,16 +39,18 @@ jobs:
             exit 1
           fi
 
+      # --locked everywhere: fail instead of resolving new dependency versions,
+      # so what is tested is exactly what the committed Cargo.lock describes.
       - name: Build and test
         run: |
-          cargo build --verbose
-          cargo test --verbose
+          cargo build --locked --verbose
+          cargo test --locked --verbose
 
       - name: Package (dry run)
-        run: cargo package --verbose
+        run: cargo package --locked --verbose
 
       - name: Publish
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
-        run: cargo publish --verbose
+        run: cargo publish --locked --verbose
 
