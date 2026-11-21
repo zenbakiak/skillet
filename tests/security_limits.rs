@@ -219,7 +219,8 @@ fn regression_sec_unary_not_chain() {
     assert_too_deep("unary_not_chain", expr(unary_not(50_000)));
 }
 
-/// Right-assoc `1^1^…`. Crashes at ~1_350 / ~11_600: evaluator (parser ~2_700 debug).
+/// `1^1^…` (right-associative before BL-054, left-associative since). Crashed at ~1_350 /
+/// ~11_600: evaluator (parser ~2_700 debug).
 #[test]
 fn regression_sec_power_chain() {
     assert_too_deep("power_chain", expr(power(50_000)));

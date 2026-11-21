@@ -3,10 +3,12 @@ use crate::custom::{execute_checked, FunctionRegistry};
 use crate::error::Error;
 use crate::limits::{self, charge_value, check_value};
 use crate::runtime::{
+    criteria::{aggregate, range_items, Aggregate, Criterion},
     function_dispatch::exec_builtin_fast,
+    logical,
     method_calls::exec_method_in,
     type_casting::cast_value,
-    utils::{clamp_index, slice_items},
+    utils::{clamp_index, slice_items, type_name},
 };
 use crate::types::Value;
 use std::borrow::Cow;
@@ -96,23 +98,18 @@ impl<'a> EvaluationContext for VariableContext<'a> {
 /// Local bindings (lambda item/accumulator) layered over a borrowed parent context.
 ///
 /// Lookups check the locals first, then the parent, so lambdas never copy the caller's
-/// variables (BL-030). `registry` is explicit because some call sites deliberately do not
-/// expose custom functions (plain method arguments, `FILTER(...)`-style builtins).
+/// variables (BL-030). Custom functions are the parent's: every sub-expression sees the same
+/// registry as the entry point (ADR-0016).
 pub(crate) struct Scope<'a> {
     parent: &'a dyn EvaluationContext,
     locals: Vec<(String, Value)>,
-    registry: Option<&'a Arc<RwLock<FunctionRegistry>>>,
 }
 
 impl<'a> Scope<'a> {
-    pub(crate) fn new(
-        parent: &'a dyn EvaluationContext,
-        registry: Option<&'a Arc<RwLock<FunctionRegistry>>>,
-    ) -> Self {
+    pub(crate) fn new(parent: &'a dyn EvaluationContext) -> Self {
         Self {
             parent,
             locals: Vec::new(),
-            registry,
         }
     }
 
@@ -134,7 +131,7 @@ impl EvaluationContext for Scope<'_> {
     }
 
     fn get_custom_registry(&self) -> Option<&Arc<RwLock<FunctionRegistry>>> {
-        self.registry
+        self.parent.get_custom_registry()
     }
 
     fn clone_variables(&self) -> HashMap<String, Value> {
@@ -146,9 +143,10 @@ impl EvaluationContext for Scope<'_> {
     }
 }
 
-/// Evaluate a plain (non-lambda) method argument: caller's variables, no custom functions.
+/// Evaluate a plain (non-lambda) method argument in the caller's context (variables and
+/// custom functions).
 pub(crate) fn eval_arg(expr: &Expr, ctx: &dyn EvaluationContext) -> Result<Value, Error> {
-    Evaluator::eval(expr, &Scope::new(ctx, None))
+    Evaluator::eval(expr, &Scope::new(ctx))
 }
 
 fn missing_variable(name: &str) -> Error {
@@ -364,15 +362,7 @@ impl Evaluator {
                 let (Some(an), Some(bn)) = (a.as_number(), b.as_number()) else {
                     return date_arithmetic(op, a, b);
                 };
-                Ok(Value::Number(match op {
-                    BinaryOp::Add => an + bn,
-                    BinaryOp::Sub => an - bn,
-                    BinaryOp::Mul => an * bn,
-                    BinaryOp::Div => an / bn,
-                    BinaryOp::Mod => an % bn,
-                    BinaryOp::Pow => an.powf(bn),
-                    _ => unreachable!(),
-                }))
+                crate::runtime::arithmetic::checked_binary(op, an, bn).map(Value::Number)
             }
             BinaryOp::Eq
             | BinaryOp::Ne
@@ -403,6 +393,12 @@ impl Evaluator {
                         BinaryOp::Eq => x == y,
                         BinaryOp::Ne => x != y,
                         _ => false,
+                    },
+                    // ADR-0013: NULL equals only NULL; ordering a NULL stays an error.
+                    (Value::Null, Value::Null) => match op {
+                        BinaryOp::Eq => true,
+                        BinaryOp::Ne => false,
+                        _ => return Err(Error::new("Comparison of incompatible types", None)),
                     },
                     _ => match op {
                         BinaryOp::Eq => false,
@@ -490,11 +486,12 @@ impl Evaluator {
     /// Builtins that charge their own result before building it (ADR-0011 amendment 2); their
     /// result is only depth-checked. A custom function of the same name is charged as usual.
     fn is_prepaid_builtin<C: EvaluationContext>(name: &str, context: &C) -> bool {
-        matches!(name, "MERGE" | "CONCAT" | "TEXTJOIN")
-            && !context
-                .get_custom_registry()
-                .and_then(|r| r.read().ok().map(|reg| reg.has_function(name)))
-                .unwrap_or(false)
+        name == crate::parser::CONCAT_OP
+            || matches!(name, "MERGE" | "CONCAT" | "TEXTJOIN")
+                && !context
+                    .get_custom_registry()
+                    .and_then(|r| r.read().ok().map(|reg| reg.has_function(name)))
+                    .unwrap_or(false)
     }
 
     /// Evaluate function calls with optimized dispatch
@@ -517,6 +514,14 @@ impl Evaluator {
                 } else {
                     Self::eval(&args[2], context)
                 };
+            }
+            // `a & b` (D-10): both sides joined as text with `CONCAT` rules.
+            crate::parser::CONCAT_OP => {
+                let [a, b] = args else {
+                    return Err(Error::new("'&' expects 2 operands", None));
+                };
+                let joined = [Self::eval(a, context)?, Self::eval(b, context)?];
+                return exec_builtin_fast("CONCAT", &joined);
             }
             "__CONST_TRUE__" => return Ok(Value::Boolean(true)),
             "__CONST_FALSE__" => return Ok(Value::Boolean(false)),
@@ -556,9 +561,12 @@ impl Evaluator {
             "FIND" => Self::eval_find(args, context),
             "MAP" => Self::eval_map(args, context),
             "REDUCE" => Self::eval_reduce(args, context),
-            "SUMIF" => Self::eval_sumif(args, context),
-            "AVGIF" => Self::eval_avgif(args, context),
-            "COUNTIF" => Self::eval_countif(args, context),
+            "SUMIF" => Self::eval_conditional(Aggregate::Sum, args, context),
+            "AVERAGEIF" | "AVGIF" => Self::eval_conditional(Aggregate::Average, args, context),
+            "COUNTIF" => Self::eval_conditional(Aggregate::Count, args, context),
+            "IF" | "IFS" if !args.iter().any(|a| matches!(a, Expr::Spread(_))) => {
+                Self::eval_lazy_if(name, args, context)
+            }
             "JQ" => {
                 if args.len() != 2 {
                     return Err(Error::new(
@@ -608,6 +616,40 @@ impl Evaluator {
         }
     }
 
+    /// `IF` / `IFS` evaluate a condition, then only the branch it picks (D-8, Excel). Same
+    /// argument checks and truthiness as the eager versions in `logical.rs`, which still run
+    /// calls with a spread argument.
+    fn eval_lazy_if<C: EvaluationContext>(
+        name: &str,
+        args: &[Expr],
+        context: &C,
+    ) -> Result<Value, Error> {
+        let truthy = |e: &Expr| Self::eval(e, context).map(|v| logical::truthy(&v));
+        if name == "IF" {
+            if args.len() < 2 {
+                return Err(Error::new("IF expects at least 2 arguments", None));
+            }
+            return if truthy(&args[0])? {
+                Self::eval(&args[1], context)
+            } else {
+                args.get(2)
+                    .map_or(Ok(Value::Boolean(false)), |e| Self::eval(e, context))
+            };
+        }
+        if args.len() % 2 != 0 {
+            return Err(Error::new(
+                "IFS expects pairs of condition,value arguments",
+                None,
+            ));
+        }
+        for pair in args.chunks(2) {
+            if truthy(&pair[0])? {
+                return Self::eval(&pair[1], context);
+            }
+        }
+        Ok(Value::Boolean(false))
+    }
+
     /// Helper for higher-order functions - these need access to context for lambda evaluation
     fn eval_filter<C: EvaluationContext>(args: &[Expr], context: &C) -> Result<Value, Error> {
         if args.len() < 2 {
@@ -628,7 +670,7 @@ impl Evaluator {
         match arr_v {
             Value::Array(items) => {
                 let mut out = Vec::with_capacity(items.len());
-                let mut scope = Scope::new(context, None);
+                let mut scope = Scope::new(context);
                 for it in items {
                     charge_value(&it)?;
                     scope.set(&param_name, it.clone());
@@ -669,7 +711,7 @@ impl Evaluator {
 
         match arr_v {
             Value::Array(items) => {
-                let mut scope = Scope::new(context, None);
+                let mut scope = Scope::new(context);
                 for it in items {
                     charge_value(&it)?;
                     scope.set(&param_name, it.clone());
@@ -703,7 +745,7 @@ impl Evaluator {
         match arr_v {
             Value::Array(items) => {
                 let mut out = Vec::with_capacity(items.len());
-                let mut scope = Scope::new(context, None);
+                let mut scope = Scope::new(context);
                 for it in items {
                     charge_value(&it)?;
                     scope.set(&param_name, it);
@@ -744,7 +786,7 @@ impl Evaluator {
 
         match arr_v {
             Value::Array(items) => {
-                let mut scope = Scope::new(context, None);
+                let mut scope = Scope::new(context);
                 for it in items {
                     charge_value(&it)?;
                     scope.set(&val_param, it);
@@ -757,252 +799,55 @@ impl Evaluator {
         }
     }
 
-    fn eval_sumif<C: EvaluationContext>(args: &[Expr], context: &C) -> Result<Value, Error> {
-        if args.len() < 2 || args.len() > 3 {
-            return Err(Error::new(
-                "SUMIF expects (array, criteria) or (array, criteria, sum_array)",
-                None,
-            ));
-        }
-        let arr_v = Self::eval(&args[0], context)?;
-        let criteria_expr = &args[1];
-        let sum_array = if args.len() == 3 {
-            Some(Self::eval(&args[2], context)?)
-        } else {
-            None
-        };
-
-        // First try to evaluate the criteria as a static value (Excel-style string criteria)
-        if let Ok(criteria_value) = Self::eval(criteria_expr, context) {
-            if let Value::String(_) | Value::Number(_) = criteria_value {
-                // Excel-style criteria - use string/numeric comparison logic
-                return Self::eval_sumif_excel_style(
-                    &arr_v,
-                    &criteria_value,
-                    sum_array.as_ref().unwrap_or(&arr_v),
-                );
-            }
-        }
-
-        // If that fails, fall back to lambda-based evaluation (existing behavior)
-        if args.len() != 2 {
-            return Err(Error::new(
-                "Lambda-style SUMIF expects exactly (array, expr)",
-                None,
-            ));
-        }
-
-        match arr_v {
-            Value::Array(items) => {
-                let mut acc = 0.0;
-                let mut scope = Scope::new(context, None);
-                for it in items {
-                    charge_value(&it)?;
-                    scope.set("x", it.clone());
-                    let matches =
-                        matches!(Self::eval(criteria_expr, &scope)?, Value::Boolean(true));
-                    if matches {
-                        match it {
-                            Value::Number(n) | Value::Currency(n) => acc += n,
-                            _ => {}
-                        }
-                    }
-                }
-                Ok(Value::Number(acc))
-            }
-            _ => Err(Error::new("SUMIF first arg must be array", None)),
-        }
-    }
-
-    fn eval_sumif_excel_style(
-        range: &Value,
-        criteria: &Value,
-        sum_range: &Value,
+    /// `COUNTIF`, `SUMIF`, `AVERAGEIF` (alias `AVGIF`): `(range, criteria, [values])`.
+    /// A string or number criterion uses Excel's rules (`runtime::criteria`); anything else is a
+    /// lambda over `:x` that must return a boolean (`NULL` counts as FALSE).
+    fn eval_conditional<C: EvaluationContext>(
+        kind: Aggregate,
+        args: &[Expr],
+        context: &C,
     ) -> Result<Value, Error> {
-        fn meets_criteria(value: &Value, criteria: &Value) -> bool {
-            match criteria {
-                Value::String(crit) => {
-                    if let Some(stripped) = crit.strip_prefix(">=") {
-                        if let Ok(threshold) = stripped.parse::<f64>() {
-                            match value {
-                                Value::Number(n) => *n >= threshold,
-                                Value::Currency(n) => *n >= threshold,
-                                _ => false,
-                            }
-                        } else {
-                            false
-                        }
-                    } else if let Some(stripped) = crit.strip_prefix("<=") {
-                        if let Ok(threshold) = stripped.parse::<f64>() {
-                            match value {
-                                Value::Number(n) => *n <= threshold,
-                                Value::Currency(n) => *n <= threshold,
-                                _ => false,
-                            }
-                        } else {
-                            false
-                        }
-                    } else if let Some(stripped) = crit.strip_prefix("<>") {
-                        if let Ok(threshold) = stripped.parse::<f64>() {
-                            match value {
-                                Value::Number(n) => *n != threshold,
-                                Value::Currency(n) => *n != threshold,
-                                _ => true,
-                            }
-                        } else {
-                            match value {
-                                Value::String(s) => s != stripped,
-                                _ => true,
-                            }
-                        }
-                    } else if let Some(stripped) = crit.strip_prefix('>') {
-                        if let Ok(threshold) = stripped.parse::<f64>() {
-                            match value {
-                                Value::Number(n) => *n > threshold,
-                                Value::Currency(n) => *n > threshold,
-                                _ => false,
-                            }
-                        } else {
-                            false
-                        }
-                    } else if let Some(stripped) = crit.strip_prefix('<') {
-                        if let Ok(threshold) = stripped.parse::<f64>() {
-                            match value {
-                                Value::Number(n) => *n < threshold,
-                                Value::Currency(n) => *n < threshold,
-                                _ => false,
-                            }
-                        } else {
-                            false
-                        }
-                    } else if let Some(stripped) = crit.strip_prefix('=') {
-                        if let Ok(threshold) = stripped.parse::<f64>() {
-                            match value {
-                                Value::Number(n) => *n == threshold,
-                                Value::Currency(n) => *n == threshold,
-                                _ => false,
-                            }
-                        } else {
-                            match value {
-                                Value::String(s) => s == stripped,
-                                _ => false,
-                            }
-                        }
-                    } else if let Ok(threshold) = crit.parse::<f64>() {
-                        match value {
-                            Value::Number(n) => *n == threshold,
-                            Value::Currency(n) => *n == threshold,
-                            _ => false,
-                        }
-                    } else {
-                        match value {
-                            Value::String(s) => s == crit,
-                            _ => false,
-                        }
-                    }
-                }
-                Value::Number(threshold) => match value {
-                    Value::Number(n) => *n == *threshold,
-                    Value::Currency(n) => *n == *threshold,
-                    _ => false,
-                },
-                _ => false,
+        let name = kind.name();
+        let with_values = kind != Aggregate::Count;
+        if args.len() < 2 || args.len() > if with_values { 3 } else { 2 } {
+            let sig = if with_values {
+                "(range, criteria, [values])"
+            } else {
+                "(range, criteria)"
+            };
+            return Err(Error::new(format!("{} expects {}", name, sig), None));
+        }
+        let range = range_items(Self::eval(&args[0], context)?);
+        let values = match args.get(2) {
+            Some(e) => Some(range_items(Self::eval(e, context)?)),
+            None => None,
+        };
+        let criteria_expr = &args[1];
+        let criterion = Self::eval(criteria_expr, context)
+            .ok()
+            .and_then(|v| Criterion::from_value(&v));
+        if let Some(criterion) = criterion {
+            return aggregate(kind, &range, values.as_deref(), |item| {
+                Ok(criterion.matches(item))
+            });
+        }
+        let mut scope = Scope::new(context);
+        aggregate(kind, &range, values.as_deref(), |item| {
+            charge_value(item)?;
+            scope.set("x", item.clone());
+            match Self::eval(criteria_expr, &scope)? {
+                Value::Boolean(b) => Ok(b),
+                Value::Null => Ok(false),
+                other => Err(Error::new(
+                    format!(
+                        "{} criteria expression must return TRUE or FALSE, got {}",
+                        name,
+                        type_name(&other)
+                    ),
+                    None,
+                )),
             }
-        }
-
-        fn sum_if_helper(range_val: &Value, sum_val: &Value, criteria: &Value) -> f64 {
-            match (range_val, sum_val) {
-                (Value::Array(range_items), Value::Array(sum_items)) => {
-                    let mut acc = 0.0;
-                    let min_len = std::cmp::min(range_items.len(), sum_items.len());
-                    for i in 0..min_len {
-                        if meets_criteria(&range_items[i], criteria) {
-                            match &sum_items[i] {
-                                Value::Number(n) => acc += *n,
-                                Value::Currency(n) => acc += *n,
-                                _ => {}
-                            }
-                        }
-                    }
-                    acc
-                }
-                (range_val, sum_val) => {
-                    if meets_criteria(range_val, criteria) {
-                        match sum_val {
-                            Value::Number(n) => *n,
-                            Value::Currency(n) => *n,
-                            _ => 0.0,
-                        }
-                    } else {
-                        0.0
-                    }
-                }
-            }
-        }
-
-        let result = sum_if_helper(range, sum_range, criteria);
-        Ok(Value::Number(result))
-    }
-
-    fn eval_avgif<C: EvaluationContext>(args: &[Expr], context: &C) -> Result<Value, Error> {
-        if args.len() != 2 {
-            return Err(Error::new("AVGIF expects (array, expr)", None));
-        }
-        let arr_v = Self::eval(&args[0], context)?;
-        let lambda = &args[1];
-
-        match arr_v {
-            Value::Array(items) => {
-                let mut acc = 0.0;
-                let mut count = 0usize;
-                let mut scope = Scope::new(context, None);
-                for it in items {
-                    charge_value(&it)?;
-                    scope.set("x", it.clone());
-                    let matches = matches!(Self::eval(lambda, &scope)?, Value::Boolean(true));
-                    if matches {
-                        match it {
-                            Value::Number(n) | Value::Currency(n) => {
-                                acc += n;
-                                count += 1;
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-                Ok(Value::Number(if count == 0 {
-                    0.0
-                } else {
-                    acc / count as f64
-                }))
-            }
-            _ => Err(Error::new("AVGIF first arg must be array", None)),
-        }
-    }
-
-    fn eval_countif<C: EvaluationContext>(args: &[Expr], context: &C) -> Result<Value, Error> {
-        if args.len() != 2 {
-            return Err(Error::new("COUNTIF expects (array, expr)", None));
-        }
-        let arr_v = Self::eval(&args[0], context)?;
-        let lambda = &args[1];
-
-        match arr_v {
-            Value::Array(items) => {
-                let mut count = 0usize;
-                let mut scope = Scope::new(context, None);
-                for it in items {
-                    charge_value(&it)?;
-                    scope.set("x", it);
-                    let matches = matches!(Self::eval(lambda, &scope)?, Value::Boolean(true));
-                    if matches {
-                        count += 1;
-                    }
-                }
-                Ok(Value::Number(count as f64))
-            }
-            _ => Err(Error::new("COUNTIF first arg must be array", None)),
-        }
+        })
     }
 
     /// Helper to convert Value to JSON
@@ -1049,21 +894,40 @@ pub fn eval_with_vars_and_custom(
     })
 }
 
-/// Evaluate with support for assignments and sequences
+/// Evaluate with support for assignments and sequences (no custom functions).
 pub fn eval_with_assignments(expr: &Expr, vars: &HashMap<String, Value>) -> Result<Value, Error> {
-    limits::evaluation(|| {
-        let mut context = VariableContext::with_owned(vars.clone());
-        eval_with_assignments_context(expr, &mut context)
-    })
+    eval_with_assignments_in(expr, vars, None).map(|(v, _)| v)
 }
 
-/// Evaluate with support for assignments and sequences, returning both result and variable context
+/// Evaluate with support for assignments and sequences, returning both result and variable
+/// context (no custom functions).
 pub fn eval_with_assignments_and_context(
     expr: &Expr,
     vars: &HashMap<String, Value>,
 ) -> Result<(Value, HashMap<String, Value>), Error> {
+    eval_with_assignments_in(expr, vars, None)
+}
+
+/// Like [`eval_with_assignments_and_context`], with the custom functions of `custom_registry`
+/// visible in every step (ADR-0016).
+pub fn eval_with_assignments_and_custom(
+    expr: &Expr,
+    vars: &HashMap<String, Value>,
+    custom_registry: &Arc<RwLock<FunctionRegistry>>,
+) -> Result<(Value, HashMap<String, Value>), Error> {
+    eval_with_assignments_in(expr, vars, Some(custom_registry))
+}
+
+fn eval_with_assignments_in(
+    expr: &Expr,
+    vars: &HashMap<String, Value>,
+    custom_registry: Option<&Arc<RwLock<FunctionRegistry>>>,
+) -> Result<(Value, HashMap<String, Value>), Error> {
     limits::evaluation(|| {
-        let mut context = VariableContext::with_owned(vars.clone());
+        let mut context = VariableContext {
+            variables: Cow::Owned(vars.clone()),
+            custom_registry,
+        };
         let result = eval_with_assignments_context(expr, &mut context)?;
         Ok((result, context.into_variables()))
     })

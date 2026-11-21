@@ -618,6 +618,11 @@ fn main() -> Result<(), Error> {
     let result = skillet::evaluate_with_custom("DOUBLE(21)", &std::collections::HashMap::new())?;
     println!("{:?}", result); // Number(42.0)
 
+    // Visible in every sub-expression too: lambdas, method arguments, `:=` steps (ADR-0016)
+    let vars = std::collections::HashMap::new();
+    let result = skillet::evaluate_with_custom("MAP([1, 2], DOUBLE(:x))", &vars)?;
+    println!("{:?}", result); // Array([Number(2.0), Number(4.0)])
+
     Ok(())
 }
 ```
@@ -781,7 +786,11 @@ fn manage_functions() -> Result<(), Error> {
 sk "=2 + 3 * 4"                    # 14
 sk "=(10 + 20) / 3"                # 10
 sk "=2 ^ 3"                        # 8 (exponentiation)
+sk "=2 ^ 3 ^ 2"                    # 64 (left to right, as in Excel)
+sk "=-2 ^ 2"                       # 4 (negation first, as in Excel)
 sk "=10 % 3"                       # 1 (modulo)
+sk "=200 * 15%"                    # 30 (percent suffix)
+sk "=\"Total: \" & 42"              # "Total: 42" (& joins text)
 
 # With variables
 sk "=:price * (1 + :tax)" price=100 tax=0.08    # 108
@@ -796,10 +805,14 @@ sk "=AVERAGE(10, 20, 30, 40, 50)"              # 30
 sk "=MAX(15, 8, 23, 4, 16)"                    # 23
 sk "=MIN(15, 8, 23, 4, 16)"                    # 4
 sk "=COUNT(1, 2, 3, \"text\", 4)"              # 4 (counts numbers only)
+sk "=COUNTA(1, \"text\", NULL)"                 # 2 (counts non-NULL values)
+sk "=AVERAGE()"                                # Error: AVERAGE of no numbers (#DIV/0!)
 
 # Advanced statistics
-sk "=STDEV_P(2, 4, 4, 4, 5, 5, 7, 9)"         # Population standard deviation
-sk "=VAR_P(2, 4, 4, 4, 5, 5, 7, 9)"           # Population variance
+sk "=STDEV.P(2, 4, 4, 4, 5, 5, 7, 9)"         # 2 (population standard deviation)
+sk "=STDEV.S(2, 4, 4, 4, 5, 5, 7, 9)"         # 2.138... (sample standard deviation)
+sk "=VAR.P(2, 4, 4, 4, 5, 5, 7, 9)"           # 4 (population variance)
+sk "=VAR.S(2, 4, 4, 4, 5, 5, 7, 9)"           # 4.571... (sample variance)
 sk "=MEDIAN(1, 2, 3, 4, 5)"                   # 3
 sk "=MODE_SNGL(1, 2, 2, 3, 4, 4, 4)"          # 4 (most frequent)
 sk "=PERCENTILE_INC([1,2,3,4,5], 0.5)"        # 3 (50th percentile)
@@ -818,6 +831,9 @@ sk "=XOR(true, false)"                         # true
 
 # Complex logical
 sk "=IFS(false, \"A\", true, \"B\", true, \"C\")"  # "B" (first true condition)
+
+# Only the chosen branch is evaluated, so IF can guard an error
+sk "=IF(:qty == 0, 0, :total / :qty)" qty=0 total=10        # 0
 sk "=IF(AND(:score >= 90, :attendance > 0.8), \"A\", IF(:score >= 80, \"B\", \"C\"))" score=85 attendance=0.9
 ```
 
@@ -850,7 +866,8 @@ sk "=NOW()"                                    # Current Unix timestamp
 sk "=TODAY()"                                  # Today, midnight
 sk "=DATE(2023, 12, 25)"                      # Unix timestamp for Dec 25, 2023
 sk "=DATE(2024, 2 + 1, 0)"                    # 2024-02-29: months and days roll over like Excel
-sk "=TIME(14, 30, 0)"                         # Seconds since midnight for 2:30 PM
+sk "=TIME(14, 30, 0)"                         # 0.6041666666666666, 2:30 PM as a fraction of a day
+sk "=TIME(25, 0, 0)"                          # 0.041666666666666664 (wraps at 24 hours, as in Excel)
 
 # Date extraction
 sk "=YEAR(NOW())"                              # Current year
@@ -908,10 +925,16 @@ sk "=(17).between(10, 20)"                     # true (method form)
 # Basic math
 sk "=ABS(-5)"                                  # 5
 sk "=ROUND(3.14159, 2)"                       # 3.14
+sk "=ROUND(1234.567, -2)"                     # 1200
 sk "=CEILING(3.2)"                            # 4
+sk "=CEILING(2.1, 0.5)"                       # 2.5
 sk "=FLOOR(3.8)"                              # 3
+sk "=FLOOR(7, 5)"                             # 5
 sk "=INT(3.9)"                                # 3
+sk "=INT(-3.9)"                               # -4 (rounds down)
 sk "=MOD(10, 3)"                              # 1
+sk "=MOD(-10, 3)"                             # 2 (sign of the divisor, as in Excel)
+sk "=SQRT(-1)"                                # Error: SQRT of a negative number (#NUM!)
 sk "=POWER(2, 8)"                             # 256
 
 # Trigonometric (if extended)
@@ -1004,20 +1027,26 @@ sk "=:sales * IF(:sales > 100000, 0.08, IF(:sales > 50000, 0.06, 0.04))" sales=7
 - `AVERAGE(...)`, `AVG(...)` - Average of arguments
 - `MAX(...)` - Maximum value
 - `MIN(...)` - Minimum value
-- `COUNT(...)` - Count of numeric arguments
+- `COUNT(...)` - Count of numbers (arrays flattened)
+- `COUNTA(...)` - Count of non-NULL values
 - `ABS(number)` - Absolute value
-- `ROUND(number, digits)` - Round to specified digits
-- `CEILING(number)` - Round up to nearest integer
-- `FLOOR(number)` - Round down to nearest integer
-- `INT(number)` - Integer part
-- `MOD(dividend, divisor)` - Modulo operation
+- `ROUND(number, [digits])` - Round half away from zero; negative digits round left of the point
+- `CEILING(number, [significance])` - Round up to a multiple of `significance` (default 1)
+- `FLOOR(number, [significance])` - Round down to a multiple of `significance` (default 1)
+- `INT(number)` - Round down to an integer (`INT(-3.9)` is -4)
+- `MOD(number, divisor)` - Remainder with the sign of the divisor
 - `POWER(base, exponent)` - Exponentiation
+
+These follow Excel: where Excel returns `#DIV/0!`, `#NUM!` or `#VALUE!` (for example `SQRT(-1)`,
+`MOD(5, 0)`, `AVERAGE()` of no numbers, `ABS("x")`), Skillet returns an error. `MAX` and `MIN`
+of no numbers are 0, as in Excel. The operators follow the same rule: `1 / 0`, `0 / 0` and `5 % 0`
+are `Division by zero`, and a result that overflows (`10 ^ 400`) is a `#NUM!` error.
 
 ### Statistical Functions
 - `STDEV.P(...)` - Population standard deviation
 - `VAR.P(...)` - Population variance
 - `MEDIAN(...)` - Median value
-- `MODE.SNGL(...)`, `MODE(...)` - Most frequent value
+- `MODE.SNGL(...)`, `MODE(...)` - Most frequent value (error when no value repeats)
 - `PERCENTILE.INC(array, k)`, `PERCENTILE(array, k)` - k-th percentile
 - `QUARTILE.INC(array, quart)`, `QUARTILE(array, quart)` - Quartile value
 
@@ -1038,7 +1067,8 @@ sk "=:sales * IF(:sales > 100000, 0.08, IF(:sales > 50000, 0.06, 0.04))" sales=7
 - `LEFT(text, [num_chars])` - Leftmost characters (default 1)
 - `RIGHT(text, [num_chars])` - Rightmost characters (default 1)
 - `MID(text, start, [num_chars])` - Substring from 1-based start
-- `SUBSTITUTE(text, substr, replacement)` - Replace all occurrences of a substring
+- `SUBSTITUTE(text, old_text, new_text, [instance_num])` - Replace all occurrences, or only the `instance_num`-th
+- `TRIM(text)` - Remove leading and trailing spaces and collapse inner runs of spaces (Excel); the `.trim()` method keeps inner spaces
 - `REPLACE(old_text, start_num, num_chars, new_text)` - Excel-style positional replace (1-based start)
 - `ISNUMBER(value)` - Check if numeric
 - `ISTEXT(value)` - Check if text
@@ -1047,7 +1077,7 @@ sk "=:sales * IF(:sales > 100000, 0.08, IF(:sales > 50000, 0.06, 0.04))" sales=7
 - `NOW()` - Current timestamp
 - `DATE(year, month, day)` - Create date (Excel rules: months and days roll over, years 0-1899 get 1900 added)
 - `TODAY()` - Today's local date at midnight (same as `DATE()`)
-- `TIME(hour, minute, second)` - Seconds since midnight (`hour*3600 + minute*60 + second`); `TIME()` is the current local time in seconds since midnight
+- `TIME(hour, minute, second)` - Time as a fraction of a day, as in Excel (`TIME(12, 0, 0)` is 0.5; parts truncated, wrapped at 24 hours); `TIME()` is the current local time in the same unit
 - `date + days`, `date - days`, `date - date` - Excel-style date arithmetic in days
 - `YEAR(date)` - Extract year
 - `MONTH(date)` - Extract month
@@ -1060,9 +1090,10 @@ sk "=:sales * IF(:sales > 100000, 0.08, IF(:sales > 50000, 0.06, 0.04))" sales=7
 - `FIND(array, expression)` - Find first element matching expression (returns element or Null); with text first it is Excel's text `FIND`
 - `MAP(array, expression)` - Transform array elements
 - `REDUCE(array, expression, initial)` - Reduce array to single value
-- `SUMIF(array, condition [, sum_array])` - Conditional sum (supports lambda and Excel-style criteria)
-- `AVGIF(array, condition)` - Conditional average
-- `COUNTIF(array, condition)` - Conditional count
+- `SUMIF(range, criteria, [sum_range])` - Conditional sum
+- `AVERAGEIF(range, criteria, [average_range])`, `AVGIF` - Conditional average (error when nothing matches)
+- `COUNTIF(range, criteria)` - Conditional count
+  - `criteria` is an Excel criterion (`">2"`, `5`, `"<>a"`, `"a*"`; text is case-insensitive, with `*`, `?` and `~` wildcards) or a lambda over `:x` that returns a boolean. See [api.md](../reference/api.md).
 - `BETWEEN(min, max, value)` - Check if value is within range (inclusive)
 
 ### Financial Functions

@@ -12,7 +12,8 @@ use skillet::Value;
 
 /// Every name in the dispatch sets at d3e6a5d (81 names), grouped by the set it was in, plus
 /// `BETWEEN`, registered later to restore its documented behaviour (82 names), plus the Excel
-/// names added for BL-054 / excel-compat D-9 (91 names).
+/// names added for BL-054: `COUNTA`, the six sample variance names and the excel-compat D-9
+/// names (98 names).
 const DISPATCHED: &[&str] = &[
     // arithmetic (17)
     "SUM",
@@ -68,6 +69,7 @@ const DISPATCHED: &[&str] = &[
     "CONTAINS",
     "IN",
     "COUNT",
+    "COUNTA",
     "UNIQUE",
     "SORT",
     "REVERSE",
@@ -111,6 +113,13 @@ const DISPATCHED: &[&str] = &[
     "MODE",
     "PERCENTILE",
     "QUARTILE",
+    // BL-054: sample variants
+    "STDEV_S",
+    "STDEV.S",
+    "STDEV",
+    "VAR_S",
+    "VAR.S",
+    "VAR",
     // json (1)
     "DIG",
 ];
@@ -124,6 +133,7 @@ const NOT_DISPATCHED: &[&str] = &[
     "REDUCE",
     "SUMIF",
     "AVGIF",
+    "AVERAGEIF",
     "COUNTIF",
     "JQ",
     "__TERNARY__",
@@ -137,8 +147,8 @@ const NOT_DISPATCHED: &[&str] = &[
 
 #[test]
 fn every_dispatched_name_resolves() {
-    assert_eq!(DISPATCHED.len(), 91);
-    assert_eq!(builtin_function_count(), 91);
+    assert_eq!(DISPATCHED.len(), 98);
+    assert_eq!(builtin_function_count(), 98);
     for name in DISPATCHED {
         assert!(has_builtin_function(name), "{name} should be a builtin");
         // Zero-arg call must reach the right module: no "Unknown … function" from any layer.
@@ -162,8 +172,8 @@ fn non_dispatched_names_stay_unknown() {
     }
 }
 
-/// Dotted Excel names are in the table but the lexer cannot produce them, so they are only
-/// reachable through `exec_builtin_fast`; they must stay equal to their underscore aliases.
+/// Dotted Excel names must stay equal to their underscore aliases, through dispatch and
+/// (since BL-054) through the parser.
 #[test]
 fn dotted_aliases_match_underscore_forms() {
     let nums = |v: &[f64]| v.iter().map(|n| Value::Number(*n)).collect::<Vec<_>>();
@@ -209,11 +219,10 @@ fn dotted_aliases_match_underscore_forms() {
             );
         }
     }
-    // Through the parser the dotted spelling is a syntax error, not a call.
-    let err = skillet::evaluate("=STDEV.P(1, 3)").unwrap_err();
+    // Through the parser the dotted spelling is a call (BL-054, D-4).
     assert_eq!(
-        err.message,
-        "Unexpected identifier (expected function call)"
+        skillet::evaluate("=STDEV.P(1, 3)").unwrap(),
+        Value::Number(1.0)
     );
 }
 
@@ -250,7 +259,8 @@ const CASES: &[(&str, &str)] = &[
     ("MAX([3, 9, 2])", "Ok(Number(9.0))"),
     ("ROUND(3.14159, 2)", "Ok(Number(3.14))"),
     ("CEIL(2.1)", "Ok(Number(3.0))"),
-    ("CEILING(2.1, 5)", "Ok(Number(3.0))"),
+    // BL-054: significance is honoured (Excel), was "Ok(Number(3.0))".
+    ("CEILING(2.1, 5)", "Ok(Number(5.0))"),
     ("FLOOR(-2.1)", "Ok(Number(-3.0))"),
     ("ABS(-7)", "Ok(Number(7.0))"),
     ("SQRT(16)", "Ok(Number(4.0))"),
@@ -304,7 +314,8 @@ const CASES: &[(&str, &str)] = &[
     ("PMT(0.05 / 12, 360, 200000)", "Ok(Number(-1073.6432460242797))"),
     ("DB(10000, 1000, 5, 2)", "Ok(Number(2328.5017392669597))"),
     ("FV(0.05, 10, -100)", "Ok(Number(1257.789253554884))"),
-    ("IPMT(0.1 / 12, 1, 36, 8000)", "Ok(Number(66.66666666666667))"),
+    // BL-054: Excel sign convention (Microsoft example: -66.67), was "Ok(Number(66.66666666666667))".
+    ("IPMT(0.1 / 12, 1, 36, 8000)", "Ok(Number(-66.66666666666667))"),
     ("MEDIAN(1, 3, 2, 4)", "Ok(Number(2.5))"),
     ("MODESNGL(1, 2, 2, 3)", "Ok(Number(2.0))"),
     ("MODE_SNGL(1, 2, 2, 3)", "Ok(Number(2.0))"),
@@ -336,7 +347,8 @@ const CASES: &[(&str, &str)] = &[
     ("BETWEEN(1, 10, 'c')", "Err(Error { message: \"BETWEEN value must be a number\", position: None })"),
     ("NOPE(1)", "Err(Error { message: \"Unknown function: NOPE\", position: None })"),
     ("REVERSE('abc')", "Err(Error { message: \"REVERSE expects array\", position: None })"),
-    ("COUNT()", "Err(Error { message: \"COUNT expects 1 argument: array\", position: None })"),
+    // BL-054: COUNT is variadic (Excel); was "COUNT expects 1 argument: array".
+    ("COUNT()", "Err(Error { message: \"COUNT expects at least 1 argument\", position: None })"),
     ("IN([1])", "Err(Error { message: \"IN expects 2 arguments: array, value\", position: None })"),
     ("XOR(TRUE)", "Err(Error { message: \"XOR expects 2 arguments\", position: None })"),
     ("IF(TRUE)", "Err(Error { message: \"IF expects at least 2 arguments\", position: None })"),
@@ -358,17 +370,19 @@ const CASES: &[(&str, &str)] = &[
     ("REPLACE('a')", "Err(Error { message: \"REPLACE expects (old_text: string, start_num: number, num_chars: number, new_text: string)\", position: None })"),
     ("LENGTH(1)", "Err(Error { message: \"LENGTH expects array or string\", position: None })"),
     ("SPLIT(1)", "Err(Error { message: \"SPLIT expects string, [separator]\", position: None })"),
-    ("SUBSTITUTE('a')", "Err(Error { message: \"SUBSTITUTE expects (text: string, substr: string, replacement: string)\", position: None })"),
+    ("SUBSTITUTE('a')", "Err(Error { message: \"SUBSTITUTE expects (text: string, old_text: string, new_text: string, [instance_num: number])\", position: None })"),
     ("INCLUDES('a')", "Err(Error { message: \"INCLUDES expects string, substring\", position: None })"),
     ("TRIM(1)", "Err(Error { message: \"TRIM expects string\", position: None })"),
     ("LOWER(1)", "Err(Error { message: \"LOWER expects string\", position: None })"),
-    ("ROUND('a')", "Err(Error { message: \"ROUND expects number\", position: None })"),
-    ("ROUND()", "Ok(Number(0.0))"),
-    ("ABS()", "Ok(Number(0.0))"),
-    ("MOD(7)", "Ok(Number(0.0))"),
+    ("ROUND('a')", "Err(Error { message: \"ROUND expects number, got string\", position: None })"),
+    // BL-054 (Excel): missing arguments and averages of nothing are errors; these were
+    // "Ok(Number(0.0))". MIN() stays 0, as Excel's MIN of no numbers is 0.
+    ("ROUND()", "Err(Error { message: \"ROUND expects (number, [num_digits])\", position: None })"),
+    ("ABS()", "Err(Error { message: \"ABS expects (number)\", position: None })"),
+    ("MOD(7)", "Err(Error { message: \"MOD expects (number, divisor)\", position: None })"),
     ("MIN()", "Ok(Number(0.0))"),
-    ("AVG()", "Ok(Number(0.0))"),
-    ("MEDIAN()", "Ok(Number(0.0))"),
+    ("AVG()", "Err(Error { message: \"AVERAGE of no numbers (#DIV/0!)\", position: None })"),
+    ("MEDIAN()", "Err(Error { message: \"MEDIAN of no numbers (#NUM!)\", position: None })"),
     ("JOIN([[1]])", "Err(Error { message: \"JOIN does not flatten nested arrays\", position: None })"),
     ("CONTAINS(1, 1)", "Err(Error { message: \"CONTAINS expects array, value\", position: None })"),
     ("UNIQUE(1)", "Err(Error { message: \"UNIQUE expects array\", position: None })"),

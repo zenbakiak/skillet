@@ -60,17 +60,21 @@ pub fn exec_array(name: &str, args: &[Value]) -> Result<Value, Error> {
                 Err(Error::new("IN expects array as first argument", None))
             }
         }
-        "COUNT" => {
-            if args.len() != 1 {
-                return Err(Error::new("COUNT expects 1 argument: array", None));
-            }
-            match args.first() {
-                Some(Value::Array(items)) => Ok(Value::Number(items.len() as f64)),
-                Some(Value::Null) => Ok(Value::Number(0.0)),
-                Some(_) => Err(Error::new("COUNT expects array", None)),
-                None => Ok(Value::Number(0.0)),
-            }
-        }
+        // Excel COUNT: how many numbers (currency and datetime count too); arrays are flattened
+        // and every other value is ignored. COUNTA: how many values are not NULL.
+        "COUNT" | "COUNTA" if args.is_empty() => Err(Error::new(
+            format!("{name} expects at least 1 argument"),
+            None,
+        )),
+        "COUNT" => Ok(Value::Number(count_where(args, &|v| {
+            matches!(
+                v,
+                Value::Number(_) | Value::Currency(_) | Value::DateTime(_)
+            )
+        }) as f64)),
+        "COUNTA" => Ok(Value::Number(
+            count_where(args, &|v| !matches!(v, Value::Null)) as f64,
+        )),
         "UNIQUE" => match args.first() {
             Some(Value::Array(items)) => {
                 let mut set = BTreeSet::new();
@@ -88,8 +92,20 @@ pub fn exec_array(name: &str, args: &[Value]) -> Result<Value, Error> {
         },
         "SORT" => match args.first() {
             Some(Value::Array(items)) => {
-                let desc =
-                    matches!(args.get(1), Some(Value::String(s)) if s.eq_ignore_ascii_case("DESC"));
+                // Excel's sort_order: 1 ascending, -1 descending; "ASC"/"DESC" are Skillet's.
+                let desc = match args.get(1) {
+                    None => false,
+                    Some(Value::String(s)) if s.eq_ignore_ascii_case("DESC") => true,
+                    Some(Value::String(s)) if s.eq_ignore_ascii_case("ASC") => false,
+                    Some(Value::Number(n)) if *n == 1.0 => false,
+                    Some(Value::Number(n)) if *n == -1.0 => true,
+                    Some(_) => {
+                        return Err(Error::new(
+                            "SORT order must be 1, -1, \"ASC\" or \"DESC\" (#VALUE!)",
+                            None,
+                        ))
+                    }
+                };
                 let mut nums: Vec<f64> = Vec::new();
                 for it in items {
                     if let Value::Number(n) = it {
@@ -164,4 +180,14 @@ pub fn exec_array(name: &str, args: &[Value]) -> Result<Value, Error> {
             None,
         )),
     }
+}
+
+/// Count the values in `args` (arrays flattened) for which `keep` holds.
+fn count_where(args: &[Value], keep: &dyn Fn(&Value) -> bool) -> usize {
+    args.iter()
+        .map(|a| match a {
+            Value::Array(items) => count_where(items, keep),
+            other => usize::from(keep(other)),
+        })
+        .sum()
 }

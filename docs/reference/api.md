@@ -33,11 +33,11 @@ admin-token check. Details: [limits](../guide/limits.md#server-request-limits-1-
 
 ### Arithmetic Operators
 - `+` - Addition
-- `-` - Subtraction  
+- `-` - Subtraction
 - `*` - Multiplication
 - `/` - Division
-- `%` - Modulo
-- `^` - Exponentiation
+- `%` - Percent suffix (`10%` is `0.1`), or modulo when an operand follows (`10 % 3` is `1`)
+- `^` - Exponentiation (left-associative: `2^3^2` is `64`)
 - `=` - Equals prefix (Excel-style)
 
 Dates work with `+` and `-` in days, like Excel:
@@ -46,18 +46,37 @@ Dates work with `+` and `-` in days, like Excel:
 DATE(2026, 1, 31) + 1                  # DateTime for 2026-02-01 (Number + DateTime works too)
 DATE(2026, 3, 1) - 1                   # DateTime for 2026-02-28
 DATE(2026, 1, 1) + 0.5                 # DateTime for 2026-01-01 12:00 (rounded to the second)
+DATE(2026, 1, 1) + TIME(12, 0, 0)      # DateTime for 2026-01-01 12:00 (TIME is a day fraction)
 DATE(2026, 3, 1) - DATE(2026, 2, 1)    # 28 (days; fractional when times differ)
 ```
 
 Other operators on a DateTime (`*`, `/`, `DateTime + DateTime`, `Number - DateTime`) are an error.
+
+The arithmetic operators never produce NaN or infinity (BL-054, ADR-0018). Division or `%` by 0
+and `0 ^` a negative number are `Error: Division by zero (#DIV/0!)`; `0 ^ 0` and any result that
+is not a finite number (overflow, a non-real power) are a `#NUM!` error.
+```bash
+7 / 2                        # 3.5
+1 / 0                        # Error: Division by zero (#DIV/0!)
+0 / 0                        # Error: Division by zero (#DIV/0!)
+10 ^ 400                     # Error: Result is not a finite number (#NUM!)
+0 ^ 0                        # Error: 0 ^ 0 is undefined (#NUM!)
+```
+
+### Text Operator
+- `&` - Joins both sides as text, with `CONCAT` rules: `"a" & 1 & TRUE` is `"a1TRUE"`,
+  `NULL` adds nothing. Write `& .5` with a space: `&.` is safe navigation.
 
 ### Comparison Operators
 - `>` - Greater than
 - `<` - Less than
 - `>=` - Greater than or equal
 - `<=` - Less than or equal
-- `==` - Equal to
+- `==` (or `=`) - Equal to
 - `!=` - Not equal to
+
+`NULL == NULL` is `TRUE` and `NULL` is unequal to every other value (`NULL == 0` is `FALSE`).
+`<`, `<=`, `>`, `>=` with a `NULL` operand are an error (ADR-0013).
 
 ### Logical Operators
 - `AND`, `&&` - Logical AND
@@ -76,6 +95,27 @@ Other operators on a DateTime (`*`, `/`, `DateTime + DateTime`, `Number - DateTi
 - `&.` - Safe navigation operator
 - `::` - Type casting operator
 - `...` - Spread operator
+
+### Precedence
+Tightest first, as in Excel. Operators on the same row are left-associative.
+
+| Level | Operators |
+|---|---|
+| 1 | postfix `.method()`, `.prop`, `&.`, `[i]`, `::type` |
+| 2 | unary `-`, `+`, `!` (`-2^2` is `4`) |
+| 3 | percent suffix `%` |
+| 4 | `^` (`2^3^2` is `64`) |
+| 5 | `*`, `/`, `%` (modulo) |
+| 6 | `+`, `-` |
+| 7 | `&` |
+| 8 | `>`, `<`, `>=`, `<=` |
+| 9 | `==`, `!=` |
+| 10 | `AND`, `&&` |
+| 11 | `OR`, `\|\|` |
+| 12 | `? :` |
+
+`-(2^2)` gives `-4`. Before BL-054, `^` was right-associative (`2^3^2` was `512`) and
+unary minus bound looser than `^` (`-2^2` was `-4`).
 
 ---
 
@@ -99,25 +139,38 @@ MULTIPLY(2, 3, 4)            # 24 (alias)
 PRODUCT([2, 3, 4])           # 24 (works with arrays)
 ```
 
+UPPERCASE builtins follow Excel's documented behaviour (BL-054). Where Excel returns `#DIV/0!`,
+`#NUM!`, `#VALUE!` or `#N/A`, Skillet returns an error, and the message names the Excel error.
+A wrong-typed or missing argument is an error, never a silent 0. Inside arrays, text, booleans
+and `NULL` are ignored by the aggregates, as Excel ignores them in a range.
+
 #### `AVERAGE(...)`
-Average of all arguments.
+Average of the numbers in the arguments. No numbers is an error (Excel `#DIV/0!`).
 ```bash
 AVERAGE(1, 2, 3, 4, 5)       # 3.0
 AVG(10, 20, 30)              # 20.0 (alias)
+AVERAGE([1, "x", TRUE])      # 1 (text and booleans in arrays are ignored)
+AVERAGE([])                  # Error: AVERAGE of no numbers (#DIV/0!)
 ```
 
 #### `MAX(...)`, `MIN(...)`
-Maximum/minimum value from arguments.
+Maximum/minimum value from arguments. As in Excel, no numbers gives 0.
 ```bash
 MAX(1, 5, 3, 9, 2)           # 9
 MIN([1, 5, 3, 9, 2])         # 1 (works with arrays too)
+MAX()                        # 0
 ```
 
-#### `COUNT(...)`
-Count of numeric arguments (non-numeric values are ignored).
+#### `COUNT(...)`, `COUNTA(...)`
+`COUNT` counts the numbers (and currency and datetime values) in its arguments; arrays are
+flattened and other values are ignored. `COUNTA` counts every value that is not `NULL`, including
+empty text. Both need at least one argument. For the length of an array use `.length()`.
 ```bash
 COUNT(1, "hello", 3, 4)      # 3
+COUNT([1, "a", TRUE, NULL])  # 1
 COUNT([1, 2, 3, 4, 5])       # 5
+COUNTA([1, "a", TRUE, NULL]) # 3
+COUNTA("", NULL)             # 1
 ```
 
 #### `ABS(number)`
@@ -125,58 +178,91 @@ Absolute value.
 ```bash
 ABS(-5)                      # 5
 ABS(3.14)                    # 3.14
+ABS("x")                     # Error: ABS expects number, got string
 ```
 
 #### `ROUND(number, [digits])`
-Round to specified decimal places.
+Round half away from zero to `digits` decimal places (default 0; `digits` is truncated). Negative
+`digits` round to the left of the decimal point. Rounding works on the number's 15-digit decimal
+form, as Excel does, so `ROUND(1.005, 2)` is 1.01. A currency number stays currency.
 ```bash
 ROUND(3.14159)               # 3 (default: 0 digits)
 ROUND(3.14159, 2)            # 3.14
-ROUND(3.14159, 4)            # 3.1416
+ROUND(2.15, 1)               # 2.2
+ROUND(-2.5)                  # -3
+ROUND(1234.567, -2)          # 1200
+ROUND(15, -1)                # 20
+ROUND(2.5, "x")              # Error: ROUND num_digits must be a number, got string
 ```
 
-#### `CEILING(number)`, `FLOOR(number)`
-Round up/down to nearest integer.
+#### `CEILING(number, [significance])`, `FLOOR(number, [significance])`
+Round up (`CEILING`, alias `CEIL`) or down (`FLOOR`) to a multiple of `significance` (default 1).
+Excel's rules apply: a positive number with a negative significance is an error (`#NUM!`); a
+negative number with a negative significance rounds away from zero for `CEILING` and toward zero
+for `FLOOR`. `CEILING(n, 0)` is 0 and `FLOOR(n, 0)` is an error (`#DIV/0!`).
 ```bash
 CEILING(3.2)                 # 4
+CEILING(2.1, 0.5)            # 2.5
+CEILING(7, 5)                # 10
+CEILING(-2.5, 2)             # -2
+CEILING(-2.5, -2)            # -4
 FLOOR(3.8)                   # 3
+FLOOR(7, 5)                  # 5
+FLOOR(-2.5, 2)               # -4
+FLOOR(-2.5, -2)              # -2
 ```
 
 #### `INT(number)`
-Get integer part (truncate).
+Round down to the nearest integer (Excel). For truncation toward zero use the `.int()` method.
 ```bash
 INT(3.9)                     # 3
-INT(-3.9)                    # -3
+INT(-3.9)                    # -4
 ```
 
-#### `MOD(dividend, divisor)`
-Modulo operation.
+#### `MOD(number, divisor)`
+Remainder `number - divisor * INT(number / divisor)`, so the result has the sign of the divisor,
+as in Excel. A divisor of 0 is an error (`#DIV/0!`). The `%` operator is different: it keeps the
+sign of the left operand (`-10 % 3` is -1).
 ```bash
 MOD(10, 3)                   # 1
 MOD(17, 5)                   # 2
+MOD(-10, 3)                  # 2
+MOD(10, -3)                  # -2
+MOD(5, 0)                    # Error: MOD divisor is 0 (#DIV/0!)
 ```
 
 #### `POWER(base, exponent)`
-Exponentiation.
+Exponentiation. As in Excel, `POWER(0, 0)` and results that are not real numbers are errors
+(`#NUM!`), and 0 to a negative power is `#DIV/0!`. (The `^` operator is unchanged.)
 ```bash
 POWER(2, 8)                  # 256
 POW(3, 4)                    # 81 (alias)
+POWER(-8, 1/3)               # Error: POWER result is not a real number or is out of range (#NUM!)
 ```
 
 #### `SQRT(number)`
-Square root.
+Square root. A negative number is an error (`#NUM!`).
 ```bash
 SQRT(16)                     # 4
 SQRT(2)                      # 1.414...
+SQRT(-1)                     # Error: SQRT of a negative number (#NUM!)
 ```
 
 ### Statistical Functions
 
-#### `STDEV.P(...)`, `VAR.P(...)`
-Population standard deviation and variance.
+With no numbers in the data these return Excel's error: `MEDIAN`, `PERCENTILE_INC` and
+`QUARTILE_INC` `#NUM!`, `STDEV_P` and `VAR_P` `#DIV/0!`, `MODE_SNGL` `#N/A`.
+
+#### `STDEV.P(...)`, `VAR.P(...)`, `STDEV.S(...)`, `VAR.S(...)`
+Population (divide by n) and sample (divide by n - 1) standard deviation and variance, as in
+Excel. The dotted names work as written; `STDEV_P`, `STDEVP`, `VAR_P`, `VARP`, `STDEV_S`,
+`STDEV`, `VAR_S` and `VAR` are aliases. The sample functions need at least two numbers.
 ```bash
-STDEV_P(2, 4, 4, 4, 5, 5, 7, 9)    # Population std dev
-VAR_P(2, 4, 4, 4, 5, 5, 7, 9)      # Population variance
+STDEV.P(2, 4, 4, 4, 5, 5, 7, 9)    # 2
+VAR.P(2, 4, 4, 4, 5, 5, 7, 9)      # 4
+STDEV.S(2, 4, 4, 4, 5, 5, 7, 9)    # 2.138...
+VAR.S(2, 4, 4, 4, 5, 5, 7, 9)      # 4.571... (32/7)
+STDEV_P()                          # Error: STDEV.P of no numbers (#DIV/0!)
 ```
 
 #### `MEDIAN(...)`
@@ -184,47 +270,57 @@ Median value.
 ```bash
 MEDIAN(1, 2, 3, 4, 5)        # 3
 MEDIAN(1, 2, 3, 4)           # 2.5
-MEDIAN(1, SQRT(-1), 3)       # Error: Cannot sort NaN values
+MEDIAN()                     # Error: MEDIAN of no numbers (#NUM!)
+MEDIAN(:data)                # Error: Cannot sort NaN values, when :data holds a NaN
 ```
 
 `MEDIAN`, `PERCENTILE_INC`, `QUARTILE_INC`, `SORT` and `.sort()` sort their data first. If the data
-contains NaN (for example from `SQRT(-1)` or `0/0`), they return the error
-`Cannot sort NaN values`.
+contains NaN, they return the error `Cannot sort NaN values`. Expressions cannot make NaN (`0/0` is
+an error), but a host program can pass one in a variable.
 
 #### `MODE.SNGL(...)`, `MODE(...)`
-Most frequently occurring value. `MODE` is Excel's legacy name for the same function.
+Most frequently occurring value; the first one seen wins a tie. If no value repeats, it is an
+error (Excel `#N/A`). Write it `MODE_SNGL`; `MODE` is Excel's legacy name for the same function.
 ```bash
 MODE_SNGL(1, 2, 2, 3, 4, 4, 4)     # 4
 MODE(5.6, 4, 4, 3, 2, 4)           # 4
+MODE_SNGL(1, 2, 3)                 # Error: MODE.SNGL: no value repeats (#N/A)
 ```
 
 #### `PERCENTILE.INC(array, k)`, `PERCENTILE(array, k)`
-k-th percentile (0 ≤ k ≤ 1). `PERCENTILE` is Excel's legacy name for the same function.
+k-th percentile (0 ≤ k ≤ 1). A `k` outside 0..1, or NaN, is an error (ADR-0015). Write it
+`PERCENTILE_INC`; `PERCENTILE` is Excel's legacy name for the same function.
 ```bash
 PERCENTILE([1, 3, 2, 4], 0.3)      # 1.9
 PERCENTILE_INC([1,2,3,4,5], 0.5)   # 3 (50th percentile)
 PERCENTILE_INC([1,2,3,4,5], 0.25)  # 2 (25th percentile)
+PERCENTILE_INC([1,2,3], 1.5)       # Error: Percentile must be between 0 and 1 (#NUM!)
 ```
 
 #### `QUARTILE.INC(array, quart)`, `QUARTILE(array, quart)`
-Quartile value (1=Q1, 2=Q2, 3=Q3). `QUARTILE` is Excel's legacy name for the same function.
+Quartile value (0=min, 1=Q1, 2=Q2, 3=Q3, 4=max). `quart` must be in 0..4 before it is truncated,
+as in Excel, so 2.7 means 2 but 4.9 is an error. Write it `QUARTILE_INC`; `QUARTILE` is Excel's
+legacy name for the same function.
 ```bash
 QUARTILE([1,2,4,7,8,9,10,12], 1)   # 3.5
 QUARTILE_INC([1,2,3,4,5,6,7,8], 1) # 2.75 (Q1)
 QUARTILE_INC([1,2,3,4,5,6,7,8], 2) # 4.5 (Q2/median)
+QUARTILE_INC([1,2,3,4], -0.5)      # Error: Quartile must be 0-4 (#NUM!)
 ```
 
 ### Logical Functions
 
 #### `IF(condition, true_value, false_value)`
-Basic conditional.
+Basic conditional. Only the chosen branch is evaluated, so it can guard an error.
 ```bash
 IF(5 > 3, "Yes", "No")       # "Yes"
 IF(false, 10, 20)            # 20
+IF(:a == 0, 0, 1 / :a)       # 0 when :a is 0
 ```
 
 #### `IFS(condition1, value1, condition2, value2, ...)`
-Multiple conditions (returns first matching).
+Multiple conditions (returns first matching). Conditions are evaluated in order up to the
+first true one, and only its value is evaluated.
 ```bash
 IFS(false, "A", true, "B", true, "C")  # "B"
 IFS(score >= 90, "A", score >= 80, "B", true, "C")
@@ -316,12 +412,24 @@ MID("Hello", 2, 3)           # "ell" (1-based start)
 MID("Hello", 3)              # "llo" (rest of string)
 ```
 
-#### `SUBSTITUTE(text, substr, replacement)`, `SUBSTITUTEM(text, substr, replacement)`
-Replace all occurrences of `substr` with `replacement`. `SUBSTITUTEM` is an alias that performs the same operation (substitute multiple occurrences).
+#### `SUBSTITUTE(text, old_text, new_text, [instance_num])`, `SUBSTITUTEM(text, substr, replacement)`
+Replace every occurrence of `old_text` with `new_text`, or, with `instance_num`, only that
+occurrence (1-based, as in Excel). An empty `old_text` returns the text unchanged. Matching is
+case-sensitive. `SUBSTITUTEM` replaces every occurrence and takes no `instance_num`.
 ```bash
 SUBSTITUTE("foo bar foo", "foo", "baz")   # "baz bar baz"
 SUBSTITUTE("a-a-a", "-", "_")             # "a_a_a"
+SUBSTITUTE("a-b-c", "-", "+", 2)          # "a-b+c"
 SUBSTITUTEM("a-a-a", "-", "_")            # "a_a_a"
+```
+
+#### `TRIM(text)`
+Excel `TRIM`: removes leading and trailing spaces and collapses each inner run of spaces to one.
+Only the space character counts; tabs and newlines are kept. The `.trim()` method is different: it
+strips all whitespace at both ends and keeps inner spaces.
+```bash
+TRIM("  a   b  ")            # "a b"
+"  a   b  ".trim()           # "a   b"
 ```
 
 #### `REPLACE(old_text, start_num, num_chars, new_text)`
@@ -365,13 +473,18 @@ TODAY()                      # today, midnight
 String casts stay strict: `"2026-02-30"::DateTime` is an error.
 
 #### `TIME()`, `TIME(hour, minute, second)`
-Seconds since midnight. With three arguments it returns `hour*3600 + minute*60 + second`. With no
-arguments it returns the current local time as seconds since midnight. One or two arguments are an
-error. The parts are not truncated or wrapped: `TIME(25, 0, 0)` is 90000.
+The time as a fraction of a day, as in Excel (ADR-0018): `TIME(12, 0, 0)` is 0.5. Each part is
+truncated, a part above 32767 is an error, a negative minute or second is allowed while the total
+is not negative, and the total wraps at 24 hours. With no arguments it returns the current local
+time in the same unit. One or two arguments are an error. Multiply by 86400 for seconds.
 ```bash
-TIME(14, 30, 0)              # 52200 (2:30 PM in seconds)
-TIME(1, 2, 3)                # 3723
-TIME()                       # current local time, e.g. 81236 (22:33:56)
+TIME(14, 30, 0)              # 0.6041666666666666 (2:30 PM)
+TIME(12, 0, 0)               # 0.5
+TIME(25, 0, 0)               # 0.041666666666666664 (wraps to 1:00)
+TIME(0, 750, 0)              # 0.5208333333333334 (750 minutes = 12:30)
+TIME(0, -1, 0)               # Error: TIME is before midnight (#NUM!)
+TIME(14, 30, 0) * 86400      # 52200 (seconds since midnight)
+TIME()                       # current local time, e.g. 0.9402 (22:33:56)
 TIME(14, 30)                 # Error: TIME expects either no arguments or three arguments (hour, minute, second)
 ```
 
@@ -428,33 +541,44 @@ REDUCE([1,2,3,4], :acc + :x, 0)    # 10
 REDUCE(orders, :acc + :x.total, 0)
 ```
 
-#### `SUMIF(array, condition [, sum_array])`
-Conditional sum. Supports both lambda expressions and Excel-style criteria.
+#### `COUNTIF(range, criteria)`, `SUMIF(range, criteria, [sum_range])`, `AVERAGEIF(range, criteria, [average_range])`
+Count, sum or average the items that meet `criteria`. `AVGIF` is an alias of `AVERAGEIF`. The
+range is an array, or a single value (treated as a one-item range). With a sum or average range,
+the item at the same position is summed; only numbers and currency are summed or averaged.
+`AVERAGEIF` with no matching number is an error (`#DIV/0!`); `SUMIF` and `COUNTIF` give 0.
+
+`criteria` is either an Excel criterion (a string or a number) or a lambda over `:x`:
+
+| Criterion | Matches |
+|---|---|
+| `5`, `"5"`, `"=5"` | the number 5 (and text that reads as 5) |
+| `">2"`, `">=2"`, `"<2"`, `"<=2"`, `"<>2"` | numbers by comparison; `"<>2"` also matches every non-number |
+| `"a"`, `"=a"` | text equal to `a`, ignoring case |
+| `"a*"`, `"a?c"`, `"~*"` | wildcards: `*` any run, `?` one character, `~` escapes `*`, `?` or `~` |
+| `"<>a"` | everything except text equal to `a` |
+| `">b"` | text after `b` (ignoring case) |
+| `"TRUE"`, `"FALSE"` | booleans |
+| `""`, `"="` | blanks (`NULL` or `""`); `"<>"` matches everything else |
+| `:x > 2` (lambda) | items for which the expression is TRUE. It must return a boolean (`NULL` counts as FALSE); any other result is an error |
+
 ```bash
-# Lambda-style (existing)
-SUMIF([1, -2, 3, -4], :x > 0)      # 4
+COUNTIF([1, 2, 3, 4], ">2")                       # 2
+COUNTIF([1, 2, 3], 2)                             # 1
+COUNTIF(["A", "b", "a"], "a")                     # 2 (case-insensitive)
+COUNTIF(["apple", "Avocado", "kiwi"], "a*")       # 2
+COUNTIF(5, ">2")                                  # 1 (a single value is a one-item range)
+COUNTIF([1, 2, 3, 4], :x % 2 == 0)                # 2 (lambda)
+COUNTIF([1, 2, 3], :x)                            # Error: COUNTIF criteria expression must return TRUE or FALSE, got number
 
-# Excel-style criteria
-SUMIF([10, 20, 30, 40], ">25")     # 70
-SUMIF([10, 20, 30, 40], "=20")     # 20
-SUMIF([10, 20, 30, 40], "<>20")    # 80
-SUMIF([10, 20, 30, 40], ">=20")    # 90
-SUMIF([10, 20, 30, 40], "<=20")    # 30
+SUMIF([1, -2, 3, -4], :x > 0)                     # 4
+SUMIF([10, 20, 30, 40], ">25")                    # 70
+SUMIF([10, 20, 30, 40], "<>20")                   # 80
+SUMIF([10, 30, 50], ">20", [1, 2, 3])             # 5 (sums 2+3)
+SUMIF(["apple", "avocado", "kiwi"], "a*", [1, 2, 4])  # 3
 
-# With separate sum array
-SUMIF([10, 30, 50], ">20", [1, 2, 3])  # 5 (sums 2+3)
-```
-
-#### `AVGIF(array, condition)`
-Conditional average.
-```bash
-AVGIF([1, 3, 5, -1], :x > 0)       # 3.0
-```
-
-#### `COUNTIF(array, condition)`
-Conditional count.
-```bash
-COUNTIF([1,2,3,4], :x % 2 == 0)    # 2
+AVERAGEIF([1, 2, 3, 4], ">2")                     # 3.5
+AVGIF([1, 3, 5, -1], :x > 0)                      # 3.0
+AVERAGEIF([1, 2], ">5")                           # Error: AVERAGEIF: no matching numbers (#DIV/0!)
 ```
 
 #### `BETWEEN(min, max, value)`

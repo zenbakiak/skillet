@@ -274,9 +274,9 @@ fn legacy_statistical_names_match_their_inc_and_sngl_forms() {
     }
     assert_eq!(
         err("=PERCENTILE([1, 2], 1.5)"),
-        "Percentile must be between 0 and 1"
+        "Percentile must be between 0 and 1 (#NUM!)"
     );
-    assert_eq!(err("=QUARTILE([1, 2], 5)"), "Quartile must be 0-4");
+    assert_eq!(err("=QUARTILE([1, 2], 5)"), "Quartile must be 0-4 (#NUM!)");
 }
 
 // ---- FIND on text (D-6) --------------------------------------------------------------------
@@ -402,6 +402,15 @@ fn date_plus_and_minus_days() {
     assert_eq!(
         date("=DATE(2026, 1, 1) + 1 / 86400 * 0.6"),
         ymd(2026, 1, 1) + 1
+    );
+}
+
+/// TIME is a fraction of a day (ADR-0018), so it adds to a date like Excel's `DATE + TIME`.
+#[test]
+fn date_plus_time_is_time_of_day() {
+    assert_eq!(
+        date("=DATE(2026, 1, 1) + TIME(12, 0, 0)"),
+        ymd(2026, 1, 1) + 43_200
     );
 }
 

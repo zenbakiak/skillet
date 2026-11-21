@@ -169,23 +169,7 @@ pub(crate) fn split_charged<'s>(parts: impl Iterator<Item = &'s str>) -> Result<
 
 pub fn exec_string(name: &str, args: &[Value]) -> Result<Value, Error> {
     match name {
-        "SUBSTITUTE" => {
-            // SUBSTITUTE(text, substr, replacement)
-            match (args.first(), args.get(1), args.get(2)) {
-                (
-                    Some(Value::String(text)),
-                    Some(Value::String(substr)),
-                    Some(Value::String(repl)),
-                ) => {
-                    limits::charge_replace(text, substr, repl)?;
-                    Ok(Value::String(text.replace(substr, repl)))
-                }
-                _ => Err(Error::new(
-                    "SUBSTITUTE expects (text: string, substr: string, replacement: string)",
-                    None,
-                )),
-            }
-        }
+        "SUBSTITUTE" => substitute(args),
         "SUBSTITUTEM" => {
             // SUBSTITUTEM(text, substr, replacement) - replace all occurrences (alias of SUBSTITUTE)
             match (args.first(), args.get(1), args.get(2)) {
@@ -320,8 +304,16 @@ pub fn exec_string(name: &str, args: &[Value]) -> Result<Value, Error> {
             Some(Value::String(s)) => Ok(Value::String(s.to_lowercase())),
             _ => Err(Error::new("LOWER expects string", None)),
         },
+        // Excel TRIM: drop leading and trailing spaces and collapse inner runs of spaces to one.
+        // Only the space character (U+0020) counts, as in Excel. The `.trim()` method keeps
+        // Ruby semantics (all whitespace at both ends, inner runs kept).
         "TRIM" => match args.first() {
-            Some(Value::String(s)) => Ok(Value::String(s.trim().to_string())),
+            Some(Value::String(s)) => Ok(Value::String(
+                s.split(' ')
+                    .filter(|w| !w.is_empty())
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            )),
             _ => Err(Error::new("TRIM expects string", None)),
         },
         "SUBSTRING" => {
@@ -487,5 +479,55 @@ pub fn exec_string(name: &str, args: &[Value]) -> Result<Value, Error> {
             format!("Unknown string function: {}", name),
             None,
         )),
+    }
+}
+
+/// Excel `SUBSTITUTE(text, old_text, new_text, [instance_num])`: replace every occurrence, or
+/// only the `instance_num`-th (1-based, truncated). An empty `old_text` leaves the text unchanged.
+fn substitute(args: &[Value]) -> Result<Value, Error> {
+    let (text, old, new) = match (args.first(), args.get(1), args.get(2), args.len()) {
+        (Some(Value::String(t)), Some(Value::String(o)), Some(Value::String(n)), 3 | 4) => {
+            (t, o, n)
+        }
+        _ => {
+            return Err(Error::new(
+                "SUBSTITUTE expects (text: string, old_text: string, new_text: string, [instance_num: number])",
+                None,
+            ))
+        }
+    };
+    let instance = match args.get(3) {
+        None => None,
+        Some(Value::Number(n)) if *n >= 1.0 => Some(n.trunc()),
+        Some(_) => {
+            return Err(Error::new(
+                "SUBSTITUTE instance_num must be a number >= 1 (#VALUE!)",
+                None,
+            ))
+        }
+    };
+    if old.is_empty() {
+        return Ok(Value::String(text.clone()));
+    }
+    match instance {
+        None => {
+            limits::charge_replace(text, old, new)?;
+            Ok(Value::String(text.replace(old.as_str(), new)))
+        }
+        Some(k) => {
+            let hit = text
+                .match_indices(old.as_str())
+                .nth((k as usize).saturating_sub(1));
+            Ok(Value::String(match hit {
+                Some((at, _)) => {
+                    let mut out = String::with_capacity(text.len() + new.len());
+                    out.push_str(&text[..at]);
+                    out.push_str(new);
+                    out.push_str(&text[at + old.len()..]);
+                    out
+                }
+                None => text.clone(),
+            }))
+        }
     }
 }

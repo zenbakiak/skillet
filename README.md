@@ -245,7 +245,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ## Language Features (MVP)
 
 - Numbers, booleans (`TRUE`/`FALSE`), strings ('...' or "..."), `NULL`
-- Operators: `+ - * / % ^`, `> < >= <= == !=`, `AND/OR/NOT` (also `&&/||/!`), ternary `? :`
+- Operators: `+ - * / % ^`, percent suffix `10%`, text join `&`, `> < >= <= == !=`, `AND/OR/NOT` (also `&&/||/!`), ternary `? :`; Excel precedence (`-2^2` = 4, `2^3^2` = 64)
 - Variables: `:name` (provided via `evaluate_with` map)
 - Functions (subset):
   - Math: `SUM`, `AVG/AVERAGE`, `MIN`, `MAX`, `ROUND`, `CEIL`, `FLOOR`, `ABS`, `SQRT`, `POW`
@@ -254,7 +254,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
   - JSON: `DIG(json, path_array, [default])`, `JQ(json_data, jsonpath_expression)`
   - Logic: `ISBLANK`
   - Functional: `FILTER(array, expr, [param])`, `MAP(array, expr, [param])`, `REDUCE(array, expr, initial, [valParam], [accParam])`
-  - Conditional aggregations: `SUMIF(array, expr)`, `AVGIF(array, expr)`, `COUNTIF(array, expr)`
+  - Conditional aggregations: `SUMIF`, `AVERAGEIF` (alias `AVGIF`), `COUNTIF` with Excel criteria (`">2"`, `"a*"`) or a lambda
 - Methods (subset): chaining with `.` and predicates `?`
   - Numbers: `.abs() .round(n) .floor() .ceil()`; predicates `.positive? .negative? .zero? .even? .odd? .numeric?`
   - Arrays: `.length() .size() .first() .last() .sum() .avg() .min() .max() .sort() .unique() .reverse() .compact() .flatten()`
@@ -318,7 +318,7 @@ Scripts:
 - Date/Time: `NOW`, `DATE`, `TIME`, `YEAR`, `MONTH`, `DAY`, `DATEADD`, `DATEDIFF`
 - Financial: `PMT`, `DB`, `FV`, `IPMT`
 - Statistical: `MEDIAN`, `MODE.SNGL` (`MODESNGL`, `MODE_SNGL`), `STDEV.P` (`STDEVP`, `STDEV_P`), `VAR.P` (`VARP`, `VAR_P`), `PERCENTILE.INC` (`PERCENTILEINC`, `PERCENTILE_INC`), `QUARTILE.INC` (`QUARTILEINC`, `QUARTILE_INC`)
-- Functional: `FILTER(array, expr, [param])`, `MAP(array, expr, [param])`, `REDUCE(array, expr, initial, [valParam], [accParam])`, `SUMIF(array, expr_or_criteria [, sum_array])`, `AVGIF(array, expr)`, `COUNTIF(array, expr)`
+- Functional: `FILTER(array, expr, [param])`, `MAP(array, expr, [param])`, `REDUCE(array, expr, initial, [valParam], [accParam])`, `SUMIF(range, criteria, [sum_range])`, `AVERAGEIF(range, criteria, [average_range])`, `COUNTIF(range, criteria)`
 
 ## API Surface (Rust)
 
