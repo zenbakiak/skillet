@@ -73,15 +73,14 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Run `f` one recursion level deeper, failing once `MAX_NESTING_DEPTH` is exceeded.
-    fn nested(&mut self, f: impl FnOnce(&mut Self) -> Parsed) -> Parsed {
+    /// Go one recursion level deeper, failing once `MAX_NESTING_DEPTH` is exceeded. The
+    /// caller decrements `nesting` when it returns.
+    fn enter(&mut self) -> Result<(), Error> {
         if self.nesting >= MAX_NESTING_DEPTH {
             return Err(nesting_error(Some(self.look_pos)));
         }
         self.nesting += 1;
-        let result = f(self);
-        self.nesting -= 1;
-        result
+        Ok(())
     }
 
     pub fn parse(&mut self) -> Result<Expr, Error> {
@@ -116,150 +115,111 @@ impl<'a> Parser<'a> {
         }
     }
 
+    // Stack use (BL-029): every nesting level of the input runs the functions on the path
+    // parse_expr -> parse_assignment -> parse_ternary -> parse_binary -> parse_unary ->
+    // parse_power -> parse_atom -> (parse_paren | literal | call) -> parse_expr. Keep those
+    // frames small: the branches a level does not always take live in `#[inline(never)]`
+    // helpers, so their locals are not reserved on every level (debug builds give every
+    // local its own stack slot).
+
     /// A nested expression (inside parentheses, brackets, arguments, ternary branches).
     fn parse_expr(&mut self) -> Parsed {
-        self.nested(|p| p.parse_assignment())
+        self.enter()?;
+        let result = self.parse_assignment();
+        self.nesting -= 1;
+        result
     }
 
     fn parse_assignment(&mut self) -> Parsed {
         // Check for assignment pattern: :variable_name := expression
-        if matches!(self.lookahead, Token::Colon) {
-            // Look ahead to see if this is an assignment - use efficient 2-token lookahead
-            let (next1, next2) = self.peek_ahead2()?;
-
-            if matches!((next1, next2), (Token::Identifier(_), Token::ColonEquals)) {
-                // This is an assignment
-                self.bump()?; // consume ':'
-                if let Token::Identifier(var_name) = &self.lookahead.clone() {
-                    let var_name = var_name.clone();
-                    self.bump()?; // consume identifier
-                    if matches!(self.lookahead, Token::ColonEquals) {
-                        self.bump()?; // consume ':='
-                        let (value, d) = self.parse_ternary()?;
-                        let depth = self.node_depth(Some(d))?;
-                        return Ok((
-                            Expr::Assignment {
-                                variable: var_name,
-                                value: Rc::new(value),
-                            },
-                            depth,
-                        ));
-                    }
-                }
-                return self.err_here("Invalid assignment syntax");
-            }
+        if matches!(self.lookahead, Token::Colon) && self.at_assignment()? {
+            return self.parse_assignment_tail();
         }
-
         self.parse_ternary()
     }
 
-    fn parse_ternary(&mut self) -> Parsed {
-        let (cond, dc) = self.parse_or()?;
-        if let Token::QMark = self.lookahead {
-            self.bump()?; // '?'
-            let (then_e, dt) = self.parse_expr()?;
-            match self.lookahead {
-                Token::Colon => {
-                    self.bump()?;
-                    let (else_e, de) = self.parse_expr()?;
-                    let depth = self.node_depth(Some(dc.max(dt).max(de)))?;
-                    // Ternary is encoded as a special function call handled in the runtime.
-                    Ok((
-                        Expr::FunctionCall {
-                            name: "__TERNARY__".to_string(),
-                            args: vec![cond, then_e, else_e],
-                        },
-                        depth,
-                    ))
-                }
-                _ => self.err_here("Expected ':' in ternary"),
+    /// True when the tokens after the current `:` are `identifier :=`.
+    #[inline(never)]
+    fn at_assignment(&mut self) -> Result<bool, Error> {
+        // Look ahead to see if this is an assignment - use efficient 2-token lookahead
+        let (next1, next2) = self.peek_ahead2()?;
+        Ok(matches!(
+            (next1, next2),
+            (Token::Identifier(_), Token::ColonEquals)
+        ))
+    }
+
+    /// `:name := value`, starting at the `:`.
+    #[inline(never)]
+    fn parse_assignment_tail(&mut self) -> Parsed {
+        self.bump()?; // consume ':'
+        if let Token::Identifier(var_name) = &self.lookahead.clone() {
+            let var_name = var_name.clone();
+            self.bump()?; // consume identifier
+            if matches!(self.lookahead, Token::ColonEquals) {
+                self.bump()?; // consume ':='
+                let (value, d) = self.parse_ternary()?;
+                let depth = self.node_depth(Some(d))?;
+                return Ok((
+                    Expr::Assignment {
+                        variable: var_name,
+                        value: Rc::new(value),
+                    },
+                    depth,
+                ));
             }
-        } else {
-            Ok((cond, dc))
+        }
+        self.err_here("Invalid assignment syntax")
+    }
+
+    fn parse_ternary(&mut self) -> Parsed {
+        let cond = self.parse_binary(0)?;
+        if let Token::QMark = self.lookahead {
+            return self.parse_ternary_tail(cond);
+        }
+        Ok(cond)
+    }
+
+    /// `? then : else` after an already parsed condition.
+    #[inline(never)]
+    fn parse_ternary_tail(&mut self, (cond, dc): (Expr, usize)) -> Parsed {
+        self.bump()?; // '?'
+        let (then_e, dt) = self.parse_expr()?;
+        match self.lookahead {
+            Token::Colon => {
+                self.bump()?;
+                let (else_e, de) = self.parse_expr()?;
+                let depth = self.node_depth(Some(dc.max(dt).max(de)))?;
+                // Ternary is encoded as a special function call handled in the runtime.
+                Ok((
+                    Expr::FunctionCall {
+                        name: "__TERNARY__".to_string(),
+                        args: vec![cond, then_e, else_e],
+                    },
+                    depth,
+                ))
+            }
+            _ => self.err_here("Expected ':' in ternary"),
         }
     }
 
-    /// Left-associative binary level: `next (op next)*`. Each iteration wraps the tree one
-    /// level deeper, so the chain length counts against the depth limit.
-    fn parse_binary_level(
-        &mut self,
-        next: fn(&mut Self) -> Parsed,
-        op_for: fn(&Token) -> Option<BinaryOp>,
-    ) -> Parsed {
-        let (mut node, mut depth) = next(self)?;
-        while let Some(op) = op_for(&self.lookahead) {
+    /// Left-associative binary operators by precedence climbing, loosest first:
+    /// `or` (1), `and` (2), `== !=` (3), `> < >= <=` (4), `+ -` (5), `* / %` (6).
+    /// Builds the same tree, in the same order, as one function per level would, but
+    /// with one frame instead of two per level on the path to an operand. Each operator
+    /// wraps the tree one level deeper, so chain length counts against the depth limit.
+    fn parse_binary(&mut self, min_prec: u8) -> Parsed {
+        let (mut node, mut depth) = self.parse_unary()?;
+        while let Some((op, prec)) = binary_op(&self.lookahead) {
+            if prec < min_prec {
+                break;
+            }
             self.bump()?;
-            let (rhs, dr) = next(self)?;
+            let (rhs, dr) = self.parse_binary(prec + 1)?;
             depth = self.node_depth(Some(depth.max(dr)))?;
             node = Expr::Binary(Rc::new(node), op, Rc::new(rhs));
         }
         Ok((node, depth))
-    }
-
-    fn parse_or(&mut self) -> Parsed {
-        self.parse_binary_level(Self::parse_and, |t| match t {
-            Token::Or | Token::OrOr => Some(BinaryOp::Or),
-            _ => None,
-        })
-    }
-
-    fn parse_and(&mut self) -> Parsed {
-        self.parse_binary_level(Self::parse_equality, |t| match t {
-            Token::And | Token::AndAnd => Some(BinaryOp::And),
-            _ => None,
-        })
-    }
-
-    fn parse_equality(&mut self) -> Parsed {
-        self.parse_binary_level(Self::parse_relational, |t| match t {
-            Token::EqEq => Some(BinaryOp::Eq),
-            Token::NotEq => Some(BinaryOp::Ne),
-            _ => None,
-        })
-    }
-
-    fn parse_relational(&mut self) -> Parsed {
-        self.parse_binary_level(Self::parse_additive, |t| match t {
-            Token::Greater => Some(BinaryOp::Gt),
-            Token::Less => Some(BinaryOp::Lt),
-            Token::Ge => Some(BinaryOp::Ge),
-            Token::Le => Some(BinaryOp::Le),
-            _ => None,
-        })
-    }
-
-    fn parse_additive(&mut self) -> Parsed {
-        self.parse_binary_level(Self::parse_multiplicative, |t| match t {
-            Token::Plus => Some(BinaryOp::Add),
-            Token::Minus => Some(BinaryOp::Sub),
-            _ => None,
-        })
-    }
-
-    fn parse_multiplicative(&mut self) -> Parsed {
-        self.parse_binary_level(Self::parse_unary, |t| match t {
-            Token::Star => Some(BinaryOp::Mul),
-            Token::Slash => Some(BinaryOp::Div),
-            Token::Percent => Some(BinaryOp::Mod),
-            _ => None,
-        })
-    }
-
-    fn parse_power(&mut self) -> Parsed {
-        // Right associative with higher precedence than unary
-        let (left, dl) = self.parse_cast()?;
-        if let Token::Caret = self.lookahead {
-            self.bump()?;
-            // exponent can be unary like -2
-            let (right, dr) = self.nested(|p| p.parse_unary())?;
-            let depth = self.node_depth(Some(dl.max(dr)))?;
-            Ok((
-                Expr::Binary(Rc::new(left), BinaryOp::Pow, Rc::new(right)),
-                depth,
-            ))
-        } else {
-            Ok((left, dl))
-        }
     }
 
     fn parse_unary(&mut self) -> Parsed {
@@ -270,9 +230,60 @@ impl<'a> Parser<'a> {
             _ => return self.parse_power(),
         };
         self.bump()?;
-        let (expr, d) = self.nested(|p| p.parse_unary())?;
+        self.enter()?;
+        let operand = self.parse_unary();
+        self.nesting -= 1;
+        let (expr, d) = operand?;
         let depth = self.node_depth(Some(d))?;
         Ok((Expr::Unary(op, Rc::new(expr)), depth))
+    }
+
+    /// `atom postfix* (:: type)? (^ unary)?`: postfix chain, then an optional cast, then
+    /// the right-associative power operator (binds tighter than unary).
+    fn parse_power(&mut self) -> Parsed {
+        let atom = self.parse_atom()?;
+        match self.lookahead {
+            Token::Dot
+            | Token::SafeNavigation
+            | Token::LBracket
+            | Token::DoubleColon
+            | Token::Caret => self.parse_power_rest(atom),
+            _ => Ok(atom),
+        }
+    }
+
+    /// The optional parts of `parse_power` after the atom.
+    #[inline(never)]
+    fn parse_power_rest(&mut self, mut parsed: (Expr, usize)) -> Parsed {
+        if matches!(
+            self.lookahead,
+            Token::Dot | Token::SafeNavigation | Token::LBracket
+        ) {
+            parsed = self.parse_postfix_chain(parsed)?;
+        }
+        if let Token::DoubleColon = self.lookahead {
+            parsed = self.parse_cast_tail(parsed)?;
+        }
+        if let Token::Caret = self.lookahead {
+            return self.parse_power_tail(parsed);
+        }
+        Ok(parsed)
+    }
+
+    /// `^ exponent` after an already parsed base.
+    #[inline(never)]
+    fn parse_power_tail(&mut self, (left, dl): (Expr, usize)) -> Parsed {
+        self.bump()?;
+        // exponent can be unary like -2
+        self.enter()?;
+        let exponent = self.parse_unary();
+        self.nesting -= 1;
+        let (right, dr) = exponent?;
+        let depth = self.node_depth(Some(dl.max(dr)))?;
+        Ok((
+            Expr::Binary(Rc::new(left), BinaryOp::Pow, Rc::new(right)),
+            depth,
+        ))
     }
 
     /// Comma-separated arguments after an already consumed `(`, through the closing `)`.
@@ -283,9 +294,7 @@ impl<'a> Parser<'a> {
         if !matches!(self.lookahead, Token::RParen) {
             loop {
                 let (arg, d) = if let Token::Ellipsis = self.lookahead {
-                    self.bump()?;
-                    let (inner, d) = self.parse_expr()?;
-                    (Expr::Spread(Rc::new(inner)), self.node_depth(Some(d))?)
+                    self.parse_spread()?
                 } else {
                     self.parse_expr()?
                 };
@@ -304,22 +313,64 @@ impl<'a> Parser<'a> {
         Ok((args, max_child))
     }
 
+    /// `...expr` in an argument list.
+    #[inline(never)]
+    fn parse_spread(&mut self) -> Parsed {
+        self.bump()?;
+        let (inner, d) = self.parse_expr()?;
+        Ok((Expr::Spread(Rc::new(inner)), self.node_depth(Some(d))?))
+    }
+
     fn parse_atom(&mut self) -> Parsed {
+        match self.lookahead {
+            Token::LParen => self.parse_paren(),
+            Token::LBracket => self.parse_array_literal(),
+            Token::LBrace => self.parse_object_literal(),
+            Token::Identifier(_) => self.parse_function_call(),
+            _ => self.parse_leaf(),
+        }
+    }
+
+    /// `( expr )`
+    fn parse_paren(&mut self) -> Parsed {
+        self.bump()?;
+        let parsed = self.parse_expr()?;
+        match self.lookahead {
+            Token::RParen => {
+                self.bump()?;
+                Ok(parsed)
+            }
+            _ => self.err_here("Expected ')'"),
+        }
+    }
+
+    /// Function call: `IDENT '(' args? ')'`
+    #[inline(never)]
+    fn parse_function_call(&mut self) -> Parsed {
+        let name = match &self.lookahead {
+            Token::Identifier(name) => name.to_uppercase(),
+            _ => return self.parse_leaf(),
+        };
+        self.bump()?; // consume ident
+        match self.lookahead {
+            Token::LParen => {
+                self.bump()?; // '('
+                let (args, max_child) =
+                    self.parse_call_args("Expected ',' or ')' in argument list")?;
+                let depth = self.node_depth(max_child)?;
+                Ok((Expr::FunctionCall { name, args }, depth))
+            }
+            _ => self.err_here("Unexpected identifier (expected function call)"),
+        }
+    }
+
+    /// Atoms that do not nest: literals and variables (and the unexpected-token error).
+    #[inline(never)]
+    fn parse_leaf(&mut self) -> Parsed {
         match self.lookahead.clone() {
             Token::Number(n) => {
                 self.bump()?;
                 Ok((Expr::Number(n), 0))
-            }
-            Token::LParen => {
-                self.bump()?;
-                let parsed = self.parse_expr()?;
-                match self.lookahead {
-                    Token::RParen => {
-                        self.bump()?;
-                        Ok(parsed)
-                    }
-                    _ => self.err_here("Expected ')'"),
-                }
             }
             Token::String(s) => {
                 self.bump()?;
@@ -360,28 +411,6 @@ impl<'a> Parser<'a> {
                     0,
                 ))
             }
-            Token::Identifier(name) => {
-                // Function call: IDENT '(' args? ')'
-                self.bump()?; // consume ident
-                match self.lookahead {
-                    Token::LParen => {
-                        self.bump()?; // '('
-                        let (args, max_child) =
-                            self.parse_call_args("Expected ',' or ')' in argument list")?;
-                        let depth = self.node_depth(max_child)?;
-                        Ok((
-                            Expr::FunctionCall {
-                                name: name.to_uppercase(),
-                                args,
-                            },
-                            depth,
-                        ))
-                    }
-                    _ => self.err_here("Unexpected identifier (expected function call)"),
-                }
-            }
-            Token::LBracket => self.parse_array_literal(),
-            Token::LBrace => self.parse_object_literal(),
             other => Err(Error::new(
                 format!("Unexpected token: {:?}", other),
                 Some(self.look_pos),
@@ -461,43 +490,41 @@ impl<'a> Parser<'a> {
         Ok((Expr::ObjectLiteral(pairs), depth))
     }
 
-    fn parse_cast(&mut self) -> Parsed {
-        let (node, d) = self.parse_postfix()?;
-        if let Token::DoubleColon = self.lookahead {
-            self.bump()?; // '::'
-            let tname = match self.lookahead.clone() {
-                Token::Identifier(s) => {
-                    self.bump()?;
-                    match s.to_lowercase().as_str() {
-                        "integer" | "int" => TypeName::Integer,
-                        "float" | "number" => TypeName::Float,
-                        "string" => TypeName::String,
-                        "boolean" | "bool" => TypeName::Boolean,
-                        "array" => TypeName::Array,
-                        "currency" => TypeName::Currency,
-                        "datetime" | "date" => TypeName::DateTime,
-                        "json" => TypeName::Json,
-                        _ => return Err(Error::new("Unknown cast type", None)),
-                    }
+    /// `:: type` after an already parsed operand.
+    #[inline(never)]
+    fn parse_cast_tail(&mut self, (node, d): (Expr, usize)) -> Parsed {
+        self.bump()?; // '::'
+        let tname = match self.lookahead.clone() {
+            Token::Identifier(s) => {
+                self.bump()?;
+                match s.to_lowercase().as_str() {
+                    "integer" | "int" => TypeName::Integer,
+                    "float" | "number" => TypeName::Float,
+                    "string" => TypeName::String,
+                    "boolean" | "bool" => TypeName::Boolean,
+                    "array" => TypeName::Array,
+                    "currency" => TypeName::Currency,
+                    "datetime" | "date" => TypeName::DateTime,
+                    "json" => TypeName::Json,
+                    _ => return Err(Error::new("Unknown cast type", None)),
                 }
-                _ => return Err(Error::new("Expected type name after '::'", None)),
-            };
-            let depth = self.node_depth(Some(d))?;
-            return Ok((
-                Expr::TypeCast {
-                    expr: Rc::new(node),
-                    ty: tname,
-                },
-                depth,
-            ));
-        }
-        Ok((node, d))
+            }
+            _ => return Err(Error::new("Expected type name after '::'", None)),
+        };
+        let depth = self.node_depth(Some(d))?;
+        Ok((
+            Expr::TypeCast {
+                expr: Rc::new(node),
+                ty: tname,
+            },
+            depth,
+        ))
     }
 
     /// Postfix chain: `.name`, `.name?`, `.name(args)`, `&.name`, `&.name(args)`, `[i]`,
     /// `[a:b]`. Each link wraps the tree one level deeper and counts against the limit.
-    fn parse_postfix(&mut self) -> Parsed {
-        let (mut node, mut depth) = self.parse_atom()?;
+    #[inline(never)]
+    fn parse_postfix_chain(&mut self, (mut node, mut depth): (Expr, usize)) -> Parsed {
         loop {
             let (next, max_child) = match self.lookahead {
                 Token::Dot => self.parse_dot_suffix(node, depth)?,
@@ -636,6 +663,26 @@ impl<'a> Parser<'a> {
         };
         Ok((node, max_child))
     }
+}
+
+/// Binary operator and precedence (higher binds tighter) for a token, if it is one.
+fn binary_op(tok: &Token) -> Option<(BinaryOp, u8)> {
+    Some(match tok {
+        Token::Or | Token::OrOr => (BinaryOp::Or, 1),
+        Token::And | Token::AndAnd => (BinaryOp::And, 2),
+        Token::EqEq => (BinaryOp::Eq, 3),
+        Token::NotEq => (BinaryOp::Ne, 3),
+        Token::Greater => (BinaryOp::Gt, 4),
+        Token::Less => (BinaryOp::Lt, 4),
+        Token::Ge => (BinaryOp::Ge, 4),
+        Token::Le => (BinaryOp::Le, 4),
+        Token::Plus => (BinaryOp::Add, 5),
+        Token::Minus => (BinaryOp::Sub, 5),
+        Token::Star => (BinaryOp::Mul, 6),
+        Token::Slash => (BinaryOp::Div, 6),
+        Token::Percent => (BinaryOp::Mod, 6),
+        _ => return None,
+    })
 }
 
 #[cfg(test)]

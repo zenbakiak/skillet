@@ -1,9 +1,14 @@
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::sync::{
-    atomic::{AtomicU64, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
     Arc,
 };
+
+/// `--no-cache`: every GET /eval carries a unique `bench_nonce` variable, so the server's
+/// expression cache (keyed by expression + variables) never hits.
+static NO_CACHE: AtomicBool = AtomicBool::new(false);
+static NONCE: AtomicU64 = AtomicU64::new(0);
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -52,6 +57,14 @@ fn main() {
     println!("  Concurrent connections: {}", config.concurrent);
     println!("  Requests per test: {}", config.requests);
     println!("  Warmup requests: {}", config.warmup);
+    println!(
+        "  Expression cache: {}",
+        if NO_CACHE.load(Ordering::Relaxed) {
+            "bypassed (--no-cache)"
+        } else {
+            "used"
+        }
+    );
     println!();
 
     // Check server health
@@ -124,6 +137,7 @@ fn parse_args(args: &[String]) -> Result<BenchConfig, String> {
                     return Err("--warmup requires a value".to_string());
                 }
             }
+            "--no-cache" => NO_CACHE.store(true, Ordering::Relaxed),
             _ => return Err(format!("Unknown argument: {}", args[i])),
         }
         i += 1;
@@ -139,6 +153,7 @@ fn print_usage() {
     println!("  -c, --concurrent <num>  Number of concurrent connections (default: 10)");
     println!("  -n, --requests <num>    Number of requests per test (default: 100)");
     println!("  -w, --warmup <num>      Number of warmup requests (default: 20)");
+    println!("  --no-cache              Add a unique variable per request (always a cache miss)");
     println!();
     println!("Examples:");
     println!("  sk_http_bench 127.0.0.1:8080");
@@ -449,7 +464,11 @@ fn run_concurrent_benchmark(
 }
 
 fn make_eval_request(host: &str, port: u16, expression: &str) -> Result<String, std::io::Error> {
-    let encoded_expr = url_encode(expression);
+    let mut encoded_expr = url_encode(expression);
+    if NO_CACHE.load(Ordering::Relaxed) {
+        let n = NONCE.fetch_add(1, Ordering::Relaxed);
+        encoded_expr.push_str(&format!("&bench_nonce={}", n));
+    }
     let request = format!(
         "GET /eval?expr={} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
         encoded_expr, host
