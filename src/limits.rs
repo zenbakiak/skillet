@@ -169,33 +169,45 @@ pub(crate) fn evaluation<R>(f: impl FnOnce() -> Result<R, Error>) -> Result<R, E
 /// `u64::MAX` and there is no deadline; `used` is reset when the next outermost scope opens).
 #[inline]
 pub(crate) fn charge(bytes: u64) -> Result<(), Error> {
-    let fast = BUDGET.with(|b| {
-        let used = b.used.get().saturating_add(bytes);
-        b.used.set(used);
-        let ticks = b.ticks.get().wrapping_add(1);
-        b.ticks.set(ticks);
-        used <= b.max.get() && ticks % TICKS_PER_CLOCK_READ != 0
-    });
-    if fast {
+    if charge_fast(bytes) {
         Ok(())
     } else {
         charge_slow()
     }
 }
 
+/// Out of line on purpose: here `LocalKey::with` inlines, so a charge from the large `eval`
+/// match is one call plus the thread-local lookup, not three nested calls.
+#[inline(never)]
+fn charge_fast(bytes: u64) -> bool {
+    BUDGET.with(|b| b.add(bytes))
+}
+
 /// Over budget, or time to read the clock.
 #[cold]
 #[inline(never)]
 fn charge_slow() -> Result<(), Error> {
-    BUDGET.with(|b| {
-        if b.used.get() > b.max.get() {
-            return Err(b.trip(Trip::Budget));
-        }
-        match b.deadline.get() {
-            Some(deadline) if Instant::now() >= deadline => Err(b.trip(Trip::Timeout)),
-            _ => Ok(()),
-        }
-    })
+    BUDGET.with(Budget::slow)
+}
+
+/// This thread's budget, borrowed for a loop that charges once per item (lambda methods), so
+/// each item costs a few inline instructions instead of a thread-local lookup. Charges made
+/// through it are the same charges, in the same order, as the free functions make.
+#[derive(Clone, Copy)]
+pub(crate) struct Meter<'a>(&'a Budget);
+
+/// Run `f` with a [`Meter`] on this thread's budget.
+#[inline]
+pub(crate) fn with_meter<R>(f: impl FnOnce(Meter<'_>) -> R) -> R {
+    BUDGET.with(|b| f(Meter(b)))
+}
+
+impl Meter<'_> {
+    /// Same as [`charge_value`].
+    #[inline]
+    pub(crate) fn charge_value(self, value: &Value) -> Result<(), Error> {
+        self.0.charge_value(value)
+    }
 }
 
 /// True when the active scope has a deadline that has passed (for BL-018's QuickJS interrupt).
@@ -212,27 +224,41 @@ pub(crate) fn charge_value(value: &Value) -> Result<(), Error> {
         Value::String(s) | Value::Json(s) => return charge_string(s.len()),
         _ => return charge(VALUE_COST),
     }
-    let Value::Array(items) = value else {
-        unreachable!("scalars returned above")
-    };
-    let cap = remaining();
-    let mut cost = VALUE_COST;
-    match walk_items(items, usize::MAX, &mut cost, cap) {
-        Walk::Ok => charge(cost),
-        _ => charge(cost.max(cap.saturating_add(1))),
-    }
+    BUDGET.with(|b| b.charge_value(value))
 }
 
 /// Pre-charge a parse of the JSON text `s`: `len + 32 × (1 + count of , : [ {)`, a one-pass
 /// upper bound on the nodes `serde_json::from_str` builds.
 pub(crate) fn charge_json_parse(s: &str) -> Result<(), Error> {
-    // Table lookup + sum vectorizes; `filter(matches!).count()` does not.
-    let nodes = 1 + s
-        .as_bytes()
-        .iter()
-        .map(|&c| u64::from(NODE_BYTE[c as usize]))
-        .sum::<u64>();
+    let nodes = 1 + count_node_bytes(s.as_bytes());
     charge((s.len() as u64).saturating_add(VALUE_COST.saturating_mul(nodes)))
+}
+
+/// Count of the bytes in [`NODE_BYTE`]: 8 bytes per step as one `u64` (SWAR), the remaining
+/// 0–7 bytes by table lookup.
+fn count_node_bytes(bytes: &[u8]) -> u64 {
+    let mut words = bytes.chunks_exact(8);
+    let mut total = 0u64;
+    for w in words.by_ref() {
+        total += node_bytes_in_word(u64::from_le_bytes(w.try_into().expect("8 bytes")));
+    }
+    let tail = words.remainder().iter();
+    total + tail.map(|&c| u64::from(NODE_BYTE[c as usize])).sum::<u64>()
+}
+
+/// Number of bytes of `w` equal to `,` `:` `[` or `{`. `[` is `{` without bit 5, so
+/// `w | 0x20…` turns both into `{`. `nonzero` sets the high bit of each byte that is not 0,
+/// exactly (no carries cross bytes), so a byte matches when one of the XORs leaves it 0.
+#[inline(always)]
+fn node_bytes_in_word(w: u64) -> u64 {
+    const ONES: u64 = 0x0101_0101_0101_0101;
+    const LOW7: u64 = 0x7f7f_7f7f_7f7f_7f7f;
+    let nonzero = |x: u64| ((x & LOW7) + LOW7) | x;
+    let comma = nonzero(w ^ (ONES * u64::from(b',')));
+    let colon = nonzero(w ^ (ONES * u64::from(b':')));
+    let open = nonzero((w | (ONES * 0x20)) ^ (ONES * u64::from(b'{')));
+    let hits = !(comma & colon & open) & !LOW7;
+    (hits >> 7).wrapping_mul(ONES) >> 56
 }
 
 /// 1 for the bytes that start or separate JSON nodes: `,` `:` `[` `{`.
@@ -384,22 +410,32 @@ impl std::io::Write for ByteCounter {
 /// property access, casts), so deep values built from a flat AST — e.g.
 /// `[1, …].reduce([:acc], 0)` — fail before their recursive `Drop`/`Clone`/`Debug` can
 /// overflow the stack, and doubling patterns fail before they exhaust memory.
-#[inline]
+#[inline(always)]
 pub(crate) fn check_value(value: Value) -> Result<Value, Error> {
-    // Scalars and strings: no walk, one charge.
-    match &value {
-        Value::Array(_) => {}
-        Value::String(s) | Value::Json(s) => {
-            charge_string(s.len())?;
-            return Ok(value);
-        }
-        _ => {
-            charge(VALUE_COST)?;
-            return Ok(value);
-        }
+    // Scalars and strings: no walk, one charge, decided in one out-of-line call.
+    match charge_scalar(&value) {
+        Some(true) => Ok(value),
+        Some(false) => charge_slow().map(|()| value),
+        None => check_array(value),
     }
+}
+
+/// The charge of a non-array value (32, plus the length of a string): `Some(true)` when done,
+/// `Some(false)` when charged but the slow path must run, `None` for an array (not charged).
+#[inline(never)]
+fn charge_scalar(value: &Value) -> Option<bool> {
+    let bytes = match value {
+        Value::Array(_) => return None,
+        Value::String(s) | Value::Json(s) => VALUE_COST.saturating_add(s.len() as u64),
+        _ => VALUE_COST,
+    };
+    Some(BUDGET.with(|b| b.add(bytes)))
+}
+
+#[inline(never)]
+fn check_array(value: Value) -> Result<Value, Error> {
     let Value::Array(items) = &value else {
-        unreachable!("scalars returned above")
+        unreachable!("only arrays reach check_array")
     };
     let cap = remaining();
     let mut cost = VALUE_COST;
@@ -421,13 +457,7 @@ pub(crate) fn nesting_error(position: Option<usize>) -> Error {
 
 /// Bytes left in the active budget (`u64::MAX` outside any scope).
 fn remaining() -> u64 {
-    BUDGET.with(|b| {
-        if b.active.get() {
-            b.max.get().saturating_sub(b.used.get())
-        } else {
-            u64::MAX
-        }
-    })
+    BUDGET.with(Budget::remaining)
 }
 
 enum Walk {
@@ -559,6 +589,68 @@ impl Drop for Restore {
 }
 
 impl Budget {
+    /// The fast path of every charge: count `bytes` and the tick; false when the slow path
+    /// must run (over budget, or every [`TICKS_PER_CLOCK_READ`]th tick, to read the clock).
+    #[inline(always)]
+    fn add(&self, bytes: u64) -> bool {
+        let used = self.used.get().saturating_add(bytes);
+        self.used.set(used);
+        let ticks = self.ticks.get().wrapping_add(1);
+        self.ticks.set(ticks);
+        used <= self.max.get() && ticks % TICKS_PER_CLOCK_READ != 0
+    }
+
+    #[inline(always)]
+    fn charge(&self, bytes: u64) -> Result<(), Error> {
+        if self.add(bytes) {
+            Ok(())
+        } else {
+            self.slow()
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn slow(&self) -> Result<(), Error> {
+        if self.used.get() > self.max.get() {
+            return Err(self.trip(Trip::Budget));
+        }
+        match self.deadline.get() {
+            Some(deadline) if Instant::now() >= deadline => Err(self.trip(Trip::Timeout)),
+            _ => Ok(()),
+        }
+    }
+
+    fn remaining(&self) -> u64 {
+        if self.active.get() {
+            self.max.get().saturating_sub(self.used.get())
+        } else {
+            u64::MAX
+        }
+    }
+
+    /// See [`charge_value`]: scalars inline, arrays walked out of line.
+    #[inline(always)]
+    fn charge_value(&self, value: &Value) -> Result<(), Error> {
+        match value {
+            Value::Array(items) => self.charge_items(items),
+            Value::String(s) | Value::Json(s) => {
+                self.charge(VALUE_COST.saturating_add(s.len() as u64))
+            }
+            _ => self.charge(VALUE_COST),
+        }
+    }
+
+    #[inline(never)]
+    fn charge_items(&self, items: &[Value]) -> Result<(), Error> {
+        let cap = self.remaining();
+        let mut cost = VALUE_COST;
+        match walk_items(items, usize::MAX, &mut cost, cap) {
+            Walk::Ok => self.charge(cost),
+            _ => self.charge(cost.max(cap.saturating_add(1))),
+        }
+    }
+
     fn snapshot(&self) -> Saved {
         Saved {
             active: self.active.get(),
@@ -756,6 +848,26 @@ mod tests {
             assert_eq!(last.unwrap_err().message, "Evaluation timed out (max 1 ms)");
         });
         assert!(!deadline_passed());
+    }
+
+    #[test]
+    fn node_byte_count_matches_the_byte_set() {
+        let slow = |b: &[u8]| {
+            b.iter()
+                .filter(|&&c| matches!(c, b',' | b':' | b'[' | b'{'))
+                .count() as u64
+        };
+        let every_byte: Vec<u8> = (0..=255u8).cycle().take(256 * 3 + 7).collect();
+        let row = br#"{"a":[1,{"b":"c"}],"d":2}"#.repeat(3);
+        for len in 0..row.len() {
+            assert_eq!(
+                count_node_bytes(&row[..len]),
+                slow(&row[..len]),
+                "len {len}"
+            );
+        }
+        assert_eq!(count_node_bytes(&every_byte), slow(&every_byte));
+        assert_eq!(count_node_bytes(&[b'{'; 16 * 600 + 9]), 16 * 600 + 9);
     }
 
     #[test]

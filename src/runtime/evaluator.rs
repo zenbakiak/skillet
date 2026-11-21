@@ -289,6 +289,7 @@ impl Evaluator {
     /// (no copy, no charge), so `:s == :s` on a large string compares in place instead of
     /// cloning it twice. The borrowed read does not tick by itself: the operation that uses it
     /// does (the operator's tick, or the method/property result charge), one tick per use.
+    #[inline(always)]
     fn eval_operand<'c, C: EvaluationContext>(
         expr: &Expr,
         context: &'c C,
