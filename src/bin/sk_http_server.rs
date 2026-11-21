@@ -262,7 +262,8 @@ fn print_usage() {
     eprintln!("  -t, --threads <num>  Number of worker threads (default: CPU count)");
     eprintln!("  --pid-file <file>    Write PID to file (default: skillet-http-server.pid)");
     eprintln!("  --log-file <file>    Write logs to file (daemon mode only)");
-    eprintln!("  --token <value>      Require token for eval requests");
+    eprintln!("  --token <value>      Require token for eval requests (or set SKILLET_AUTH_TOKEN;");
+    eprintln!("                       the flag wins)");
     eprintln!("  --admin-token <val>  Require admin token for JS function management");
     eprintln!();
     eprintln!("Examples:");
@@ -366,6 +367,16 @@ fn parse_args(args: &[String]) -> (Option<String>, Option<String>, bool, String,
 
     // An empty token would match a request with no token, so auth would be off while the
     // banner says it is on (BL-048).
+    if auth_token.is_none() {
+        // Same as sk_server: the flag wins, the env var is the fallback.
+        if let Ok(env_token) = std::env::var("SKILLET_AUTH_TOKEN") {
+            if env_token.is_empty() {
+                eprintln!("Error: SKILLET_AUTH_TOKEN must not be empty; give a non-empty token or unset it");
+                std::process::exit(1);
+            }
+            auth_token = Some(env_token);
+        }
+    }
     for (flag, token) in [("--token", &auth_token), ("--admin-token", &admin_token)] {
         if token.as_deref() == Some("") {
             eprintln!("Error: {flag} must not be empty");

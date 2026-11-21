@@ -14,21 +14,32 @@ struct Server {
 
 impl Server {
     fn spawn(bin: &str, args: impl Fn(u16) -> Vec<String>) -> Server {
+        Server::spawn_with_env_token(bin, args, None)
+    }
+
+    /// Like `spawn`, with `SKILLET_AUTH_TOKEN` set to `env_token` (unset when `None`).
+    fn spawn_with_env_token(
+        bin: &str,
+        args: impl Fn(u16) -> Vec<String>,
+        env_token: Option<&str>,
+    ) -> Server {
         let port = std::net::TcpListener::bind("127.0.0.1:0")
             .unwrap()
             .local_addr()
             .unwrap()
             .port();
         let hooks = std::env::temp_dir().join("skillet-server-limits-no-hooks");
-        let child = std::process::Command::new(bin)
-            .args(args(port))
+        let mut cmd = std::process::Command::new(bin);
+        cmd.args(args(port))
             .env("SKILLET_HOOKS_DIR", hooks)
             .env("SKILLET_BIND_HOST", "127.0.0.1")
             .env_remove("SKILLET_AUTH_TOKEN")
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .expect("spawn server");
+            .stderr(std::process::Stdio::null());
+        if let Some(t) = env_token {
+            cmd.env("SKILLET_AUTH_TOKEN", t);
+        }
+        let child = cmd.spawn().expect("spawn server");
         for _ in 0..200 {
             if TcpStream::connect(("127.0.0.1", port)).is_ok() {
                 break;
@@ -550,4 +561,84 @@ fn bl048_servers_reject_empty_tokens() {
     assert!(err.contains("--token must not be empty"), "{err}");
     let err = refuses_to_start(http, &["--threads", "1", "--admin-token", ""], None);
     assert!(err.contains("--admin-token must not be empty"), "{err}");
+}
+
+// ---------------------------------------------------------------- SKILLET_AUTH_TOKEN
+
+/// `sk_http_server` reads `SKILLET_AUTH_TOKEN` like `sk_server` does: without `--token`, the
+/// env token is required on `/eval`.
+#[test]
+fn sk_http_server_enforces_the_env_token() {
+    let http = Server::spawn_with_env_token(
+        env!("CARGO_BIN_EXE_sk_http_server"),
+        |port| vec![port.to_string(), "--threads".into(), "1".into()],
+        Some("env-secret"),
+    );
+    let body = "{\"expression\":\"=2 + 3\"}";
+    for (auth, want) in [
+        ("", "HTTP/1.1 401"),
+        ("Authorization: Bearer wrong\r\n", "HTTP/1.1 401"),
+        ("Authorization: Bearer env-secret\r\n", "HTTP/1.1 200"),
+    ] {
+        let resp = http.post_with_headers(body, auth);
+        assert!(resp.starts_with(want), "{auth:?}: {}", head(&resp));
+    }
+}
+
+/// `--token` beats `SKILLET_AUTH_TOKEN`, as in `sk_server`.
+#[test]
+fn sk_http_server_token_flag_beats_the_env_token() {
+    let http = Server::spawn_with_env_token(
+        env!("CARGO_BIN_EXE_sk_http_server"),
+        |port| {
+            vec![
+                port.to_string(),
+                "--threads".into(),
+                "1".into(),
+                "--token".into(),
+                "flag-secret".into(),
+            ]
+        },
+        Some("env-secret"),
+    );
+    let body = "{\"expression\":\"=2 + 3\"}";
+    for (auth, want) in [
+        ("", "HTTP/1.1 401"),
+        ("Authorization: Bearer env-secret\r\n", "HTTP/1.1 401"),
+        ("Authorization: Bearer flag-secret\r\n", "HTTP/1.1 200"),
+    ] {
+        let resp = http.post_with_headers(body, auth);
+        assert!(resp.starts_with(want), "{auth:?}: {}", head(&resp));
+    }
+}
+
+/// An empty `SKILLET_AUTH_TOKEN` stops `sk_http_server` at start-up (BL-048), and a
+/// non-empty `--token` still wins over it.
+#[test]
+fn sk_http_server_rejects_an_empty_env_token() {
+    let http = env!("CARGO_BIN_EXE_sk_http_server");
+    let err = refuses_to_start(http, &["--threads", "1"], Some(""));
+    assert!(
+        err.contains("SKILLET_AUTH_TOKEN must not be empty"),
+        "{err}"
+    );
+
+    let server = Server::spawn_with_env_token(
+        http,
+        |port| {
+            vec![
+                port.to_string(),
+                "--threads".into(),
+                "1".into(),
+                "--token".into(),
+                "flag-secret".into(),
+            ]
+        },
+        Some(""),
+    );
+    let resp = server.post_with_headers(
+        "{\"expression\":\"=2 + 3\"}",
+        "Authorization: Bearer flag-secret\r\n",
+    );
+    assert!(resp.starts_with("HTTP/1.1 200"), "{}", head(&resp));
 }
