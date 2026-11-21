@@ -13,6 +13,7 @@ goes over a limit returns an ordinary `Error`; it never crashes the process or t
 | Request read time | 30 s for the whole request | both servers | HTTP 400 `408 Request Timeout` / `Request read timed out (max 30 s)` (`sk_server`) |
 | Response write | 10 s for the whole response | both servers | none (the response is cut short and the connection closed) |
 | Cache entry | 64 KiB | `sk_http_server` result cache | none (bigger results are just not cached) |
+| Parse cache | 256 expressions, 128 KiB of text, 32 KiB per expression, per worker thread | both servers | none (longer expressions are parsed on every request) |
 | JS plugin heap | 64 MiB per call | library, CLI, servers (`plugins` feature) | `JS function NAME ran out of memory (max 64 MB)` |
 | JS plugin time | 10 s per call, or the request deadline if sooner | library, CLI, servers (`plugins` feature) | `JS function NAME timed out (max 10 s)` / `Evaluation timed out (max 10 s)` |
 | JS plugin stack | 256 KiB | library, CLI, servers (`plugins` feature) | `JS function NAME failed: RangeError: Maximum call stack size exceeded` |
@@ -241,6 +242,15 @@ The 46 MB string fits the budget, but its escaped JSON (276 MB) does not.
 `sk_http_server` caches results in an LRU cache. An entry is stored only when its key, result and
 returned variables together cost at most 64 KiB (same cost model as the budget), so the cache stays
 small however big the results are. Errors, including budget and timeout errors, are never cached.
+
+### Parse cache
+
+Both servers also keep the parsed form of recent expressions, one cache per worker thread, keyed
+by the exact expression text: at most 256 expressions and 128 KiB of expression text per thread,
+and an expression longer than 32 KiB is not stored. A parsed expression takes 31-76 times the bytes
+of its text, so one worker holds at most ~10 MiB of parsed expressions. Parse errors, including the
+nesting-depth error, are never cached. Details: [servers](servers.md#parse-cache) and
+[ADR-0021](../adr/0021-parsed-expression-api-and-server-cache.md).
 
 ### Sizing a server
 

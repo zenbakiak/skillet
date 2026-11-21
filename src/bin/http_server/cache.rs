@@ -5,9 +5,11 @@ use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex};
 
 use skillet::{
-    evaluate_with_assignments, evaluate_with_assignments_and_context, with_limits, EvalLimits,
-    Value,
+    evaluate_parsed_with_assignments, evaluate_parsed_with_assignments_and_context,
+    evaluate_parsed_with_custom, with_limits, EvalLimits, Value,
 };
+
+use super::parse_cache::parsed;
 
 /// Wall-clock limit for one evaluation (ADR-0011): 6x the slowest realistic workload measured
 /// and well below the 30 s socket read timeout. No flag or env var on purpose.
@@ -165,17 +167,21 @@ pub fn evaluate_cached(
     let start_time = std::time::Instant::now();
 
     let (result, variable_context) = with_limits(server_limits(), || {
+        let expr = match parsed(expression) {
+            Ok(expr) => expr,
+            Err(e) => return (Err(e), None),
+        };
         if expression.contains(";") || expression.contains(":=") {
             if include_variables {
-                match evaluate_with_assignments_and_context(expression, variables) {
+                match evaluate_parsed_with_assignments_and_context(&expr, variables) {
                     Ok((val, ctx)) => (Ok(val), Some(ctx)),
                     Err(e) => (Err(e), None),
                 }
             } else {
-                (evaluate_with_assignments(expression, variables), None)
+                (evaluate_parsed_with_assignments(&expr, variables), None)
             }
         } else {
-            (skillet::evaluate_with_custom(expression, variables), None)
+            (evaluate_parsed_with_custom(&expr, variables), None)
         }
     });
 
