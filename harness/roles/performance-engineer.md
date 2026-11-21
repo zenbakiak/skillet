@@ -24,10 +24,9 @@ Rust Engineer with your profile attached.
 | Suspect | Where | Hypothesis |
 |---|---|---|
 | JSON re-parse on property access | `Value::Json(String)`, ADR-0004 | Dominates for `:obj.a.b` chains |
-| Scope `HashMap` clone per lambda item | `runtime/evaluator.rs` (higher-order builtins) | O(n·vars) allocs in `filter`/`map` |
-| String-set function dispatch | `runtime/function_dispatch.rs` | Hashing per call; a `match` or table is cheaper |
+| Builtin dispatch by name | `runtime/function_dispatch.rs` | One table since #58, still one `HashMap` lookup per call |
 | Re-parse per server request | servers, ADR-0002 | AST cache could help (BL-012) |
-| JS plugin load at CLI start | `sk` prints "Loaded N custom JavaScript function(s)" | QuickJS init on every CLI call |
+| CLI start-up (~2 ms above process start) | `sk` before `main` | Not QuickJS: it starts only when an expression calls a hook (BL-040). Loading CoreFoundation before `main` (BL-055) |
 
 ## First task
 BL-005: build the baseline set (10 representative expressions) and publish `benches/BASELINE.md`.
