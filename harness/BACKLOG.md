@@ -225,7 +225,7 @@ Review (orchestrator, 2026-11-20): accepted. fmt commit verified as pure `cargo 
   on parent, identical tree); 239 tests pass before and after; clippy 92 → 0; strict gate default.
   Follow-ups: BL-025 (bins without plugins), BL-026 (PERCENTILE NaN). `style` type added to ADR-0009 hook.
 
-### BL-004 · CI parity with the harness gate · P1 · `review` (PR #50) · release-engineer (QA defines checks)
+### BL-004 · CI parity with the harness gate · P1 · `done` (PR #50)· release-engineer (QA defines checks)
 `.github/workflows/rust.yml` only runs build/test on `main`. Run `./harness/check.sh` on push/PR
 to `main` and `develop`, add cargo cache, and a `--no-default-features` job.
 
@@ -241,7 +241,7 @@ and record eval latency (lib, CLI, HTTP) in `benches/BASELINE.md`. All perf item
 - `README.md` and `benches/benchmark_phase1.sh` still claim string interning and memory pooling
   (the code for them was deleted in BL-002).
 
-### BL-007 · Rustdoc for the public API · P2 · `todo` · docs-engineer
+### BL-007 · Rustdoc for the public API · P2 · `done` (PR #60)· docs-engineer
 Every `pub fn` in `src/lib.rs` gets docs + runnable doctest; fix `parse` docstring ("arithmetic").
 
 ### BL-008 · De-duplicate `lib.rs` entry points · P2 · `done` (PR #47) · rust-engineer
@@ -252,14 +252,14 @@ private helper. Consider an `Engine`/builder API via ADR (keep old fns as thin w
 11 root-level `.md` files overlap (`ALPINE_*` ×3, `DOCUMENTATION.md` vs `API_REFERENCE.md`
 vs `docs/DEVELOPMENT_GUIDE.md`). Move to layout in `harness/roles/docs-engineer.md`.
 
-### BL-010 · Generate the function reference from code · P2 · `todo` · rust-engineer + docs-engineer
+### BL-010 · Generate the function reference from code · P2 · `done` (PR #58)· rust-engineer + docs-engineer
 Single table of builtins (name, category, arity, summary) in code → drives dispatch *and* a
 generated `docs/reference/functions.md`. Removes doc drift and the string-`HashSet` dispatch.
 
 ### BL-011 · `Value::Json(String)` → structured value · P2 · `todo` · language-designer (ADR, supersedes ADR-0004) → rust-engineer
 Nested objects are re-serialized/re-parsed on every access. Measure first (BL-005).
 
-### BL-012 · Cache parsed ASTs in servers · P2 · `todo` · performance-engineer → rust-engineer
+### BL-012 · Cache parsed ASTs in servers · P2 · `todo` (prototype measured: < 2% except 2.6 KB expressions; needs a public evaluate_parsed API → maintainer decision)· performance-engineer → rust-engineer
 Servers re-parse identical expressions per request; `Rc<Expr>` blocks sharing across threads
 (ADR-0002). Evaluate `Arc` or per-thread LRU of `Expr`.
 
@@ -394,7 +394,7 @@ Review (orchestrator, 2026-11-20): accepted. Verified in release: 20k parens, 50
   tests/security_limits.rs edited; strict clippy clean (both feature sets). Parser refactor is
   bigger than briefed but covered by parity + full suite. Known gap → BL-029.
 
-### BL-018 · QuickJS resource limits + constant-time token compare · P1 · `in-progress` (constant-time tokens in PR #51; QuickJS limits need a decision) · security-reviewer → rust-engineer
+### BL-018 · QuickJS resource limits + constant-time token compare · P1 · `in-progress` (tokens PR #51; QuickJS limits ADR-0017 drafted, held for maintainer)· security-reviewer → rust-engineer
 `src/js_plugin.rs` sets no memory limit or interrupt handler (an uploaded `while(true){}` pins a
 worker forever). `src/bin/http_server/auth.rs` compares tokens with `!=`. Write the threat model
 `docs/security/THREAT_MODEL.md` as part of this item.
@@ -402,12 +402,12 @@ worker forever). `src/bin/http_server/auth.rs` compares tokens with `!=`. Write 
 ### BL-019 · Fuzzing + `cargo audit` in CI · P2 · `in-progress` (cargo audit in PR #50; fuzzing needs a dependency decision) · security-reviewer + release-engineer
 `cargo fuzz` target over `parse` and `evaluate_with_json` (PRD-003 FR-8); `cargo audit` job in CI.
 
-### BL-020 · Excel-compatibility audit of shared function names · P2 · `todo` · language-designer
+### BL-020 · Excel-compatibility audit of shared function names · P2 · `done` (audit in PR #56, docs/reference/excel-compat.md; decisions D-1…D-10 open)· language-designer
 For each builtin that shares an Excel name: argument order and edge cases match, or the difference
 is documented. Output is a table QA turns into tests. Also decide the canonical form
 (`SUM(:a)` vs `:a.sum()`) and string → DateTime cast formats.
 
-### BL-021 · `CHANGELOG.md` + release checklist dry run · P2 · `review` (PR #50) · release-engineer
+### BL-021 · `CHANGELOG.md` + release checklist dry run · P2 · `done` (PR #50)· release-engineer
 Create root `CHANGELOG.md` (Keep a Changelog) back-filled from git tags, and run
 `cargo publish --dry-run` / `cargo package --list` (expected to catch the BL-006 `include` issue).
 
@@ -415,21 +415,21 @@ Create root `CHANGELOG.md` (Keep a Changelog) back-filled from git tags, and run
 Client-side hooks (ADR-0009) can be bypassed. Require PR review and a passing CI check on
 `main` and `develop`; block force-push. Depends on BL-004 for the CI check.
 
-### BL-023 · `NULL == NULL` evaluates to `false` · P2 · `todo` · language-designer → rust-engineer
+### BL-023 · `NULL == NULL` evaluates to `false` · P2 · `review` (ADR-0013 Proposed, PR #55; awaiting maintainer)· language-designer → rust-engineer
 Found by BL-001a parity tests (public API). Decide intended semantics (likely `true`; Excel has no
 null, SQL says unknown) and the rule for `NULL != NULL`; ADR if it changes results.
 
-### BL-024 · `JQ` unwraps single matches to a scalar · P3 · `todo` · language-designer
+### BL-024 · `JQ` unwraps single matches to a scalar · P3 · `review` (ADR-0014 Proposed, PR #55; awaiting maintainer)· language-designer
 `JQ({"a":[3]}, "$.a[*]")` returns `3`, but two matches return an array, so
 `.map(JQ(:x, "$.a[*]").sum())` fails on rows with one element. Decide whether wildcard paths
 always return arrays; breaking change needs an ADR.
 
-### BL-025 · Binaries don't build with `--no-default-features` · P2 · `review` (PR #50) · release-engineer + rust-engineer
+### BL-025 · Binaries don't build with `--no-default-features` · P2 · `done` (PR #50)· release-engineer + rust-engineer
 `src/bin/*` import `JSPluginLoader`/`js_plugin` unconditionally. Gate those imports on
 `#[cfg(feature = "plugins")]` (preferred: servers still work without JS) or set
 `required-features = ["plugins"]` per bin. Then extend `harness/check.sh` to build all targets without plugins.
 
-### BL-026 · `PERCENTILE` accepts NaN as the percentile · P3 · `todo` · language-designer → rust-engineer
+### BL-026 · `PERCENTILE` accepts NaN as the percentile · P3 · `review` (ADR-0015 Proposed, PR #55; NaN crash fixed separately in PR #59)· language-designer → rust-engineer
 `src/runtime/statistical.rs` range check uses `p < 0.0 || p > 1.0`, which lets NaN through (kept by
 BL-003 with `#[allow(clippy::manual_range_contains)]`). Decide: error on NaN (likely), then use
 `!(0.0..=1.0).contains(&p)` and drop the allow.
@@ -970,12 +970,12 @@ Review (orchestrator, 2026-11-20): accepted. Re-ran `cargo bench --bench lambda_
   handler signatures changed (`&dyn EvaluationContext`), `exec_*_with_custom` removed; lib.rs API
   unchanged. Follow-ups: BL-031, BL-032.
 
-### BL-031 · Custom functions not visible in method args and builtin lambdas · P3 · `todo` · language-designer
+### BL-031 · Custom functions not visible in method args and builtin lambdas · P3 · `review` (ADR-0016 Proposed, PR #55; awaiting maintainer)· language-designer
 Found in BL-030 (pre-existing, preserved): custom functions work inside `.map()/.filter()` lambdas but
 not in plain method arguments (`:s.contains(MYFN())`) or in `FILTER()/MAP()`-style builtin lambdas.
 Decide whether that is intended; likely not (one evaluator, one function namespace).
 
-### BL-032 · `sk_concurrency` flakes when the release `sk` is stale · P2 · `review` (PR #50) · qa-engineer
+### BL-032 · `sk_concurrency` flakes when the release `sk` is stale · P2 · `done` (PR #50)· qa-engineer
 `tests/sk_concurrency.rs` runs `cargo run --release` from parallel tests; if the release binary is out
 of date they rebuild concurrently and some fail. Build once up front (or use `CARGO_BIN_EXE_*`).
 
@@ -990,7 +990,7 @@ Found in BL-027c. A 20 MB string result: headers say `Content-Length: 20000086`,
 ~327 KB and the connection closes. Probably the write path/close sequence in
 `http_server/utils.rs::send_http_response`. Not a memory issue; correctness for large results.
 
-### BL-035 · Budget hardening, low-severity leftovers from BL-027c · P3 · `todo` · rust-engineer → docs-engineer
+### BL-035 · Budget hardening, low-severity leftovers from BL-027c · P3 · `in-progress` (docs part in PR #60; code hardening open)· rust-engineer → docs-engineer
 - A single builtin runs to completion before the next deadline check (SORT/UNIQUE of 3M items:
   ~0.12 s release; fine today, revisit if a superlinear builtin is added).
 - Custom functions that move work to another thread escape the budget (document on
@@ -1011,7 +1011,7 @@ worker until it has sent 1 MB. Measured, 1 worker: an idle client delays the nex
 Fix: a total deadline for reading one request (e.g. 30 s from accept), checked between reads;
 regression test with a trickling client. Same fix shape as BL-033 for sk_server.
 
-### BL-038 · Recover evaluation-budget overhead (~10% on lambda-heavy formulas) · P3 · `todo` · performance-engineer → rust-engineer
+### BL-038 · Recover evaluation-budget overhead (~10% on lambda-heavy formulas) · P3 · `done` (PR #64 (rows cases still ~+5%, see BL-036))· performance-engineer → rust-engineer
 BL-027 added a per-operation deadline tick and charge calls; `lambda_scope` shows +6–11% vs
 develop bf7c20a. Profile and trim (e.g. batch ticks per lambda iteration instead of per op, cheaper
 fast path in `check_value`). BL-036 (shared values) would also remove the copying-read charge.
@@ -1021,40 +1021,40 @@ Parallel lanes, 2026-11-20 (orchestrator). Five worktrees, one PR each: #47 (BL-
 BL-029), #49 (BL-006, BL-028, BL-009, BL-015), #50 (BL-004, BL-032, BL-025, BL-019 audit, BL-021,
 ADR-0012), #51 (BL-033, BL-037, BL-034, BL-018 tokens). Follow-ups found by the lanes:
 
-### BL-039 · HTTP latency floor from the 1 ms accept-loop sleep · P2 · `todo` · performance-engineer → rust-engineer
+### BL-039 · HTTP latency floor from the 1 ms accept-loop sleep · P2 · `done` (PR #54)· performance-engineer → rust-engineer
 BL-005: every request (even `/health`, cached or not) costs ~1.25 ms because `sk_http_server`'s
 non-blocking accept loop sleeps 1 ms when `accept` would block. Use a blocking accept (shutdown via
 a wake-up connection or flag) or a much shorter wait; re-measure with `benches/baseline.rs`.
 
-### BL-040 · Profile CLI start-up (~2 ms above process start) · P3 · `todo` · performance-engineer
+### BL-040 · Profile CLI start-up (~2 ms above process start) · P3 · `done` (profiled; ~1 ms is CoreFoundation via chrono → BL-055 decision)· performance-engineer
 BL-005: one `sk` call is ~2.9 ms vs ~0.9 ms for `/usr/bin/true`. Suspect QuickJS runtime creation
 and hooks loading. Profile before changing anything.
 
-### BL-041 · `sk_http_bench` "Range operations" case always fails · P3 · `todo` · qa-engineer
+### BL-041 · `sk_http_bench` "Range operations" case always fails · P3 · `done` (PR #57)· qa-engineer
 Uses `range(1,50).sum()`; there is no RANGE function. Fix or drop the case.
 
 ### BL-042 · Remove or feature-gate `scalar-doc` · P2 · `todo` · release-engineer (dependency decision)
 Most `cargo audit` warnings (anyhow, rand, chrono-tz, the fixed crossbeam-epoch) and the edition-2024
 MSRV pressure come through `scalar-doc` → `tera`, used only for the `/docs` page.
 
-### BL-043 · Bump `lru` 0.16 → 0.18+ (RUSTSEC-2026-0253, unsound `pop()`) · P2 · `todo` · rust-engineer
+### BL-043 · Bump `lru` 0.16 → 0.18+ (RUSTSEC-2026-0253, unsound `pop()`) · P2 · `done` (PR #57)· rust-engineer
 Direct dependency; `http_server/cache.rs` calls `LruCache::pop()`. `Cargo.toml` change.
 
-### BL-044 · Release workflows use floating `stable` without `--locked` · P2 · `todo` · release-engineer
+### BL-044 · Release workflows use floating `stable` without `--locked` · P2 · `done` (PR #53)· release-engineer
 `release-binaries.yml`, `crate-release.yml`: pin the toolchain (ADR-0012) and build `--locked`.
 
-### BL-045 · `documentation.html` read from the working directory at runtime · P3 · `todo` · rust-engineer
+### BL-045 · `documentation.html` read from the working directory at runtime · P3 · `done` (PR #54)· rust-engineer
 `load_html_file` in `http_server/utils.rs`; installed binaries serve the fallback page. Use `include_str!`.
 
-### BL-046 · sk_server: deadline resets on non-work lines · P2 · `todo` · security-reviewer → rust-engineer
+### BL-046 · sk_server: deadline resets on non-work lines · P2 · `done` (PR #62)· security-reviewer → rust-engineer
 Lane 1 review: blank, invalid-JSON and wrong-token lines reset the 30 s deadline, so an
 unauthenticated client can keep a worker by sending `\n` every 29 s (develop: forever by sending
 nothing). Don't reset on non-work lines / close after auth failure; add idle and per-connection limits.
 
-### BL-047 · No total deadline for writing responses (slow-read) · P3 · `todo` · rust-engineer
+### BL-047 · No total deadline for writing responses (slow-read) · P3 · `done` (PR #62)· rust-engineer
 Both servers: `WRITE_TIMEOUT` is per write syscall. Add a `DeadlineWriter` mirroring the reader.
 
-### BL-048 · Empty token silently disables auth · P2 · `todo` · rust-engineer
+### BL-048 · Empty token silently disables auth · P2 · `done` (PR #62)· rust-engineer
 `SKILLET_AUTH_TOKEN=""` / `--token ""` / `--admin-token ""` give `Some("")`, so tokenless requests
 pass while the server prints "Token auth: enabled". Reject empty tokens at start-up.
 
@@ -1062,8 +1062,47 @@ pass while the server prints "Token auth: enabled". Reject empty tokens at start
 All read errors are sent as HTTP 400 (the code is only in the body); on 413 it closes with unread
 input, so a TCP reset can drop the error. Reuse sk_server's bounded drain.
 
-### BL-050 · Docs/tooling leftovers from lane 5 · P3 · `todo` · docs-engineer
+### BL-050 · Docs/tooling leftovers from lane 5 · P3 · `done` (PR #53, #60)· docs-engineer
 `.gitignore` `*.prd.*` hides future docs; ADR-0002 consequences are stale after BL-001/BL-030 (add a
 status note); bench scripts still mention copy-on-write / buffer pooling; `Dockerfile.alpine-builder`
 builds only aarch64 (release-engineer to decide x86_64); `Cargo.toml` has no `repository` field;
 document the 404 for JS endpoints in plugin-free builds and the server request limits (1 MB, 30 s).
+
+---
+Round 3, 2026-11-20 (orchestrator). Merged #53–#66. Follow-ups:
+
+### BL-051 · Security review follow-ups for the JS plugin path · P1 · `todo` · maintainer decisions → rust-engineer
+Findings from the threat-model review (lane I, 2026-11-20). Details are kept out of this public file
+until fixed; the maintainer has the report. Decision-free parts landed in PR #63. Open decisions:
+QuickJS resource limits (ADR-0017 draft), the undocumented host network helper available to hooks,
+container defaults, and cross-origin behaviour without an admin token. Publish
+`docs/security/THREAT_MODEL.md` and ADR-0017 once these are resolved.
+
+### BL-052 · `sk_http_server` ignores `SKILLET_AUTH_TOKEN` · P1 · `in-progress` (lane P) · rust-engineer
+`sk_server` reads it; `sk_http_server` only reads `--token`. Make both behave the same.
+
+### BL-053 · Register the documented `BETWEEN` builtin · P2 · `in-progress` (lane Q) · rust-engineer
+Implemented in `logical.rs` and documented in api.md, but missing from the builtin table.
+
+### BL-054 · Language decisions from the Excel audit and lane M · P2 · `todo` · language-designer → maintainer
+IPMT sign (existing tests pin the non-Excel sign), COUNTIF with a scalar/string criterion, `TIME`
+Excel normalisation, dotted names (`STDEV.P`) don't parse, `COUNT` semantics, `IF` evaluates both
+branches, ROUND negative digits, CEILING/FLOOR significance, MOD sign, DATE rollover, function vs
+method parity, string → DateTime cast formats. See docs/reference/excel-compat.md D-1…D-10.
+
+### BL-055 · CLI start-up: drop CoreFoundation (~1 ms per call) · P3 · `todo` · performance-engineer (ADR) → maintainer
+Linked through chrono → iana-time-zone; needs a dependency/feature decision (TODAY()/TIME() local time).
+Related: release profile LTO/strip (~0.1 ms), plugin-free default build (~0.3 ms).
+
+### BL-056 · Release follow-ups · P3 · `todo` · release-engineer (decisions)
+Two release tags (`vX.Y.Z` vs `crate-vX.Y.Z`), unpinned `cross`, actions by branch ref, Alpine builder
+aarch64 only.
+
+### BL-057 · Small leftovers · P3 · `todo`
+- `/health` eviction counter only counts replaced keys (cache.rs) — rust-engineer.
+- HTTP buffer pool never gets its buffer back on success (utils.rs) — rust-engineer.
+- `runtime::builtin_functions::exec_builtin` is public, unused, and behaves differently — deprecate (rust-engineer).
+- Hooks dir is created in the working directory when missing (`sk` leaves a `hooks/` folder) — decision.
+- `DeleteJSResponse` schema vs plugin-free 404 body; servers.md pooling example truncates large responses — docs-engineer.
+- No per-IP connection limit with a fixed worker pool (residual risk, threat model) — decision.
+- Re-baseline benches/BASELINE.md after #54 (lane S).
