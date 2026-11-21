@@ -131,8 +131,8 @@ pub(crate) static BUILTINS: &[Builtin] = &[
     f("OR", Logical, 0, ANY, "values…", "TRUE when any argument is truthy.", "OR(FALSE, 1)"),
     f("NOT", Logical, 1, n(1), "value", "Negation of the argument's truthiness.", "NOT(0)"),
     f("XOR", Logical, 2, n(2), "a, b", "TRUE when exactly one argument is truthy.", "XOR(TRUE, FALSE)"),
-    f("IF", Logical, 2, n(3), "condition, then, [else]", "`then` when `condition` is truthy, otherwise `else` (default FALSE). Both branches are evaluated.", "IF(1 > 0, 'yes', 'no')"),
-    f("IFS", Logical, 2, ANY, "condition, value, …", "Value of the first truthy condition; FALSE when none matches.", "IFS(FALSE, 'a', TRUE, 'b')"),
+    f("IF", Logical, 2, n(3), "condition, then, [else]", "`then` when `condition` is truthy, otherwise `else` (default FALSE). Only the chosen branch is evaluated.", "IF(1 > 0, 'yes', 'no')"),
+    f("IFS", Logical, 2, ANY, "condition, value, …", "Value of the first truthy condition; FALSE when none matches. Conditions are evaluated in order up to the first truthy one, and only its value is evaluated.", "IFS(FALSE, 'a', TRUE, 'b')"),
     f("BETWEEN", Logical, 3, n(3), "min, max, value", "TRUE when `min <= value <= max` (both bounds inclusive). All three arguments must be numbers.", "BETWEEN(10, 20, 15)"),
     // String
     f("LENGTH", Category::String, 1, n(1), "text_or_array", "Characters in a string or items in an array; 0 for NULL.", "LENGTH('héllo')"),

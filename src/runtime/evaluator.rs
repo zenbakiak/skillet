@@ -4,6 +4,7 @@ use crate::error::Error;
 use crate::limits::{self, charge_value, check_value};
 use crate::runtime::{
     function_dispatch::exec_builtin_fast,
+    logical,
     method_calls::exec_method_in,
     type_casting::cast_value,
     utils::{clamp_index, slice_items},
@@ -536,6 +537,9 @@ impl Evaluator {
             "SUMIF" => Self::eval_sumif(args, context),
             "AVGIF" => Self::eval_avgif(args, context),
             "COUNTIF" => Self::eval_countif(args, context),
+            "IF" | "IFS" if !args.iter().any(|a| matches!(a, Expr::Spread(_))) => {
+                Self::eval_lazy_if(name, args, context)
+            }
             "JQ" => {
                 if args.len() != 2 {
                     return Err(Error::new(
@@ -583,6 +587,40 @@ impl Evaluator {
                 exec_builtin_fast(name, &ev_args)
             }
         }
+    }
+
+    /// `IF` / `IFS` evaluate a condition, then only the branch it picks (D-8, Excel). Same
+    /// argument checks and truthiness as the eager versions in `logical.rs`, which still run
+    /// calls with a spread argument.
+    fn eval_lazy_if<C: EvaluationContext>(
+        name: &str,
+        args: &[Expr],
+        context: &C,
+    ) -> Result<Value, Error> {
+        let truthy = |e: &Expr| Self::eval(e, context).map(|v| logical::truthy(&v));
+        if name == "IF" {
+            if args.len() < 2 {
+                return Err(Error::new("IF expects at least 2 arguments", None));
+            }
+            return if truthy(&args[0])? {
+                Self::eval(&args[1], context)
+            } else {
+                args.get(2)
+                    .map_or(Ok(Value::Boolean(false)), |e| Self::eval(e, context))
+            };
+        }
+        if args.len() % 2 != 0 {
+            return Err(Error::new(
+                "IFS expects pairs of condition,value arguments",
+                None,
+            ));
+        }
+        for pair in args.chunks(2) {
+            if truthy(&pair[0])? {
+                return Self::eval(&pair[1], context);
+            }
+        }
+        Ok(Value::Boolean(false))
     }
 
     /// Helper for higher-order functions - these need access to context for lambda evaluation

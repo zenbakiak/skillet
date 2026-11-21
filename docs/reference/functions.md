@@ -39,8 +39,8 @@ Methods (`:arr.sum()`), operators and the rest of the language: [api.md](api.md)
 | `OR` | `OR(values…)` | 0+ | TRUE when any argument is truthy. | `OR(FALSE, 1)` | `TRUE` |
 | `NOT` | `NOT(value)` | 1 | Negation of the argument's truthiness. | `NOT(0)` | `TRUE` |
 | `XOR` | `XOR(a, b)` | 2 | TRUE when exactly one argument is truthy. | `XOR(TRUE, FALSE)` | `TRUE` |
-| `IF` | `IF(condition, then, [else])` | 2-3 | `then` when `condition` is truthy, otherwise `else` (default FALSE). Both branches are evaluated. | `IF(1 > 0, 'yes', 'no')` | `"yes"` |
-| `IFS` | `IFS(condition, value, …)` | 2+ | Value of the first truthy condition; FALSE when none matches. | `IFS(FALSE, 'a', TRUE, 'b')` | `"b"` |
+| `IF` | `IF(condition, then, [else])` | 2-3 | `then` when `condition` is truthy, otherwise `else` (default FALSE). Only the chosen branch is evaluated. | `IF(1 > 0, 'yes', 'no')` | `"yes"` |
+| `IFS` | `IFS(condition, value, …)` | 2+ | Value of the first truthy condition; FALSE when none matches. Conditions are evaluated in order up to the first truthy one, and only its value is evaluated. | `IFS(FALSE, 'a', TRUE, 'b')` | `"b"` |
 | `BETWEEN` | `BETWEEN(min, max, value)` | 3 | TRUE when `min <= value <= max` (both bounds inclusive). All three arguments must be numbers. | `BETWEEN(10, 20, 15)` | `TRUE` |
 
 ## String
