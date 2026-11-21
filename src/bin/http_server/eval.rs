@@ -14,7 +14,9 @@ use super::stats::ServerStats;
 use super::types::{
     CacheStatsResponse, EvalRequest, EvalResponse, HealthResponse, IncludeVariables,
 };
-use super::utils::{parse_json_body, sanitize_json_key, send_http_error, send_http_response};
+use super::utils::{
+    parse_json_body, sanitize_json_key, send_http_error, send_http_response, to_json_exact,
+};
 
 pub fn handle_eval_post(
     stream: &mut TcpStream,
@@ -38,7 +40,7 @@ pub fn handle_eval_post(
     };
 
     let response = process_eval_request(eval_request, stats, request_counter);
-    let json = serde_json::to_string(&response).unwrap_or_default();
+    let json = to_json_exact(&response);
     send_http_response(
         stream,
         if response.success { 200 } else { 400 },
@@ -138,7 +140,7 @@ pub fn handle_eval_get(
     };
 
     let response = process_eval_request(eval_request, stats, request_counter);
-    let json = serde_json::to_string(&response).unwrap_or_default();
+    let json = to_json_exact(&response);
     send_http_response(
         stream,
         if response.success { 200 } else { 400 },

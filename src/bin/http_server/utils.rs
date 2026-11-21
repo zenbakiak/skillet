@@ -144,13 +144,8 @@ pub fn send_http_response(stream: &mut TcpStream, status: u16, content_type: &st
         _ => "Unknown",
     };
 
-    // Pre-allocate response buffer with estimated size to avoid reallocations
-    let estimated_size = 256 + body.len(); // Headers ~256 bytes + body
-    let mut response = String::with_capacity(estimated_size);
-
-    use std::fmt::Write;
-    let _ = write!(
-        &mut response,
+    // Headers and body are written separately, so a large body is not copied again.
+    let headers = format!(
         "HTTP/1.1 {} {}\r\n\
          Access-Control-Allow-Origin: *\r\n\
          Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS\r\n\
@@ -158,16 +153,41 @@ pub fn send_http_response(stream: &mut TcpStream, status: u16, content_type: &st
          Content-Type: {}\r\n\
          Content-Length: {}\r\n\
          Connection: close\r\n\
-         \r\n\
-         {}",
+         \r\n",
         status,
         status_text,
         content_type,
         body.len(),
-        body
     );
 
-    let _ = stream.write_all(response.as_bytes());
+    let _ = stream
+        .write_all(headers.as_bytes())
+        .and_then(|()| stream.write_all(body.as_bytes()));
+}
+
+/// Serialize `value` into a string allocated once at its exact size: a first pass counts the
+/// bytes, so a large response never holds two growing copies (ADR-0011 amendment 2).
+pub fn to_json_exact<T: serde::Serialize>(value: &T) -> String {
+    struct Count(usize);
+    impl std::io::Write for Count {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0 += buf.len();
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut count = Count(0);
+    if serde_json::to_writer(&mut count, value).is_err() {
+        return String::new();
+    }
+    let mut out = Vec::with_capacity(count.0);
+    match serde_json::to_writer(&mut out, value) {
+        // serde_json only writes valid UTF-8.
+        Ok(()) => String::from_utf8(out).unwrap_or_default(),
+        Err(_) => String::new(),
+    }
 }
 
 pub fn send_http_error(stream: &mut TcpStream, status: u16, message: &str) {
