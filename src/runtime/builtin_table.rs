@@ -1,0 +1,377 @@
+//! The single table of `UPPERCASE()` builtins (BL-010).
+//!
+//! One row per function: name, aliases, category, arity, signature, one-line summary and an
+//! example. The table drives dispatch (`function_dispatch`) and generates
+//! `docs/reference/functions.md` (see the tests at the bottom; `UPDATE_DOCS=1` rewrites it).
+//!
+//! For [`Dispatch::Module`] rows the category picks the module that runs the function
+//! (`arithmetic.rs`, `string.rs`, ...). [`Dispatch::Evaluator`] rows document functions the
+//! evaluator handles itself because they take lambdas; they are not dispatched from here.
+//!
+//! Arity is documentation: the number of arguments the function reads, with `max = None` for
+//! variadic. Each function still does its own argument checks, so errors and defaults for
+//! missing or extra arguments are unchanged by this table.
+
+/// Which builtin module runs a function, and the section it is documented under.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Category {
+    Arithmetic,
+    Logical,
+    String,
+    Array,
+    DateTime,
+    Financial,
+    Statistical,
+    Json,
+}
+
+/// Where a call to the function is executed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Dispatch {
+    /// Evaluated arguments are passed to the category's module by `function_dispatch`.
+    Module,
+    /// Handled by `runtime::evaluator` before dispatch (lambda arguments, lazy evaluation).
+    Evaluator,
+}
+
+/// One builtin function. Only `name`, `aliases`, `category` and `dispatch` drive dispatch;
+/// the other fields feed the generated reference (read by the tests).
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Builtin {
+    pub name: &'static str,
+    pub aliases: &'static [&'static str],
+    pub category: Category,
+    pub dispatch: Dispatch,
+    pub min_args: usize,
+    /// `None` = variadic.
+    pub max_args: Option<usize>,
+    pub args: &'static str,
+    pub summary: &'static str,
+    pub example: &'static str,
+    /// Result depends on the clock, so the docs do not show a result.
+    pub volatile: bool,
+}
+
+impl Builtin {
+    const fn aliases(self, aliases: &'static [&'static str]) -> Self {
+        Builtin { aliases, ..self }
+    }
+    const fn evaluator(self) -> Self {
+        Builtin {
+            dispatch: Dispatch::Evaluator,
+            ..self
+        }
+    }
+    const fn volatile(self) -> Self {
+        Builtin {
+            volatile: true,
+            ..self
+        }
+    }
+
+    /// The name and every alias.
+    pub(crate) fn names(&self) -> impl Iterator<Item = &'static str> {
+        std::iter::once(self.name).chain(self.aliases.iter().copied())
+    }
+}
+
+const fn f(
+    name: &'static str,
+    category: Category,
+    min_args: usize,
+    max_args: Option<usize>,
+    args: &'static str,
+    summary: &'static str,
+    example: &'static str,
+) -> Builtin {
+    Builtin {
+        name,
+        aliases: &[],
+        category,
+        dispatch: Dispatch::Module,
+        min_args,
+        max_args,
+        args,
+        summary,
+        example,
+        volatile: false,
+    }
+}
+
+// `Category::String` stays qualified so `String` keeps meaning `std::string::String`.
+use Category::{Arithmetic, Array, DateTime, Financial, Json, Logical, Statistical};
+
+const ANY: Option<usize> = None;
+const fn n(max: usize) -> Option<usize> {
+    Some(max)
+}
+
+/// Every builtin. Names and aliases are unique across the table (tested).
+#[rustfmt::skip]
+pub(crate) static BUILTINS: &[Builtin] = &[
+    // Arithmetic
+    f("SUM", Arithmetic, 0, ANY, "values…", "Sum of numbers and currency; arrays are flattened, other values ignored.", "SUM(1, 2, [3, 4])"),
+    f("AVG", Arithmetic, 0, ANY, "values…", "Mean of numbers and currency (arrays flattened); 0 when there are none.", "AVG(2, 4, 6)").aliases(&["AVERAGE"]),
+    f("MIN", Arithmetic, 0, ANY, "values…", "Smallest number (arrays flattened); 0 when there are none.", "MIN(3, 1, 2)"),
+    f("MAX", Arithmetic, 0, ANY, "values…", "Largest number (arrays flattened); 0 when there are none.", "MAX([3, 9, 2])"),
+    f("ROUND", Arithmetic, 1, n(2), "number, [digits]", "Round half away from zero to `digits` decimals (default 0).", "ROUND(3.14159, 2)"),
+    f("CEIL", Arithmetic, 1, n(1), "number", "Round up to an integer.", "CEIL(2.1)"),
+    f("CEILING", Arithmetic, 1, n(2), "number, [significance]", "Round up to an integer; `significance` is accepted but ignored.", "CEILING(2.1, 5)"),
+    f("FLOOR", Arithmetic, 1, n(1), "number", "Round down to an integer.", "FLOOR(-2.1)"),
+    f("ABS", Arithmetic, 1, n(1), "number", "Absolute value.", "ABS(-7)"),
+    f("SQRT", Arithmetic, 1, n(1), "number", "Square root.", "SQRT(16)"),
+    f("POW", Arithmetic, 2, n(2), "base, exponent", "`base` raised to `exponent`.", "POW(2, 10)").aliases(&["POWER"]),
+    f("MOD", Arithmetic, 2, n(2), "a, b", "Remainder of `a / b`; the sign follows `a`.", "MOD(10, 3)"),
+    f("INT", Arithmetic, 1, n(1), "number", "Round down to an integer (same as `FLOOR`).", "INT(5.9)"),
+    f("PRODUCT", Arithmetic, 0, ANY, "values…", "Product of numbers and currency (arrays flattened); 1 when there are none.", "PRODUCT(2, 3, 4)").aliases(&["MULTIPLY"]),
+    f("SUMIF", Arithmetic, 2, n(3), "array, criteria, [sum_array]", "Sum of items matching an Excel-style criteria (`\">2\"`, `5`) or a lambda over `:x`.", "SUMIF([1, -2, 3], :x > 0)").evaluator(),
+    // Logical
+    f("AND", Logical, 0, ANY, "values…", "TRUE when every argument is truthy (TRUE or a non-zero number).", "AND(TRUE, 1)"),
+    f("OR", Logical, 0, ANY, "values…", "TRUE when any argument is truthy.", "OR(FALSE, 1)"),
+    f("NOT", Logical, 1, n(1), "value", "Negation of the argument's truthiness.", "NOT(0)"),
+    f("XOR", Logical, 2, n(2), "a, b", "TRUE when exactly one argument is truthy.", "XOR(TRUE, FALSE)"),
+    f("IF", Logical, 2, n(3), "condition, then, [else]", "`then` when `condition` is truthy, otherwise `else` (default FALSE). Both branches are evaluated.", "IF(1 > 0, 'yes', 'no')"),
+    f("IFS", Logical, 2, ANY, "condition, value, …", "Value of the first truthy condition; FALSE when none matches.", "IFS(FALSE, 'a', TRUE, 'b')"),
+    // String
+    f("LENGTH", Category::String, 1, n(1), "text_or_array", "Characters in a string or items in an array; 0 for NULL.", "LENGTH('héllo')"),
+    f("CONCAT", Category::String, 0, ANY, "values…", "Join strings, numbers, booleans and (flattened) arrays; other values add nothing.", "CONCAT('a', 1, TRUE)"),
+    f("UPPER", Category::String, 1, n(1), "text", "Upper-case.", "UPPER('abc')"),
+    f("LOWER", Category::String, 1, n(1), "text", "Lower-case.", "LOWER('ABC')"),
+    f("TRIM", Category::String, 1, n(1), "text", "Remove leading and trailing whitespace.", "TRIM('  x  ')"),
+    f("SUBSTRING", Category::String, 2, n(3), "text, start, [length]", "Characters from 0-based `start`, to the end or `length` characters.", "SUBSTRING('hello', 1, 3)"),
+    f("SPLIT", Category::String, 1, n(2), "text, [separator]", "Split into an array; without a separator, split on commas and trim each part.", "SPLIT('a, b,c')"),
+    f("REPLACE", Category::String, 4, n(4), "text, start, count, new_text", "Excel `REPLACE`: replace `count` characters from 1-based `start` with `new_text`.", "REPLACE('abcdef', 2, 3, 'X')"),
+    f("SUBSTITUTE", Category::String, 3, n(3), "text, find, replacement", "Replace every occurrence of `find`.", "SUBSTITUTE('a-b-c', '-', '+')"),
+    f("SUBSTITUTEM", Category::String, 3, n(3), "text, find, replacement", "Same as `SUBSTITUTE`.", "SUBSTITUTEM('a-b-c', '-', '')"),
+    f("ISBLANK", Category::String, 1, n(1), "value", "TRUE for NULL, a whitespace-only string or an empty array.", "ISBLANK('  ')"),
+    f("ISNUMBER", Category::String, 1, n(1), "value", "TRUE for a number or currency.", "ISNUMBER(5)"),
+    f("ISTEXT", Category::String, 1, n(1), "value", "TRUE for a string.", "ISTEXT('x')"),
+    f("INCLUDES", Category::String, 2, n(2), "text, substring", "TRUE when `text` contains `substring`.", "INCLUDES('hello', 'ell')"),
+    f("LEFT", Category::String, 1, n(2), "text, [count]", "First `count` characters (default 1).", "LEFT('hello', 2)"),
+    f("RIGHT", Category::String, 1, n(2), "text, [count]", "Last `count` characters (default 1).", "RIGHT('hello', 2)"),
+    f("MID", Category::String, 2, n(3), "text, start, [count]", "Characters from 1-based `start`, to the end or `count` characters.", "MID('hello', 2, 3)"),
+    // Array
+    f("ARRAY", Array, 0, ANY, "values…", "Array of the arguments.", "ARRAY(1, 'a', TRUE)"),
+    f("FLATTEN", Array, 0, ANY, "values…", "All arguments flattened, recursively, into one array.", "FLATTEN([1, [2, [3]]])"),
+    f("FIRST", Array, 1, n(1), "array", "First item; error on an empty array.", "FIRST([9, 8, 7])"),
+    f("LAST", Array, 1, n(1), "array", "Last item; error on an empty array.", "LAST([9, 8, 7])"),
+    f("CONTAINS", Array, 2, n(2), "array, value", "TRUE when the array has an item equal to `value`.", "CONTAINS([1, 2, 3], 2)"),
+    f("IN", Array, 2, n(2), "array, value", "Same as `CONTAINS`, with an exact argument count.", "IN([1, 2, 3], 4)"),
+    f("COUNT", Array, 1, n(1), "array", "Number of items; 0 for NULL.", "COUNT([1, 2, 3])"),
+    f("UNIQUE", Array, 1, n(1), "array", "Distinct numbers in first-seen order; non-numbers are dropped.", "UNIQUE([1, 2, 2, 3])"),
+    f("SORT", Array, 1, n(2), "array, ['DESC']", "Numbers sorted ascending, or descending with `'DESC'`; non-numbers are an error.", "SORT([3, 1, 2], 'DESC')"),
+    f("REVERSE", Array, 1, n(1), "array", "Items in reverse order. (For strings use the `.reverse()` method.)", "REVERSE([1, 2, 3])"),
+    f("JOIN", Array, 1, n(2), "array, [separator]", "Items joined into a string with `separator` (default `,`); nested arrays are an error.", "JOIN([1, 'a', TRUE], '-')"),
+    f("MERGE", Array, 0, ANY, "values…", "Arrays concatenated; scalar arguments are appended as items.", "MERGE([1, 2], 3, [4])"),
+    f("FILTER", Array, 2, n(3), "array, expr, [param]", "Items for which `expr` is TRUE; the item is `:x` (or `:param`).", "FILTER([1, 2, 3, 4], :x % 2 == 0)").evaluator(),
+    f("FIND", Array, 2, n(3), "array, expr, [param]", "First item for which `expr` is TRUE, else NULL.", "FIND([1, 5, 10], :x > 3)").evaluator(),
+    f("MAP", Array, 2, n(3), "array, expr, [param]", "`expr` applied to each item `:x`.", "MAP([1, 2, 3], :x * 10)").evaluator(),
+    f("REDUCE", Array, 3, n(5), "array, expr, initial, [param], [acc_param]", "Fold: `expr` over `:acc` and `:x`, starting from `initial`.", "REDUCE([1, 2, 3], :acc + :x, 0)").evaluator(),
+    // Date and time
+    f("NOW", DateTime, 0, n(0), "", "Current UTC time as a DateTime (seconds).", "NOW()").volatile(),
+    f("DATE", DateTime, 0, n(3), "[year, month, day]", "Midnight UTC of the given date; today's local date with no arguments.", "DATE(2024, 1, 15)"),
+    f("TIME", DateTime, 0, n(0), "", "Seconds since local midnight.", "TIME()").volatile(),
+    f("YEAR", DateTime, 1, n(1), "datetime", "Year (UTC).", "YEAR(DATE(2024, 3, 9))"),
+    f("MONTH", DateTime, 1, n(1), "datetime", "Month 1-12 (UTC).", "MONTH(DATE(2024, 3, 9))"),
+    f("DAY", DateTime, 1, n(1), "datetime", "Day of the month (UTC).", "DAY(DATE(2024, 3, 9))"),
+    f("DATEADD", DateTime, 3, n(3), "datetime, amount, unit", "Add `amount` units: days, hours, minutes, seconds, weeks, months, years (or d, h, m, s, w, y).", "DATEADD(DATE(2024, 1, 31), 1, 'days')"),
+    f("DATEDIFF", DateTime, 3, n(3), "date1, date2, unit", "`date2 - date1` in the given unit (same units as `DATEADD`).", "DATEDIFF(DATE(2024, 1, 1), DATE(2024, 3, 1), 'days')"),
+    // Financial
+    f("PMT", Financial, 3, n(5), "rate, nper, pv, [fv], [type]", "Payment per period of a loan (Excel `PMT`).", "PMT(0.05 / 12, 360, 200000)"),
+    f("DB", Financial, 4, n(5), "cost, salvage, life, period, [month]", "Fixed-declining-balance depreciation for a period (Excel `DB`).", "DB(10000, 1000, 5, 2)"),
+    f("FV", Financial, 3, n(5), "rate, nper, pmt, [pv], [type]", "Future value of an investment (Excel `FV`).", "FV(0.05, 10, -100)"),
+    f("IPMT", Financial, 4, n(6), "rate, per, nper, pv, [fv], [type]", "Interest part of payment `per` (Excel `IPMT`).", "IPMT(0.1 / 12, 1, 36, 8000)"),
+    // Statistical
+    f("MEDIAN", Statistical, 0, ANY, "values…", "Median of numbers and currency (arrays flattened); 0 when there are none.", "MEDIAN(1, 3, 2, 4)"),
+    f("MODE_SNGL", Statistical, 0, ANY, "values…", "Most frequent number (first seen wins a tie); 0 when there are none.", "MODE_SNGL(1, 2, 2, 3)").aliases(&["MODESNGL", "MODE.SNGL"]),
+    f("STDEV_P", Statistical, 0, ANY, "values…", "Population standard deviation; 0 when there are none.", "STDEV_P(2, 4, 4, 4, 5, 5, 7, 9)").aliases(&["STDEVP", "STDEV.P"]),
+    f("VAR_P", Statistical, 0, ANY, "values…", "Population variance; 0 when there are none.", "VAR_P(1, 2, 3, 4)").aliases(&["VARP", "VAR.P"]),
+    f("PERCENTILE_INC", Statistical, 2, ANY, "values…, k", "Inclusive percentile `k` (0-1) of the values, interpolated.", "PERCENTILE_INC([1, 2, 3, 4], 0.5)").aliases(&["PERCENTILEINC", "PERCENTILE.INC"]),
+    f("QUARTILE_INC", Statistical, 2, ANY, "values…, quart", "Inclusive quartile `quart` (0-4) of the values.", "QUARTILE_INC([1, 2, 3, 4, 5], 1)").aliases(&["QUARTILEINC", "QUARTILE.INC"]),
+    f("AVGIF", Statistical, 2, n(2), "array, expr", "Mean of items for which `expr` over `:x` is TRUE.", "AVGIF([1, 3, 5, -1], :x > 0)").evaluator(),
+    f("COUNTIF", Statistical, 2, n(2), "array, expr", "Number of items for which `expr` over `:x` is TRUE.", "COUNTIF([1, 2, 3, 4], :x % 2 == 0)").evaluator(),
+    // JSON
+    f("DIG", Json, 2, n(3), "json, path, [default]", "Value at `path` (array of keys and indexes) in a JSON object, else `default` or NULL.", "DIG(:obj, ['user', 'tags', 1])"),
+    f("JQ", Json, 2, n(2), "json, jsonpath", "JSONPath query (`$…`) over a JSON value or array.", "JQ(:obj, '$.user.name')").evaluator(),
+];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime::function_dispatch::{builtin_function_count, has_builtin_function};
+    use crate::types::Value;
+    use std::collections::HashSet;
+    use std::fmt::Write as _;
+
+    /// Documentation order and section titles.
+    const SECTIONS: [(Category, &str); 8] = [
+        (Category::Arithmetic, "Arithmetic"),
+        (Category::Logical, "Logical"),
+        (Category::String, "String"),
+        (Category::Array, "Array"),
+        (Category::DateTime, "Date and time"),
+        (Category::Financial, "Financial"),
+        (Category::Statistical, "Statistical"),
+        (Category::Json, "JSON"),
+    ];
+
+    /// Variables every example is evaluated with.
+    const EXAMPLE_VARS: &str = r#"{"obj": {"user": {"name": "alice", "tags": ["a", "b"]}}}"#;
+    const DOC_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/docs/reference/functions.md");
+
+    #[test]
+    fn names_are_unique_and_uppercase() {
+        let mut seen = HashSet::new();
+        for b in BUILTINS {
+            for name in b.names() {
+                assert!(seen.insert(name), "duplicate builtin name {name}");
+                assert_eq!(name, name.to_uppercase(), "{name} must be upper-case");
+            }
+            assert!(b.max_args.unwrap_or(usize::MAX) >= b.min_args, "{}", b.name);
+        }
+    }
+
+    #[test]
+    fn module_rows_are_exactly_the_dispatched_names() {
+        let module_names: Vec<_> = BUILTINS
+            .iter()
+            .filter(|b| b.dispatch == Dispatch::Module)
+            .flat_map(Builtin::names)
+            .collect();
+        assert_eq!(module_names.len(), builtin_function_count());
+        for b in BUILTINS {
+            for name in b.names() {
+                assert_eq!(
+                    has_builtin_function(name),
+                    b.dispatch == Dispatch::Module,
+                    "{name}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn examples_call_their_function_and_evaluate() {
+        for b in BUILTINS {
+            assert!(
+                b.example.starts_with(&format!("{}(", b.name)),
+                "{}: example must call it",
+                b.name
+            );
+            let r = crate::evaluate_with_json(&format!("={}", b.example), EXAMPLE_VARS);
+            assert!(r.is_ok(), "{}: {:?}", b.example, r);
+        }
+    }
+
+    fn render_value(v: &Value) -> String {
+        match v {
+            Value::Number(n) | Value::Currency(n) => format!("{n}"),
+            Value::String(s) => format!("{s:?}"),
+            Value::Boolean(b) => (if *b { "TRUE" } else { "FALSE" }).to_string(),
+            Value::Null => "NULL".to_string(),
+            Value::Array(items) => {
+                let parts: Vec<_> = items.iter().map(render_value).collect();
+                format!("[{}]", parts.join(", "))
+            }
+            Value::DateTime(ts) => chrono::DateTime::from_timestamp(*ts, 0)
+                .map(|d| d.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+                .unwrap_or_else(|| ts.to_string()),
+            Value::Json(s) => s.clone(),
+        }
+    }
+
+    fn arity(b: &Builtin) -> String {
+        match b.max_args {
+            None => format!("{}+", b.min_args),
+            Some(max) if max == b.min_args => max.to_string(),
+            Some(max) => format!("{}-{}", b.min_args, max),
+        }
+    }
+
+    fn cell(s: &str) -> String {
+        s.replace('|', "\\|")
+    }
+
+    fn render_row(out: &mut String, b: &Builtin) {
+        let mut name = format!("`{}`", b.name);
+        if b.dispatch == Dispatch::Evaluator {
+            name.push_str(" †");
+        }
+        if !b.aliases.is_empty() {
+            let aliases: Vec<_> = b.aliases.iter().map(|a| format!("`{a}`")).collect();
+            let _ = write!(name, "<br>alias {}", aliases.join(", "));
+        }
+        let result = if b.volatile {
+            "(depends on the clock)".to_string()
+        } else {
+            let r = crate::evaluate_with_json(&format!("={}", b.example), EXAMPLE_VARS);
+            format!(
+                "`{}`",
+                r.map(|v| render_value(&v)).unwrap_or_else(|e| e.message)
+            )
+        };
+        let _ = writeln!(
+            out,
+            "| {} | `{}({})` | {} | {} | `{}` | {} |",
+            name,
+            b.name,
+            cell(b.args),
+            arity(b),
+            cell(b.summary),
+            cell(b.example),
+            cell(&result)
+        );
+    }
+
+    fn render_markdown() -> String {
+        let mut out = String::new();
+        out.push_str(
+            "# Builtin function reference\n\n\
+             <!-- Generated from src/runtime/builtin_table.rs. Do not edit by hand: change the \
+             table, then run `UPDATE_DOCS=1 cargo test --lib builtin_table`. -->\n\n\
+             Every `UPPERCASE()` builtin. Names are case-insensitive in expressions (the parser \
+             upper-cases them, so `sum(1, 2)` calls `SUM`). Custom functions registered with \
+             `register_function` are checked first and can shadow a builtin.\n\n\
+             - **Arity** is the number of arguments the function reads (`2+` = two or more). \
+             Functions check their own arguments: some return an error for a wrong count, others \
+             use a default for a missing argument and ignore extra ones.\n\
+             - **Result** is what the example evaluates to, produced by the test that writes this \
+             file. Examples run with `:obj` = `{\"user\": {\"name\": \"alice\", \"tags\": [\"a\", \"b\"]}}`.\n\
+             - **†** marks functions the evaluator runs itself because they take a lambda \
+             (`:x` is the item, `:acc` the accumulator) or need unevaluated arguments.\n\
+             - Dotted Excel spellings (`MODE.SNGL`, `STDEV.P`, ...) are registered aliases, but \
+             the parser cannot read a dot in a function name; use the underscore form.\n\n\
+             Methods (`:arr.sum()`), operators and the rest of the language: [api.md](api.md).\n",
+        );
+        for (category, title) in SECTIONS {
+            let _ = write!(
+                out,
+                "\n## {title}\n\n\
+                 | Function | Signature | Arity | Summary | Example | Result |\n\
+                 |---|---|---|---|---|---|\n"
+            );
+            for b in BUILTINS.iter().filter(|b| b.category == category) {
+                render_row(&mut out, b);
+            }
+        }
+        out
+    }
+
+    /// Fails when `docs/reference/functions.md` does not match the table.
+    /// `UPDATE_DOCS=1 cargo test --lib builtin_table` rewrites it.
+    #[test]
+    fn functions_reference_is_up_to_date() {
+        let want = render_markdown();
+        if std::env::var_os("UPDATE_DOCS").is_some() {
+            std::fs::write(DOC_PATH, &want).expect("write docs/reference/functions.md");
+            return;
+        }
+        let have = std::fs::read_to_string(DOC_PATH).unwrap_or_default();
+        assert!(
+            have == want,
+            "docs/reference/functions.md is out of date; run \
+             `UPDATE_DOCS=1 cargo test --lib builtin_table` and commit the result"
+        );
+    }
+}
