@@ -142,3 +142,21 @@ fn root_page_is_embedded() {
         include_str!("../src/bin/http_server/documentation.html")
     );
 }
+
+/// `GET /docs` serves the static Scalar page (ADR-0020: no `scalar-doc`), and it points at the
+/// spec the server serves at `/openapi.yml`.
+#[test]
+fn docs_page_points_at_openapi_spec() {
+    let server = Server::spawn();
+    let resp = server.get("/docs").expect("docs request");
+    let (head, body) = resp.split_once("\r\n\r\n").expect("header/body split");
+    assert!(head.starts_with("HTTP/1.1 200"), "{}", head);
+    assert!(head.contains("Content-Type: text/html"), "{}", head);
+    assert_eq!(body, include_str!("../src/bin/http_server/api_docs.html"));
+    assert!(body.contains(r#"data-url="/openapi.yml""#), "{}", body);
+    assert!(body.contains("@scalar/api-reference"), "{}", body);
+
+    let spec = server.get("/openapi.yml").expect("spec request");
+    assert!(spec.starts_with("HTTP/1.1 200"), "{}", spec);
+    assert!(spec.contains("openapi:"), "{}", spec);
+}

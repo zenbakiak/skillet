@@ -1,6 +1,5 @@
 mod http_server;
 
-use scalar_doc::Documentation;
 #[cfg(feature = "plugins")]
 use skillet::JSPluginLoader;
 use std::net::{TcpListener, TcpStream};
@@ -148,16 +147,13 @@ fn handle_root(stream: &mut TcpStream) {
 }
 
 fn handle_api_docs(stream: &mut TcpStream) {
-    // Generate Scalar documentation HTML that points to our OpenAPI spec endpoint
-    let docs_html = match Documentation::new("Skillet HTTP Server API", "/openapi.yml").build() {
-        Ok(html) => html,
-        Err(e) => {
-            eprintln!("Error generating documentation: {}", e);
-            format!("<!DOCTYPE html><html><head><title>Documentation Error</title></head><body><h1>Error</h1><p>Failed to generate documentation: {}</p></body></html>", e)
-        }
-    };
-
-    send_http_response(stream, 200, "text/html", &docs_html);
+    // Static Scalar page that loads our OpenAPI spec from /openapi.yml (ADR-0020).
+    send_http_response(
+        stream,
+        200,
+        "text/html",
+        include_str!("http_server/api_docs.html"),
+    );
 }
 
 fn handle_openapi_spec(stream: &mut TcpStream) {

@@ -451,6 +451,9 @@ ISNUMBER("hello")            # false
 
 ### Date/Time Functions
 
+"Local" below means the process's time zone: the `TZ` environment variable, else the system
+setting (`/etc/localtime`), else UTC. `NOW()` and the date arithmetic work in UTC.
+
 #### `NOW()`
 Current timestamp (Unix time).
 ```bash

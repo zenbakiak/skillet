@@ -1,6 +1,7 @@
+use super::local_time;
 use crate::error::Error;
 use crate::types::Value;
-use chrono::{DateTime, Datelike, Local, NaiveDate, NaiveTime, Timelike, Utc};
+use chrono::{DateTime, Datelike, NaiveDate, NaiveTime, Timelike, Utc};
 
 pub fn is_datetime_function(name: &str) -> bool {
     matches!(
@@ -188,7 +189,7 @@ pub fn exec_datetime(name: &str, args: &[Value]) -> Result<Value, Error> {
 
 /// Today's local date as midnight UTC (`DATE()` and `TODAY()`).
 fn today() -> Value {
-    let today = Local::now().date_naive();
+    let today = local_time::now().date();
     Value::DateTime(today.and_time(NaiveTime::MIN).and_utc().timestamp())
 }
 
@@ -247,7 +248,7 @@ const SECONDS_PER_DAY: f64 = 86400.0;
 fn exec_time(args: &[Value]) -> Result<Value, Error> {
     match args {
         [] => {
-            let now = Local::now().time();
+            let now = local_time::now().time();
             Ok(Value::Number(
                 f64::from(now.num_seconds_from_midnight()) / SECONDS_PER_DAY,
             ))
