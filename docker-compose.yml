@@ -1,17 +1,19 @@
-version: '3.8'
-
 services:
   skillet-http:
     build: .
     container_name: skillet-http-server
     ports:
-      - "${DOCKER_PORT:-8080}:8080"
+      # Published on the host's loopback only. To expose it on other interfaces, set
+      # SKILLET_PUBLISH_ADDR (for example 0.0.0.0) and put TLS in front (see the proxy profile).
+      - "${SKILLET_PUBLISH_ADDR:-127.0.0.1}:${DOCKER_PORT:-8080}:8080"
     environment:
-      - PORT=8080
-      - HOST=0.0.0.0
-      - AUTH_TOKEN=${AUTH_TOKEN:-}
-      - ADMIN_TOKEN=${ADMIN_TOKEN:-}
-      - SKILLET_HOOKS_DIR=/app/hooks
+      PORT: "8080"
+      HOST: "0.0.0.0"
+      SKILLET_HOOKS_DIR: /app/hooks
+      # Required. Read from the shell environment or from .env (gitignored; see .env.example).
+      # The container refuses to start if either is empty.
+      SKILLET_AUTH_TOKEN: ${SKILLET_AUTH_TOKEN:-}
+      SKILLET_ADMIN_TOKEN: ${SKILLET_ADMIN_TOKEN:-}
     volumes:
       # Mount hooks directory for persistent JS functions
       - ./hooks:/app/hooks:rw
@@ -19,7 +21,7 @@ services:
       # - /path/to/your/hooks:/app/hooks:rw
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "./health-check.sh"]
+      test: ["CMD", "./healthcheck.sh"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -45,7 +47,8 @@ services:
     ports:
       - "80:80"
       - "443:443"
-      - "8090:8080"  # Traefik dashboard
+      # The dashboard runs with --api.insecure, so keep it on loopback.
+      - "127.0.0.1:8090:8080"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     restart: unless-stopped

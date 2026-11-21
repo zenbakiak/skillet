@@ -1,4 +1,5 @@
 use crate::error::Error;
+use crate::runtime::utils::optional_number_arg;
 use crate::types::Value;
 
 pub fn exec_financial(name: &str, args: &[Value]) -> Result<Value, Error> {
@@ -20,30 +21,14 @@ pub fn exec_financial(name: &str, args: &[Value]) -> Result<Value, Error> {
             let pv = args[2]
                 .as_number()
                 .ok_or_else(|| Error::new("PMT pv must be a number", None))?;
-            let fv = args.get(3).and_then(|v| v.as_number()).unwrap_or(0.0);
-            let payment_type = args.get(4).and_then(|v| v.as_number()).unwrap_or(0.0);
+            let fv = optional_number_arg("PMT", args, 3, "fv", 0.0)?;
+            let payment_type = optional_number_arg("PMT", args, 4, "type", 0.0)?;
 
             if nper <= 0.0 {
                 return Err(Error::new("PMT nper must be positive", None));
             }
 
-            let payment_at_beginning = payment_type != 0.0;
-
-            let pmt = if rate == 0.0 {
-                -(pv + fv) / nper
-            } else {
-                let pvif = (1.0 + rate).powf(nper);
-
-                -(pv * pvif + fv)
-                    / (((pvif - 1.0) / rate)
-                        * if payment_at_beginning {
-                            1.0 + rate
-                        } else {
-                            1.0
-                        })
-            };
-
-            Ok(Value::Number(pmt))
+            Ok(Value::Number(pmt(rate, nper, pv, fv, payment_type != 0.0)))
         }
         "DB" => {
             if args.len() < 4 || args.len() > 5 {
@@ -65,7 +50,7 @@ pub fn exec_financial(name: &str, args: &[Value]) -> Result<Value, Error> {
             let period = args[3]
                 .as_number()
                 .ok_or_else(|| Error::new("DB period must be a number", None))?;
-            let month = args.get(4).and_then(|v| v.as_number()).unwrap_or(12.0);
+            let month = optional_number_arg("DB", args, 4, "month", 12.0)?;
 
             if cost < 0.0 || salvage < 0.0 || life <= 0.0 || period < 0.0 {
                 return Err(Error::new(
@@ -115,29 +100,14 @@ pub fn exec_financial(name: &str, args: &[Value]) -> Result<Value, Error> {
             let pmt = args[2]
                 .as_number()
                 .ok_or_else(|| Error::new("FV pmt must be a number", None))?;
-            let pv = args.get(3).and_then(|v| v.as_number()).unwrap_or(0.0);
-            let payment_type = args.get(4).and_then(|v| v.as_number()).unwrap_or(0.0);
+            let pv = optional_number_arg("FV", args, 3, "pv", 0.0)?;
+            let payment_type = optional_number_arg("FV", args, 4, "type", 0.0)?;
 
             if nper < 0.0 {
                 return Err(Error::new("FV nper must be non-negative", None));
             }
 
-            let payment_at_beginning = payment_type != 0.0;
-
-            if rate == 0.0 {
-                let fv = -pv - pmt * nper;
-                Ok(Value::Number(fv))
-            } else {
-                let compound_factor = (1.0 + rate).powf(nper);
-                let annuity_factor = ((compound_factor - 1.0) / rate)
-                    * if payment_at_beginning {
-                        1.0 + rate
-                    } else {
-                        1.0
-                    };
-                let fv = -pv * compound_factor - pmt * annuity_factor;
-                Ok(Value::Number(fv))
-            }
+            Ok(Value::Number(fv(rate, nper, pmt, pv, payment_type != 0.0)))
         }
         "IPMT" => {
             if args.len() < 4 || args.len() > 6 {
@@ -159,50 +129,160 @@ pub fn exec_financial(name: &str, args: &[Value]) -> Result<Value, Error> {
             let pv = args[3]
                 .as_number()
                 .ok_or_else(|| Error::new("IPMT pv must be a number", None))?;
-            let fv = args.get(4).and_then(|v| v.as_number()).unwrap_or(0.0);
-            let payment_type = args.get(5).and_then(|v| v.as_number()).unwrap_or(0.0);
+            let fv = optional_number_arg("IPMT", args, 4, "fv", 0.0)?;
+            let payment_type = optional_number_arg("IPMT", args, 5, "type", 0.0)?;
 
             if per < 1.0 || per > nper || nper <= 0.0 {
                 return Err(Error::new("IPMT period must be between 1 and nper", None));
             }
 
-            let payment_at_beginning = payment_type != 0.0;
-
-            if rate == 0.0 {
-                Ok(Value::Number(0.0))
-            } else {
-                let pvif = (1.0 + rate).powf(nper);
-                let pmt = -(pv * pvif + fv)
-                    / (((pvif - 1.0) / rate)
-                        * if payment_at_beginning {
-                            1.0 + rate
-                        } else {
-                            1.0
-                        });
-
-                let mut balance = pv;
-                for _p in 1..(per as i32) {
-                    let interest = balance * rate;
-                    let principal = if payment_at_beginning {
-                        pmt - interest / (1.0 + rate)
-                    } else {
-                        pmt - interest
-                    };
-                    balance += principal;
-                }
-
-                let interest_payment = if payment_at_beginning && per == 1.0 {
-                    0.0
-                } else {
-                    balance * rate
-                };
-
-                Ok(Value::Number(interest_payment))
-            }
+            let at_start = payment_type != 0.0;
+            Ok(Value::Number(ipmt(rate, per, nper, pv, fv, at_start)))
         }
+        "PPMT" => exec_ppmt(args),
+        "PV" => exec_pv(args),
+        "NPV" => exec_npv(args),
         _ => Err(Error::new(
             format!("Unknown financial function: {}", name),
             None,
         )),
     }
+}
+
+/// A required numeric argument (number or currency).
+fn required(args: &[Value], i: usize, func: &str, what: &str) -> Result<f64, Error> {
+    match args.get(i) {
+        Some(Value::Number(n)) | Some(Value::Currency(n)) => Ok(*n),
+        _ => Err(Error::new(format!("{func} {what} must be a number"), None)),
+    }
+}
+
+/// An optional numeric argument: missing or NULL gives `default`; any other non-number is an
+/// error (Excel `#VALUE!`), never silently ignored.
+fn optional(args: &[Value], i: usize, default: f64, func: &str, what: &str) -> Result<f64, Error> {
+    match args.get(i) {
+        None | Some(Value::Null) => Ok(default),
+        Some(_) => required(args, i, func, what),
+    }
+}
+
+/// A finite result, or Excel's `#NUM!` as an error.
+fn finite(func: &str, v: f64) -> Result<Value, Error> {
+    if v.is_finite() {
+        Ok(Value::Number(v))
+    } else {
+        Err(Error::new(
+            format!("{func} result is not a finite number"),
+            None,
+        ))
+    }
+}
+
+/// Payment per period (Excel `PMT`).
+fn pmt(rate: f64, nper: f64, pv: f64, fv: f64, at_start: bool) -> f64 {
+    if rate == 0.0 {
+        return -(pv + fv) / nper;
+    }
+    let pvif = (1.0 + rate).powf(nper);
+    let due = if at_start { 1.0 + rate } else { 1.0 };
+    -(pv * pvif + fv) / (((pvif - 1.0) / rate) * due)
+}
+
+/// Future value (Excel `FV`): the balance after `nper` periods, with Excel's sign convention.
+fn fv(rate: f64, nper: f64, pmt: f64, pv: f64, at_start: bool) -> f64 {
+    if rate == 0.0 {
+        return -pv - pmt * nper;
+    }
+    let factor = (1.0 + rate).powf(nper);
+    let due = if at_start { 1.0 + rate } else { 1.0 };
+    -pv * factor - pmt * ((factor - 1.0) / rate) * due
+}
+
+/// Interest part of payment `per` (Excel `IPMT`): the interest on the balance at the start of
+/// the period, `FV(rate, per - 1, pmt, pv, type) * rate`, so it is negative for a positive `pv`.
+/// With payments at the start of the period the first period has no interest and the others are
+/// discounted by one period.
+fn ipmt(rate: f64, per: f64, nper: f64, pv: f64, fv_: f64, at_start: bool) -> f64 {
+    if rate == 0.0 || (at_start && per == 1.0) {
+        return 0.0;
+    }
+    let payment = pmt(rate, nper, pv, fv_, at_start);
+    let interest = fv(rate, per - 1.0, payment, pv, at_start) * rate;
+    if at_start {
+        interest / (1.0 + rate)
+    } else {
+        interest
+    }
+}
+
+/// Excel `PPMT(rate, per, nper, pv, [fv], [type])`: the principal part of payment `per`,
+/// `PMT - IPMT`, with Excel's signs (negative for a positive `pv`).
+fn exec_ppmt(args: &[Value]) -> Result<Value, Error> {
+    if args.len() < 4 || args.len() > 6 {
+        return Err(Error::new(
+            "PPMT expects 4-6 arguments: rate, per, nper, pv, [fv], [type]",
+            None,
+        ));
+    }
+    let rate = required(args, 0, "PPMT", "rate")?;
+    let per = required(args, 1, "PPMT", "per")?;
+    let nper = required(args, 2, "PPMT", "nper")?;
+    let pv = required(args, 3, "PPMT", "pv")?;
+    let fv_ = optional(args, 4, 0.0, "PPMT", "fv")?;
+    let begin = optional(args, 5, 0.0, "PPMT", "type")? != 0.0;
+    // NaN fails both comparisons, so it is rejected too.
+    if !(per >= 1.0 && per <= nper) {
+        return Err(Error::new("PPMT per must be between 1 and nper", None));
+    }
+    let payment = pmt(rate, nper, pv, fv_, begin);
+    finite("PPMT", payment - ipmt(rate, per, nper, pv, fv_, begin))
+}
+
+/// Excel `PV(rate, nper, pmt, [fv], [type])`: the present value of a series of payments.
+fn exec_pv(args: &[Value]) -> Result<Value, Error> {
+    if args.len() < 3 || args.len() > 5 {
+        return Err(Error::new(
+            "PV expects 3-5 arguments: rate, nper, pmt, [fv], [type]",
+            None,
+        ));
+    }
+    let rate = required(args, 0, "PV", "rate")?;
+    let nper = required(args, 1, "PV", "nper")?;
+    let payment = required(args, 2, "PV", "pmt")?;
+    let fv_ = optional(args, 3, 0.0, "PV", "fv")?;
+    let begin = optional(args, 4, 0.0, "PV", "type")? != 0.0;
+    let pv = if rate == 0.0 {
+        -fv_ - payment * nper
+    } else {
+        let pvif = (1.0 + rate).powf(nper);
+        let due = if begin { 1.0 + rate } else { 1.0 };
+        -(fv_ + payment * due * (pvif - 1.0) / rate) / pvif
+    };
+    finite("PV", pv)
+}
+
+/// Excel `NPV(rate, value1, ...)`: `Σ value_i / (1 + rate)^i` for i = 1.., in argument order.
+/// Arrays are flattened; as in `SUM`, only numbers and currency count (Excel audit X-3).
+fn exec_npv(args: &[Value]) -> Result<Value, Error> {
+    fn collect(v: &Value, out: &mut Vec<f64>) {
+        match v {
+            Value::Number(n) | Value::Currency(n) => out.push(*n),
+            Value::Array(items) => items.iter().for_each(|it| collect(it, out)),
+            _ => {}
+        }
+    }
+    if args.len() < 2 {
+        return Err(Error::new("NPV expects rate, value1, [value2], ...", None));
+    }
+    let rate = required(args, 0, "NPV", "rate")?;
+    let mut values = Vec::new();
+    args[1..].iter().for_each(|v| collect(v, &mut values));
+    if values.is_empty() {
+        return Err(Error::new("NPV expects at least one number", None));
+    }
+    let npv: f64 = (1..)
+        .zip(values)
+        .map(|(i, v)| v / (1.0 + rate).powf(f64::from(i)))
+        .sum();
+    finite("NPV", npv)
 }

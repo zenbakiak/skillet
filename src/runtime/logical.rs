@@ -1,6 +1,15 @@
 use crate::error::Error;
 use crate::types::Value;
 
+/// Truthiness of a condition for `IF`/`IFS`: TRUE, or a non-zero number.
+pub(crate) fn truthy(v: &Value) -> bool {
+    match v {
+        Value::Boolean(b) => *b,
+        Value::Number(n) => *n != 0.0,
+        _ => false,
+    }
+}
+
 pub fn exec_logical(name: &str, args: &[Value]) -> Result<Value, Error> {
     match name {
         "__CONST_TRUE__" => Ok(Value::Boolean(true)),
@@ -76,12 +85,7 @@ pub fn exec_logical(name: &str, args: &[Value]) -> Result<Value, Error> {
             if args.len() < 2 {
                 return Err(Error::new("IF expects at least 2 arguments", None));
             }
-            let cond = match &args[0] {
-                Value::Boolean(b) => *b,
-                Value::Number(n) => *n != 0.0,
-                _ => false,
-            };
-            if cond {
+            if truthy(&args[0]) {
                 Ok(args[1].clone())
             } else {
                 Ok(args.get(2).cloned().unwrap_or(Value::Boolean(false)))
@@ -95,15 +99,8 @@ pub fn exec_logical(name: &str, args: &[Value]) -> Result<Value, Error> {
                 ));
             }
             for chunk in args.chunks(2) {
-                if chunk.len() == 2 {
-                    let cond = match &chunk[0] {
-                        Value::Boolean(b) => *b,
-                        Value::Number(n) => *n != 0.0,
-                        _ => false,
-                    };
-                    if cond {
-                        return Ok(chunk[1].clone());
-                    }
+                if chunk.len() == 2 && truthy(&chunk[0]) {
+                    return Ok(chunk[1].clone());
                 }
             }
             Ok(Value::Boolean(false))
