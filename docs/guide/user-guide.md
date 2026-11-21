@@ -618,6 +618,11 @@ fn main() -> Result<(), Error> {
     let result = skillet::evaluate_with_custom("DOUBLE(21)", &std::collections::HashMap::new())?;
     println!("{:?}", result); // Number(42.0)
 
+    // Visible in every sub-expression too: lambdas, method arguments, `:=` steps (ADR-0016)
+    let vars = std::collections::HashMap::new();
+    let result = skillet::evaluate_with_custom("MAP([1, 2], DOUBLE(:x))", &vars)?;
+    println!("{:?}", result); // Array([Number(2.0), Number(4.0)])
+
     Ok(())
 }
 ```
@@ -781,7 +786,11 @@ fn manage_functions() -> Result<(), Error> {
 sk "=2 + 3 * 4"                    # 14
 sk "=(10 + 20) / 3"                # 10
 sk "=2 ^ 3"                        # 8 (exponentiation)
+sk "=2 ^ 3 ^ 2"                    # 64 (left to right, as in Excel)
+sk "=-2 ^ 2"                       # 4 (negation first, as in Excel)
 sk "=10 % 3"                       # 1 (modulo)
+sk "=200 * 15%"                    # 30 (percent suffix)
+sk "=\"Total: \" & 42"              # "Total: 42" (& joins text)
 
 # With variables
 sk "=:price * (1 + :tax)" price=100 tax=0.08    # 108
@@ -798,8 +807,10 @@ sk "=MIN(15, 8, 23, 4, 16)"                    # 4
 sk "=COUNT(1, 2, 3, \"text\", 4)"              # 4 (counts numbers only)
 
 # Advanced statistics
-sk "=STDEV_P(2, 4, 4, 4, 5, 5, 7, 9)"         # Population standard deviation
-sk "=VAR_P(2, 4, 4, 4, 5, 5, 7, 9)"           # Population variance
+sk "=STDEV.P(2, 4, 4, 4, 5, 5, 7, 9)"         # 2 (population standard deviation)
+sk "=STDEV.S(2, 4, 4, 4, 5, 5, 7, 9)"         # 2.138... (sample standard deviation)
+sk "=VAR.P(2, 4, 4, 4, 5, 5, 7, 9)"           # 4 (population variance)
+sk "=VAR.S(2, 4, 4, 4, 5, 5, 7, 9)"           # 4.571... (sample variance)
 sk "=MEDIAN(1, 2, 3, 4, 5)"                   # 3
 sk "=MODE_SNGL(1, 2, 2, 3, 4, 4, 4)"          # 4 (most frequent)
 sk "=PERCENTILE_INC([1,2,3,4,5], 0.5)"        # 3 (50th percentile)
@@ -818,6 +829,9 @@ sk "=XOR(true, false)"                         # true
 
 # Complex logical
 sk "=IFS(false, \"A\", true, \"B\", true, \"C\")"  # "B" (first true condition)
+
+# Only the chosen branch is evaluated, so IF can guard an error
+sk "=IF(:qty == 0, 0, :total / :qty)" qty=0 total=10        # 0
 sk "=IF(AND(:score >= 90, :attendance > 0.8), \"A\", IF(:score >= 80, \"B\", \"C\"))" score=85 attendance=0.9
 ```
 
