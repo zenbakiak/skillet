@@ -29,6 +29,11 @@
 //! | [`evaluate_with_assignments`] | `HashMap` | no | yes |
 //! | [`evaluate_with_assignments_and_context`] | `HashMap` | no | yes, returns the variables |
 //!
+//! Each of [`evaluate`], [`evaluate_with`], [`evaluate_with_custom`],
+//! [`evaluate_with_assignments`] and [`evaluate_with_assignments_and_context`] has an
+//! `evaluate_parsed*` twin ([`evaluate_parsed`], [`evaluate_parsed_with`], …) that takes the
+//! [`Expr`] returned by [`parse`], so a formula used many times is parsed once.
+//!
 //! Every evaluation runs under the limits in [`MAX_NESTING_DEPTH`] and [`MAX_EVAL_BYTES`]; use
 //! [`with_limits`] to tighten them or add a deadline. See `docs/guide/limits.md`.
 
@@ -149,8 +154,7 @@ pub fn parse(input: &str) -> Result<Expr, Error> {
 /// assert_eq!(evaluate(":price").unwrap_err().message, "Missing variable: :price");
 /// ```
 pub fn evaluate(input: &str) -> Result<Value, Error> {
-    let expr = parse(input)?;
-    runtime::evaluator::eval(&expr)
+    evaluate_parsed(&parse(input)?)
 }
 
 /// Evaluate an expression with variables.
@@ -171,8 +175,7 @@ pub fn evaluate(input: &str) -> Result<Value, Error> {
 /// assert_eq!(evaluate_with(":name.upper()", &vars).unwrap(), Value::String("ADA".to_string()));
 /// ```
 pub fn evaluate_with(input: &str, vars: &HashMap<String, Value>) -> Result<Value, Error> {
-    let expr = parse(input)?;
-    runtime::evaluator::eval_with_vars(&expr, vars)
+    evaluate_parsed_with(&parse(input)?, vars)
 }
 
 /// Evaluate an expression with variables given as a JSON object.
@@ -419,8 +422,7 @@ pub fn has_custom_function(name: &str) -> bool {
 /// );
 /// ```
 pub fn evaluate_with_custom(input: &str, vars: &HashMap<String, Value>) -> Result<Value, Error> {
-    let expr = parse(input)?;
-    runtime::evaluator::eval_with_vars_and_custom(&expr, vars, &GLOBAL_REGISTRY)
+    evaluate_parsed_with_custom(&parse(input)?, vars)
 }
 
 /// Evaluate an expression with JSON variables and the custom functions in the process-wide
@@ -475,8 +477,7 @@ pub fn evaluate_with_assignments(
     input: &str,
     vars: &HashMap<String, Value>,
 ) -> Result<Value, Error> {
-    let expr = parse(input)?;
-    runtime::evaluator::eval_with_assignments(&expr, vars)
+    evaluate_parsed_with_assignments(&parse(input)?, vars)
 }
 
 /// Like [`evaluate_with_assignments`], but also return the variables after evaluation: the
@@ -498,8 +499,129 @@ pub fn evaluate_with_assignments_and_context(
     input: &str,
     vars: &HashMap<String, Value>,
 ) -> Result<(Value, HashMap<String, Value>), Error> {
-    let expr = parse(input)?;
-    runtime::evaluator::eval_with_assignments_and_context(&expr, vars)
+    evaluate_parsed_with_assignments_and_context(&parse(input)?, vars)
+}
+
+/// Evaluate an expression that [`parse`] already parsed, with no variables.
+///
+/// The `evaluate_parsed*` functions are the second half of the matching `evaluate*` function:
+/// `evaluate(text)` is exactly `evaluate_parsed(&parse(text)?)`, with the same result and the
+/// same errors. Parse once and evaluate many times when the same formula runs with different
+/// variables; this saves the parse, which is most of the cost for short formulas and ~25 µs for
+/// a 1.8 KB one (`benches/BASELINE.md`).
+///
+/// Limits are the same as for a text evaluation: [`parse`] rejects input nested deeper than
+/// [`MAX_NESTING_DEPTH`], and each `evaluate_parsed*` call runs under the evaluation budget
+/// ([`MAX_EVAL_BYTES`]) and any deadline set with [`with_limits`], counted from zero for each call
+/// (unless the call runs inside an outer scope). Pass trees that came from [`parse`]: a tree built
+/// by hand is not checked for depth, and a very deep one can overflow the stack.
+///
+/// ```rust
+/// use skillet::{evaluate_parsed, parse, Value};
+///
+/// let expr = parse("=SUM(1, 2, 3) * 2").unwrap();
+/// assert_eq!(evaluate_parsed(&expr).unwrap(), Value::Number(12.0));
+/// assert_eq!(evaluate_parsed(&expr).unwrap(), Value::Number(12.0)); // reusable
+/// ```
+pub fn evaluate_parsed(expr: &Expr) -> Result<Value, Error> {
+    runtime::evaluator::eval(expr)
+}
+
+/// Evaluate a parsed expression with variables: [`evaluate_with`] without the parse.
+///
+/// See [`evaluate_parsed`] for the limits that apply.
+///
+/// ```rust
+/// use std::collections::HashMap;
+/// use skillet::{evaluate_parsed_with, parse, Value};
+///
+/// let expr = parse(":price * :qty").unwrap();
+/// for (price, total) in [(2.5, 10.0), (3.0, 12.0)] {
+///     let mut vars = HashMap::new();
+///     vars.insert("price".to_string(), Value::Number(price));
+///     vars.insert("qty".to_string(), Value::Number(4.0));
+///     assert_eq!(evaluate_parsed_with(&expr, &vars).unwrap(), Value::Number(total));
+/// }
+/// ```
+pub fn evaluate_parsed_with(expr: &Expr, vars: &HashMap<String, Value>) -> Result<Value, Error> {
+    runtime::evaluator::eval_with_vars(expr, vars)
+}
+
+/// Evaluate a parsed expression with variables and the process-wide custom functions:
+/// [`evaluate_with_custom`] without the parse.
+///
+/// Functions are looked up when the expression is evaluated, not when it is parsed, so a
+/// function registered after [`parse`] is visible. See [`evaluate_parsed`] for the limits.
+///
+/// ```rust
+/// use std::collections::HashMap;
+/// use skillet::{evaluate_parsed_with_custom, parse, CustomFunction, Error, Value};
+///
+/// struct Triple;
+///
+/// impl CustomFunction for Triple {
+///     fn name(&self) -> &str { "TRIPLE" }
+///     fn min_args(&self) -> usize { 1 }
+///     fn max_args(&self) -> Option<usize> { Some(1) }
+///     fn execute(&self, args: Vec<Value>) -> Result<Value, Error> {
+///         let n = args[0].as_number().ok_or_else(|| Error::new("TRIPLE expects a number", None))?;
+///         Ok(Value::Number(n * 3.0))
+///     }
+/// }
+///
+/// let expr = parse("TRIPLE(:n) + 1").unwrap();
+/// skillet::register_function(Box::new(Triple)).unwrap();
+///
+/// let mut vars = HashMap::new();
+/// vars.insert("n".to_string(), Value::Number(5.0));
+/// assert_eq!(evaluate_parsed_with_custom(&expr, &vars).unwrap(), Value::Number(16.0));
+/// ```
+pub fn evaluate_parsed_with_custom(
+    expr: &Expr,
+    vars: &HashMap<String, Value>,
+) -> Result<Value, Error> {
+    runtime::evaluator::eval_with_vars_and_custom(expr, vars, &GLOBAL_REGISTRY)
+}
+
+/// Evaluate a parsed expression that may assign variables and chain steps with `;`:
+/// [`evaluate_with_assignments`] without the parse.
+///
+/// `vars` is not modified. See [`evaluate_parsed`] for the limits.
+///
+/// ```rust
+/// use std::collections::HashMap;
+/// use skillet::{evaluate_parsed_with_assignments, parse, Value};
+///
+/// let expr = parse(":tax := :base * 0.5; :base + :tax").unwrap();
+/// let mut vars = HashMap::new();
+/// vars.insert("base".to_string(), Value::Number(10.0));
+/// assert_eq!(evaluate_parsed_with_assignments(&expr, &vars).unwrap(), Value::Number(15.0));
+/// ```
+pub fn evaluate_parsed_with_assignments(
+    expr: &Expr,
+    vars: &HashMap<String, Value>,
+) -> Result<Value, Error> {
+    runtime::evaluator::eval_with_assignments(expr, vars)
+}
+
+/// Like [`evaluate_parsed_with_assignments`], but also return the variables after evaluation:
+/// [`evaluate_with_assignments_and_context`] without the parse.
+///
+/// ```rust
+/// use std::collections::HashMap;
+/// use skillet::{evaluate_parsed_with_assignments_and_context, parse, Value};
+///
+/// let expr = parse(":a := 2; :b := :a * 3; :b + 1").unwrap();
+/// let (result, out) =
+///     evaluate_parsed_with_assignments_and_context(&expr, &HashMap::new()).unwrap();
+/// assert_eq!(result, Value::Number(7.0));
+/// assert_eq!(out.get("b"), Some(&Value::Number(6.0)));
+/// ```
+pub fn evaluate_parsed_with_assignments_and_context(
+    expr: &Expr,
+    vars: &HashMap<String, Value>,
+) -> Result<(Value, HashMap<String, Value>), Error> {
+    runtime::evaluator::eval_with_assignments_and_context(expr, vars)
 }
 
 #[cfg(test)]
