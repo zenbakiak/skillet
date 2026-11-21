@@ -12,8 +12,8 @@ keywords = ["excel", "formula", "expression", "language", "eval"]
 # Keep the published crate small and clean
 include = [
   "Cargo.toml",
-  "README.md",
-  "CHANGELOG.md",
+  "/README.md",
+  "/CHANGELOG.md",
   "LICENSE-MIT",
   "LICENSE-APACHE",
   "docs/guide/**",
