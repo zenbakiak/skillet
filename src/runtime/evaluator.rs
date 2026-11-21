@@ -216,18 +216,7 @@ impl Evaluator {
                 check_value(Value::Array(out))
             }
 
-            Expr::ObjectLiteral(pairs) => {
-                let mut json_map = serde_json::Map::new();
-                for (key, value_expr) in pairs {
-                    let value = Self::eval(value_expr, context)?;
-                    let json_value = Self::value_to_json(&value)?;
-                    json_map.insert(key.clone(), json_value);
-                }
-                let json_obj = serde_json::Value::Object(json_map);
-                let json_str = serde_json::to_string(&json_obj)
-                    .map_err(|e| Error::new(format!("Failed to serialize object: {}", e), None))?;
-                check_value(Value::Json(json_str))
-            }
+            Expr::ObjectLiteral(pairs) => Self::eval_object_literal(pairs, context),
 
             Expr::TypeCast { expr, ty } => {
                 let v = Self::eval(expr, context)?;
@@ -415,6 +404,28 @@ impl Evaluator {
 
     /// Run `f` on the value of a method/property target. A plain variable is borrowed
     /// instead of cloned, so `:rows.length()` inside a lambda does not copy `:rows`.
+    /// `{"k": v, …}`: a `Json` object. Escaping can grow the text 6x (`\u0001`), so its exact
+    /// size is charged before it is built; that charge is the result's cost (not checked again).
+    /// Out of line so this cold path does not change code layout of the hot `eval` match
+    /// (measured: inline, `lambda_scope` `:nums.map(:x * 1)` was +6%).
+    #[inline(never)]
+    fn eval_object_literal<C: EvaluationContext>(
+        pairs: &[(String, Expr)],
+        context: &C,
+    ) -> Result<Value, Error> {
+        let mut json_map = serde_json::Map::new();
+        for (key, value_expr) in pairs {
+            let value = Self::eval(value_expr, context)?;
+            let json_value = Self::value_to_json(&value)?;
+            json_map.insert(key.clone(), json_value);
+        }
+        let json_obj = serde_json::Value::Object(json_map);
+        limits::charge_json_text(&json_obj)?;
+        let json_str = serde_json::to_string(&json_obj)
+            .map_err(|e| Error::new(format!("Failed to serialize object: {}", e), None))?;
+        Ok(Value::Json(json_str))
+    }
+
     fn with_target<C: EvaluationContext>(
         target: &Expr,
         context: &C,

@@ -229,8 +229,8 @@ pub(crate) fn charge_join<S: AsRef<str>>(parts: &[S], sep: &str) -> Result<(), E
 }
 
 /// Pre-charge a value about to be built from a JSON node (a `JQ` match): numbers, booleans and
-/// null 32; strings 32 + len; arrays 32 + items; objects 32 + Σ (key len + value), since they
-/// become a `Json` string of about that size.
+/// null 32; strings 32 + len; arrays 32 + items; objects 32 + Σ (key len + value), or 32 + their
+/// serialized size when that is larger (escapes), since they become a `Json` string.
 pub(crate) fn charge_json_node(node: &serde_json::Value) -> Result<(), Error> {
     let cap = remaining();
     let mut cost = 0;
@@ -263,6 +263,16 @@ pub(crate) fn charge_formatted(write: impl FnOnce(&mut ByteCounter)) -> Result<(
 /// Pre-charge the JSON text of a string (`.to_json()`): quotes plus escaped length.
 pub(crate) fn charge_json_string(s: &str) -> Result<(), Error> {
     charge_string(json_escaped_len(s).saturating_add(2))
+}
+
+/// Pre-charge the JSON text of `json` (object literals, `.to_json()` on arrays): the exact
+/// `serde_json` output size, counted with no allocation. Escaping grows control characters 6x
+/// (`\u0001`), so the size of the values alone is not an upper bound.
+pub(crate) fn charge_json_text(json: &serde_json::Value) -> Result<(), Error> {
+    let mut counter = ByteCounter(0);
+    serde_json::to_writer(&mut counter, json)
+        .map_err(|e| Error::new(format!("Failed to serialize JSON: {}", e), None))?;
+    charge_string(usize::try_from(counter.0).unwrap_or(usize::MAX))
 }
 
 /// Check a value whose cost was pre-charged by the builtin that built it (`MERGE`, `CONCAT`):
@@ -411,12 +421,18 @@ fn walk_items(items: &[Value], depth_left: usize, cost: &mut u64, cap: u64) -> W
 }
 
 fn add_json_cost(node: &serde_json::Value, cost: &mut u64, cap: u64) -> bool {
+    add_json_node_cost(node, cost, cap, false)
+}
+
+/// `in_object`: the node is part of an object that is already charged as JSON text.
+fn add_json_node_cost(node: &serde_json::Value, cost: &mut u64, cap: u64, in_object: bool) -> bool {
+    let start = *cost;
     *cost = cost.saturating_add(VALUE_COST);
     match node {
         serde_json::Value::String(s) => *cost = cost.saturating_add(s.len() as u64),
         serde_json::Value::Array(items) => {
             for item in items {
-                if !add_json_cost(item, cost, cap) {
+                if !add_json_node_cost(item, cost, cap, in_object) {
                     return false;
                 }
             }
@@ -424,8 +440,17 @@ fn add_json_cost(node: &serde_json::Value, cost: &mut u64, cap: u64) -> bool {
         serde_json::Value::Object(map) => {
             for (k, v) in map {
                 *cost = cost.saturating_add(k.len() as u64);
-                if !add_json_cost(v, cost, cap) {
+                if !add_json_node_cost(v, cost, cap, true) {
                     return false;
+                }
+            }
+            // An object becomes `Json` text, and escaping can make that text larger than its
+            // parts (6x for control characters): charge at least its exact serialized size.
+            if !in_object {
+                let mut text = ByteCounter(0);
+                if serde_json::to_writer(&mut text, node).is_ok() {
+                    let as_text = start.saturating_add(VALUE_COST).saturating_add(text.0);
+                    *cost = (*cost).max(as_text);
                 }
             }
         }

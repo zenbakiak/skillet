@@ -159,10 +159,7 @@ fn to_json(value: &Value) -> Result<Value, Error> {
                 arr.iter().map(value_to_json_value).collect();
             let json_val = serde_json::Value::Array(json_array?);
             // Size the escaped text without building it, then charge it before allocating.
-            let mut counter = limits::ByteCounter(0);
-            serde_json::to_writer(&mut counter, &json_val)
-                .map_err(|e| Error::new(format!("Failed to convert to JSON: {}", e), None))?;
-            limits::charge_string(usize::try_from(counter.0).unwrap_or(usize::MAX))?;
+            limits::charge_json_text(&json_val)?;
             serde_json::to_string(&json_val)
                 .map_err(|e| Error::new(format!("Failed to convert to JSON: {}", e), None))?
         }
