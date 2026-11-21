@@ -67,14 +67,13 @@ pub fn handle_update_js(
         }
     };
 
-    // Validate filename ends with .js
-    if !update_request.filename.ends_with(".js") {
+    if let Err((message, error)) = check_hook_filename(&update_request.filename) {
         let response = UpdateJSResponse {
             success: false,
-            message: "Filename must end with .js extension".to_string(),
+            message,
             function_name: None,
             validation_results: None,
-            error: Some("Invalid file extension".to_string()),
+            error: Some(error),
         };
         let json = serde_json::to_string(&response).unwrap_or_default();
         send_http_response(stream, 400, "application/json", &json);
@@ -184,12 +183,11 @@ pub fn handle_delete_js(
         }
     };
 
-    // Validate filename ends with .js
-    if !delete_request.filename.ends_with(".js") {
+    if let Err((message, error)) = check_hook_filename(&delete_request.filename) {
         let response = DeleteJSResponse {
             success: false,
-            message: "Filename must end with .js extension".to_string(),
-            error: Some("Invalid file extension".to_string()),
+            message,
+            error: Some(error),
         };
         let json = serde_json::to_string(&response).unwrap_or_default();
         send_http_response(stream, 400, "application/json", &json);
@@ -242,14 +240,13 @@ pub fn handle_upload_js(
         }
     };
 
-    // Validate filename ends with .js
-    if !upload_request.filename.ends_with(".js") {
+    if let Err((message, error)) = check_hook_filename(&upload_request.filename) {
         let response = UploadJSResponse {
             success: false,
-            message: "Filename must end with .js extension".to_string(),
+            message,
             function_name: None,
             validation_results: None,
-            error: Some("Invalid file extension".to_string()),
+            error: Some(error),
         };
         let json = serde_json::to_string(&response).unwrap_or_default();
         send_http_response(stream, 400, "application/json", &json);
@@ -502,8 +499,35 @@ fn format_value_for_comparison(value: &Value) -> String {
     }
 }
 
+/// Hook files are managed by plain name only: `^[A-Za-z0-9_-]+\.js$`, so a request can only
+/// touch files directly inside the hooks directory. Returns `(message, error)` for a 400.
+fn check_hook_filename(filename: &str) -> Result<(), (String, String)> {
+    let Some(stem) = filename.strip_suffix(".js") else {
+        return Err((
+            "Filename must end with .js extension".to_string(),
+            "Invalid file extension".to_string(),
+        ));
+    };
+    let plain = !stem.is_empty()
+        && stem
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-');
+    if plain {
+        Ok(())
+    } else {
+        Err((
+            "Filename must be a plain name of letters, digits, '_' or '-' ending in .js \
+             (no directories)"
+                .to_string(),
+            "Invalid filename".to_string(),
+        ))
+    }
+}
+
 fn save_js_file(hooks_dir: &str, filename: &str, js_code: &str) -> Result<(), String> {
     use std::path::Path;
+
+    check_hook_filename(filename).map_err(|(message, _)| message)?;
 
     // Ensure hooks directory exists
     let hooks_path = Path::new(hooks_dir);
@@ -521,6 +545,8 @@ fn save_js_file(hooks_dir: &str, filename: &str, js_code: &str) -> Result<(), St
 
 fn delete_js_file(hooks_dir: &str, filename: &str) -> Result<(), String> {
     use std::path::Path;
+
+    check_hook_filename(filename).map_err(|(message, _)| message)?;
 
     let hooks_path = Path::new(hooks_dir);
     let file_path = hooks_path.join(filename);
@@ -549,7 +575,17 @@ fn list_js_functions(hooks_dir: &str) -> Result<Vec<JSFunctionInfo>, String> {
     let mut functions = Vec::new();
 
     // Recursively scan directory for JS files
-    scan_directory_for_js(hooks_path, hooks_path, &mut functions)?;
+    let real_root = hooks_path
+        .canonicalize()
+        .map_err(|e| format!("Failed to read hooks directory: {}", e))?;
+    let mut visited = std::collections::HashSet::from([real_root.clone()]);
+    scan_directory_for_js(
+        hooks_path,
+        hooks_path,
+        &real_root,
+        &mut visited,
+        &mut functions,
+    )?;
 
     // Sort by filename for consistent ordering
     functions.sort_by(|a, b| a.filename.cmp(&b.filename));
@@ -557,9 +593,13 @@ fn list_js_functions(hooks_dir: &str) -> Result<Vec<JSFunctionInfo>, String> {
     Ok(functions)
 }
 
+/// Entries are resolved first: anything that resolves outside `real_root` is skipped, and each
+/// directory is read once.
 fn scan_directory_for_js(
     current_dir: &std::path::Path,
     hooks_root: &std::path::Path,
+    real_root: &std::path::Path,
+    visited: &mut std::collections::HashSet<std::path::PathBuf>,
     functions: &mut Vec<JSFunctionInfo>,
 ) -> Result<(), String> {
     let entries =
@@ -569,10 +609,16 @@ fn scan_directory_for_js(
         let entry = entry.map_err(|e| format!("Failed to read directory entry: {}", e))?;
 
         let path = entry.path();
+        let real = match path.canonicalize() {
+            Ok(real) if real.starts_with(real_root) => real,
+            _ => continue,
+        };
 
-        if path.is_dir() {
+        if real.is_dir() {
             // Recursively scan subdirectories
-            scan_directory_for_js(&path, hooks_root, functions)?;
+            if visited.insert(real) {
+                scan_directory_for_js(&path, hooks_root, real_root, visited, functions)?;
+            }
         } else if path.extension().and_then(|s| s.to_str()) == Some("js") {
             // Get relative path from hooks root
             let relative_path = path
@@ -607,7 +653,7 @@ fn scan_directory_for_js(
                 max_args,
                 is_valid,
                 validation_error,
-            ) = match fs::read_to_string(&path) {
+            ) = match fs::read_to_string(&real) {
                 Ok(content) => match JavaScriptFunction::parse_js_function(&content) {
                     Ok(js_func) => (
                         Some(js_func.name().to_string()),

@@ -1,6 +1,7 @@
 use crate::error::Error;
 use crate::types::Value;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Trait for implementing custom functions in skillet
 ///
@@ -58,9 +59,12 @@ pub trait CustomFunction: Send + Sync {
 }
 
 /// Registry for custom functions
+///
+/// Functions are held behind an `Arc` so a caller can take a handle and release the registry
+/// lock before running the function.
 #[derive(Default)]
 pub struct FunctionRegistry {
-    functions: HashMap<String, Box<dyn CustomFunction>>,
+    functions: HashMap<String, Arc<dyn CustomFunction>>,
 }
 
 impl FunctionRegistry {
@@ -84,7 +88,7 @@ impl FunctionRegistry {
             return Err(Error::new("min_args cannot be greater than max_args", None));
         }
 
-        self.functions.insert(name, function);
+        self.functions.insert(name, Arc::from(function));
         Ok(())
     }
 
@@ -108,41 +112,52 @@ impl FunctionRegistry {
         self.functions.contains_key(&name.to_uppercase())
     }
 
+    /// A shared handle to a function, usable after the registry lock is released.
+    pub(crate) fn get_shared(&self, name: &str) -> Option<Arc<dyn CustomFunction>> {
+        self.functions.get(&name.to_uppercase()).cloned()
+    }
+
     /// Validate and execute a function
     pub fn execute(&self, name: &str, args: Vec<Value>) -> Result<Value, Error> {
         let function = self
             .get(name)
             .ok_or_else(|| Error::new(format!("Unknown custom function: {}", name), None))?;
+        execute_checked(function, name, args)
+    }
+}
 
-        // Validate argument count
-        let arg_count = args.len();
-        if arg_count < function.min_args() {
+/// Check the argument count against the function's bounds, then run it.
+pub(crate) fn execute_checked(
+    function: &dyn CustomFunction,
+    name: &str,
+    args: Vec<Value>,
+) -> Result<Value, Error> {
+    let arg_count = args.len();
+    if arg_count < function.min_args() {
+        return Err(Error::new(
+            format!(
+                "{} expects at least {} arguments, got {}",
+                name,
+                function.min_args(),
+                arg_count
+            ),
+            None,
+        ));
+    }
+
+    if let Some(max_args) = function.max_args() {
+        if arg_count > max_args {
             return Err(Error::new(
                 format!(
-                    "{} expects at least {} arguments, got {}",
-                    name,
-                    function.min_args(),
-                    arg_count
+                    "{} expects at most {} arguments, got {}",
+                    name, max_args, arg_count
                 ),
                 None,
             ));
         }
-
-        if let Some(max_args) = function.max_args() {
-            if arg_count > max_args {
-                return Err(Error::new(
-                    format!(
-                        "{} expects at most {} arguments, got {}",
-                        name, max_args, arg_count
-                    ),
-                    None,
-                ));
-            }
-        }
-
-        // Execute the function
-        function.execute(args)
     }
+
+    function.execute(args)
 }
 
 #[cfg(test)]

@@ -1,9 +1,11 @@
 use crate::custom::CustomFunction;
 use crate::error::Error;
 use crate::types::Value;
+use crate::MAX_NESTING_DEPTH;
 use rquickjs::{Ctx, FromJs, Function as JsFunction, IntoJs, Runtime};
+use std::collections::HashSet;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// A custom function implemented in JavaScript
 pub struct JavaScriptFunction {
@@ -184,8 +186,16 @@ impl JavaScriptFunction {
         Ok(())
     }
 
-    /// Convert JavaScript value to Skillet Value
-    fn js_to_value<'js>(ctx: &Ctx<'js>, js_val: rquickjs::Value<'js>) -> Result<Value, Error> {
+    /// Convert JavaScript value to Skillet Value.
+    ///
+    /// `depth` is the number of arrays enclosing `js_val`. Arrays nest at most
+    /// [`MAX_NESTING_DEPTH`] levels (counted like the evaluator: an empty array adds no level),
+    /// which also stops self-referencing arrays before the recursion exhausts the stack.
+    fn js_to_value<'js>(
+        ctx: &Ctx<'js>,
+        js_val: rquickjs::Value<'js>,
+        depth: usize,
+    ) -> Result<Value, Error> {
         if js_val.is_null() || js_val.is_undefined() {
             Ok(Value::Null)
         } else if js_val.is_bool() {
@@ -204,14 +214,20 @@ impl JavaScriptFunction {
             let js_array: rquickjs::Array = FromJs::from_js(ctx, js_val)
                 .map_err(|e| Error::new(format!("JS conversion error: {}", e), None))?;
 
-            let mut result = Vec::new();
             let length = js_array.len();
+            if length > 0 && depth >= MAX_NESTING_DEPTH {
+                return Err(Error::new(
+                    format!("Expression nested too deeply (max {})", MAX_NESTING_DEPTH),
+                    None,
+                ));
+            }
 
+            let mut result = Vec::new();
             for i in 0..length {
                 let item = js_array
                     .get::<rquickjs::Value>(i)
                     .map_err(|e| Error::new(format!("Failed to get array element: {}", e), None))?;
-                result.push(Self::js_to_value(ctx, item)?);
+                result.push(Self::js_to_value(ctx, item, depth + 1)?);
             }
 
             Ok(Value::Array(result))
@@ -301,7 +317,7 @@ impl CustomFunction for JavaScriptFunction {
                 .map_err(|e| Error::new(format!("JS function execution failed: {}", e), None))?;
 
             // Convert result back to Skillet Value
-            Self::js_to_value(&ctx, result)
+            Self::js_to_value(&ctx, result, 0)
         })
     }
 
@@ -337,14 +353,21 @@ impl JSPluginLoader {
             return Ok(Vec::new());
         }
 
+        let root = hooks_path
+            .canonicalize()
+            .map_err(|e| Error::new(format!("Failed to read hooks directory: {}", e), None))?;
+        let mut visited = HashSet::from([root.clone()]);
         let mut functions = Vec::new();
-        Self::load_functions_recursive(hooks_path, &mut functions)?;
+        Self::load_functions_recursive(&root, &root, &mut visited, &mut functions)?;
         Ok(functions)
     }
 
-    /// Recursively load JavaScript functions from a directory
+    /// Recursively load JavaScript functions from a directory. Entries are resolved first:
+    /// anything that resolves outside `root` is skipped, and each directory is read once.
     fn load_functions_recursive(
         dir: &Path,
+        root: &Path,
+        visited: &mut HashSet<PathBuf>,
         functions: &mut Vec<Box<dyn CustomFunction>>,
     ) -> Result<(), Error> {
         let entries = fs::read_dir(dir)
@@ -355,12 +378,24 @@ impl JSPluginLoader {
                 .map_err(|e| Error::new(format!("Failed to read directory entry: {}", e), None))?;
 
             let path = entry.path();
+            let real = match path.canonicalize() {
+                Ok(real) if real.starts_with(root) => real,
+                Ok(_) => {
+                    eprintln!("Warning: Skipping {:?}: outside the hooks directory", path);
+                    continue;
+                }
+                Err(e) => {
+                    eprintln!("Warning: Skipping {:?}: {}", path, e);
+                    continue;
+                }
+            };
 
-            if path.is_dir() {
-                // Recursively search subdirectories
-                Self::load_functions_recursive(&path, functions)?;
+            if real.is_dir() {
+                if visited.insert(real.clone()) {
+                    Self::load_functions_recursive(&real, root, visited, functions)?;
+                }
             } else if path.extension().and_then(|s| s.to_str()) == Some("js") {
-                match JavaScriptFunction::from_file(&path) {
+                match JavaScriptFunction::from_file(&real) {
                     Ok(js_func) => {
                         functions.push(Box::new(js_func) as Box<dyn CustomFunction>);
                     }
@@ -455,5 +490,99 @@ mod tests {
             Value::String(s) => assert_eq!(s, "olleh"),
             _ => panic!("Expected string result"),
         }
+    }
+
+    fn hook_returning(body: &str) -> JavaScriptFunction {
+        let js_code = format!(
+            "// @name: NESTED\n// @min_args: 0\nfunction execute(args) {{ {} }}",
+            body
+        );
+        JavaScriptFunction::parse_js_function_internal(&js_code).unwrap()
+    }
+
+    fn nested_array_js(depth: usize) -> String {
+        format!(
+            "var a = [1]; for (var i = 1; i < {}; i++) {{ a = [a]; }} return a;",
+            depth
+        )
+    }
+
+    fn array_depth(v: &Value) -> usize {
+        match v {
+            Value::Array(items) => 1 + items.iter().map(array_depth).max().unwrap_or(0),
+            _ => 0,
+        }
+    }
+
+    #[test]
+    fn hook_result_at_max_nesting_depth_converts() {
+        let result = hook_returning(&nested_array_js(MAX_NESTING_DEPTH))
+            .execute(vec![])
+            .unwrap();
+        assert_eq!(array_depth(&result), MAX_NESTING_DEPTH);
+    }
+
+    #[test]
+    fn hook_result_past_max_nesting_depth_is_rejected() {
+        let err = hook_returning(&nested_array_js(MAX_NESTING_DEPTH + 1))
+            .execute(vec![])
+            .unwrap_err();
+        assert_eq!(err.message, "Expression nested too deeply (max 128)");
+    }
+
+    #[test]
+    fn hook_result_deeply_nested_array_is_rejected() {
+        let err = hook_returning(&nested_array_js(100_000))
+            .execute(vec![])
+            .unwrap_err();
+        assert_eq!(err.message, "Expression nested too deeply (max 128)");
+    }
+
+    #[test]
+    fn hook_result_self_referencing_array_is_rejected() {
+        let err = hook_returning("var a = [1]; a.push(a); return a;")
+            .execute(vec![])
+            .unwrap_err();
+        assert_eq!(err.message, "Expression nested too deeply (max 128)");
+    }
+
+    #[test]
+    fn hook_result_empty_array_below_max_depth_converts() {
+        // An empty array adds no nesting level, as in the evaluator's depth rule.
+        let body = format!(
+            "var a = []; for (var i = 0; i < {}; i++) {{ a = [a]; }} return a;",
+            MAX_NESTING_DEPTH
+        );
+        assert!(hook_returning(&body).execute(vec![]).is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn loader_skips_links_that_leave_the_hooks_dir() {
+        let hook =
+            |name: &str| format!("// @name: {}\nfunction execute(args) {{ return 1; }}", name);
+        let base = tempfile::tempdir().unwrap();
+        let hooks = base.path().join("hooks");
+        let elsewhere = base.path().join("elsewhere");
+        fs::create_dir_all(hooks.join("sub")).unwrap();
+        fs::create_dir(&elsewhere).unwrap();
+        fs::write(hooks.join("inside.js"), hook("INSIDE")).unwrap();
+        fs::write(hooks.join("sub").join("nested.js"), hook("NESTED")).unwrap();
+        fs::write(elsewhere.join("far.js"), hook("FAR")).unwrap();
+        fs::write(base.path().join("outside.js"), hook("OUTSIDE")).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, hooks.join("linked_dir")).unwrap();
+        std::os::unix::fs::symlink(base.path().join("outside.js"), hooks.join("linked.js"))
+            .unwrap();
+        std::os::unix::fs::symlink(&hooks, hooks.join("sub").join("loop")).unwrap();
+
+        let loader = JSPluginLoader::new(hooks.to_str().unwrap().to_string());
+        let mut names: Vec<String> = loader
+            .load_functions()
+            .unwrap()
+            .iter()
+            .map(|f| f.name().to_string())
+            .collect();
+        names.sort();
+        assert_eq!(names, ["INSIDE", "NESTED"]);
     }
 }
