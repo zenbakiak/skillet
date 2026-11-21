@@ -1,6 +1,6 @@
+use super::local_time;
 use crate::error::Error;
 use crate::types::Value;
-use super::local_time;
 use chrono::{DateTime, Datelike, NaiveDate, NaiveTime, Timelike, Utc};
 
 pub fn is_datetime_function(name: &str) -> bool {
