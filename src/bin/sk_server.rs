@@ -61,6 +61,15 @@ impl ServerStats {
     }
 }
 
+/// Wall-clock limit for one evaluation (ADR-0011), same as `sk_http_server`. No flag or env var.
+const SERVER_EVAL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+fn server_limits() -> skillet::EvalLimits {
+    let mut limits = skillet::EvalLimits::default();
+    limits.timeout = Some(SERVER_EVAL_TIMEOUT);
+    limits
+}
+
 fn handle_client(
     mut stream: TcpStream,
     stats: Arc<ServerStats>,
@@ -164,11 +173,13 @@ fn process_request(req: EvalRequest, request_id: u64) -> EvalResponse {
     };
 
     // Evaluate expression
-    let result = if req.expression.contains(";") || req.expression.contains(":=") {
-        evaluate_with_assignments(&req.expression, &vars)
-    } else {
-        evaluate_with_custom(&req.expression, &vars)
-    };
+    let result = skillet::with_limits(server_limits(), || {
+        if req.expression.contains(";") || req.expression.contains(":=") {
+            evaluate_with_assignments(&req.expression, &vars)
+        } else {
+            evaluate_with_custom(&req.expression, &vars)
+        }
+    });
 
     let execution_time_ms = start_time.elapsed().as_secs_f64() * 1000.0;
 
