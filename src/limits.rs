@@ -186,13 +186,35 @@ pub(crate) fn charge_value(value: &Value) -> Result<(), Error> {
 /// Pre-charge a parse of the JSON text `s`: `len + 32 × (1 + count of , : [ {)`, a one-pass
 /// upper bound on the nodes `serde_json::from_str` builds.
 pub(crate) fn charge_json_parse(s: &str) -> Result<(), Error> {
-    // Table lookup + sum vectorizes; `filter(matches!).count()` does not.
-    let nodes = 1 + s
-        .as_bytes()
-        .iter()
-        .map(|&c| u64::from(NODE_BYTE[c as usize]))
-        .sum::<u64>();
+    let nodes = 1 + count_node_bytes(s.as_bytes());
     charge((s.len() as u64).saturating_add(VALUE_COST.saturating_mul(nodes)))
+}
+
+/// Count of the bytes in [`NODE_BYTE`]: 8 bytes per step as one `u64` (SWAR), the remaining
+/// 0–7 bytes by table lookup.
+fn count_node_bytes(bytes: &[u8]) -> u64 {
+    let mut words = bytes.chunks_exact(8);
+    let mut total = 0u64;
+    for w in words.by_ref() {
+        total += node_bytes_in_word(u64::from_le_bytes(w.try_into().expect("8 bytes")));
+    }
+    let tail = words.remainder().iter();
+    total + tail.map(|&c| u64::from(NODE_BYTE[c as usize])).sum::<u64>()
+}
+
+/// Number of bytes of `w` equal to `,` `:` `[` or `{`. `[` is `{` without bit 5, so
+/// `w | 0x20…` turns both into `{`. `nonzero` sets the high bit of each byte that is not 0,
+/// exactly (no carries cross bytes), so a byte matches when one of the XORs leaves it 0.
+#[inline(always)]
+fn node_bytes_in_word(w: u64) -> u64 {
+    const ONES: u64 = 0x0101_0101_0101_0101;
+    const LOW7: u64 = 0x7f7f_7f7f_7f7f_7f7f;
+    let nonzero = |x: u64| ((x & LOW7) + LOW7) | x;
+    let comma = nonzero(w ^ (ONES * u64::from(b',')));
+    let colon = nonzero(w ^ (ONES * u64::from(b':')));
+    let open = nonzero((w | (ONES * 0x20)) ^ (ONES * u64::from(b'{')));
+    let hits = !(comma & colon & open) & !LOW7;
+    (hits >> 7).wrapping_mul(ONES) >> 56
 }
 
 /// 1 for the bytes that start or separate JSON nodes: `,` `:` `[` `{`.
@@ -782,6 +804,26 @@ mod tests {
             assert_eq!(last.unwrap_err().message, "Evaluation timed out (max 1 ms)");
         });
         assert!(!deadline_passed());
+    }
+
+    #[test]
+    fn node_byte_count_matches_the_byte_set() {
+        let slow = |b: &[u8]| {
+            b.iter()
+                .filter(|&&c| matches!(c, b',' | b':' | b'[' | b'{'))
+                .count() as u64
+        };
+        let every_byte: Vec<u8> = (0..=255u8).cycle().take(256 * 3 + 7).collect();
+        let row = br#"{"a":[1,{"b":"c"}],"d":2}"#.repeat(3);
+        for len in 0..row.len() {
+            assert_eq!(
+                count_node_bytes(&row[..len]),
+                slow(&row[..len]),
+                "len {len}"
+            );
+        }
+        assert_eq!(count_node_bytes(&every_byte), slow(&every_byte));
+        assert_eq!(count_node_bytes(&[b'{'; 16 * 600 + 9]), 16 * 600 + 9);
     }
 
     #[test]
