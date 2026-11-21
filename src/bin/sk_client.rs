@@ -330,7 +330,7 @@ fn run_benchmark_with_request(server_addr: &str, request: EvalRequest, iteration
 
     // Calculate percentiles
     let mut sorted_durations = valid_durations.clone();
-    sorted_durations.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    sorted_durations.sort_by(f64::total_cmp);
     let p50 = percentile(&sorted_durations, 50.0);
     let p95 = percentile(&sorted_durations, 95.0);
     let p99 = percentile(&sorted_durations, 99.0);
