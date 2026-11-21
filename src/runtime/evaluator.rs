@@ -379,6 +379,12 @@ impl Evaluator {
                         BinaryOp::Ne => x != y,
                         _ => false,
                     },
+                    // ADR-0013: NULL equals only NULL; ordering a NULL stays an error.
+                    (Value::Null, Value::Null) => match op {
+                        BinaryOp::Eq => true,
+                        BinaryOp::Ne => false,
+                        _ => return Err(Error::new("Comparison of incompatible types", None)),
+                    },
                     _ => match op {
                         BinaryOp::Eq => false,
                         BinaryOp::Ne => true,
