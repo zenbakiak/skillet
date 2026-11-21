@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use skillet::{evaluate_with_assignments, evaluate_with_custom, JSPluginLoader, Value};
-use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Write};
+use std::collections::{BTreeMap, HashMap};
+use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
@@ -24,7 +24,7 @@ struct EvalRequest {
 #[derive(Debug, Serialize)]
 struct EvalResponse {
     success: bool,
-    result: Option<serde_json::Value>,
+    result: Option<Wire>,
     error: Option<String>,
     execution_time_ms: f64,
     request_id: u64,
@@ -74,7 +74,7 @@ fn server_limits() -> skillet::EvalLimits {
 }
 
 fn handle_client(
-    mut stream: TcpStream,
+    stream: TcpStream,
     stats: Arc<ServerStats>,
     request_counter: Arc<AtomicU64>,
     server_token: Arc<Option<String>>,
@@ -125,14 +125,7 @@ fn handle_client(
         let execution_time = start_time.elapsed();
         stats.record_request(execution_time.as_micros() as u64);
 
-        let response_json = serde_json::to_string(&response).unwrap_or_else(|_| {
-            format!(
-                r#"{{"success":false,"error":"Failed to serialize response","request_id":{}}}"#,
-                request_id
-            )
-        });
-
-        if writeln!(stream, "{}", response_json).is_err() {
+        if write_response(&stream, &response).is_err() {
             break;
         }
 
@@ -196,72 +189,16 @@ fn process_request(req: EvalRequest, request_id: u64) -> EvalResponse {
     match result {
         Ok(val) => {
             let result_json = if req.output_json.unwrap_or(false) {
-                // Format as structured JSON output
-                let (result_value, type_name) = match val {
-                    Value::Number(n) => (serde_json::json!(n), "Number"),
-                    Value::String(s) => (serde_json::json!(s), "String"),
-                    Value::Boolean(b) => (serde_json::json!(b), "Boolean"),
-                    Value::Currency(c) => (serde_json::json!(c), "Currency"),
-                    Value::DateTime(dt) => (serde_json::json!(dt), "DateTime"),
-                    Value::Array(arr) => {
-                        let json_arr: Vec<serde_json::Value> =
-                            arr.iter()
-                                .map(|v| match v {
-                                    Value::Number(n) => serde_json::json!(n),
-                                    Value::String(s) => serde_json::json!(s),
-                                    Value::Boolean(b) => serde_json::json!(b),
-                                    Value::Currency(c) => serde_json::json!(c),
-                                    Value::DateTime(dt) => serde_json::json!(dt),
-                                    Value::Null => serde_json::json!(null),
-                                    Value::Array(_) => serde_json::json!(format!("{:?}", v)),
-                                    Value::Json(s) => serde_json::from_str(s)
-                                        .unwrap_or_else(|_| serde_json::json!(s)),
-                                })
-                                .collect();
-                        (serde_json::json!(json_arr), "Array")
-                    }
-                    Value::Null => (serde_json::json!(null), "Null"),
-                    Value::Json(s) => match serde_json::from_str(&s) {
-                        Ok(parsed) => (parsed, "Json"),
-                        Err(_) => (serde_json::json!(s), "Json"),
-                    },
-                };
-
-                serde_json::json!({
-                    "result": result_value,
-                    "type": type_name,
-                    "execution_time": format!("{:.2} ms", execution_time_ms)
-                })
+                // Structured output; keys in the order `serde_json::json!` sorted them.
+                let type_name = type_name(&val);
+                let mut fields = BTreeMap::new();
+                fields.insert("result", to_wire(val, false));
+                fields.insert("type", Wire::Json(serde_json::json!(type_name)));
+                let time = format!("{:.2} ms", execution_time_ms);
+                fields.insert("execution_time", Wire::Json(serde_json::json!(time)));
+                Wire::Fields(fields)
             } else {
-                // Simple value output
-                match val {
-                    Value::Number(n) => serde_json::json!(n),
-                    Value::String(s) => serde_json::json!(s),
-                    Value::Boolean(b) => serde_json::json!(b),
-                    Value::Currency(c) => serde_json::json!(c),
-                    Value::DateTime(dt) => serde_json::json!(dt.to_string()),
-                    Value::Array(arr) => {
-                        let json_arr: Vec<serde_json::Value> =
-                            arr.iter()
-                                .map(|v| match v {
-                                    Value::Number(n) => serde_json::json!(n),
-                                    Value::String(s) => serde_json::json!(s),
-                                    Value::Boolean(b) => serde_json::json!(b),
-                                    Value::Currency(c) => serde_json::json!(c),
-                                    Value::DateTime(dt) => serde_json::json!(dt.to_string()),
-                                    Value::Null => serde_json::json!(null),
-                                    Value::Array(_) => serde_json::json!(format!("{:?}", v)),
-                                    Value::Json(s) => serde_json::from_str(s)
-                                        .unwrap_or_else(|_| serde_json::json!(s)),
-                                })
-                                .collect();
-                        serde_json::json!(json_arr)
-                    }
-                    Value::Null => serde_json::json!(null),
-                    Value::Json(s) => {
-                        serde_json::from_str(&s).unwrap_or_else(|_| serde_json::json!(s))
-                    }
-                }
+                to_wire(val, true)
             };
 
             EvalResponse {
@@ -280,6 +217,82 @@ fn process_request(req: EvalRequest, request_id: u64) -> EvalResponse {
             request_id,
         },
     }
+}
+
+/// The `result` of a response, serialized as it is written to the socket.
+#[derive(Debug)]
+enum Wire {
+    Json(serde_json::Value),
+    Array(Vec<Wire>),
+    /// An array nested in an array result: sent as its `Debug` text in a JSON string, which is
+    /// formatted straight into the JSON escaper and never built as a `String` (BL-027f).
+    DebugText(Value),
+    Fields(BTreeMap<&'static str, Wire>),
+}
+
+impl Serialize for Wire {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Wire::Json(v) => v.serialize(serializer),
+            Wire::Array(items) => serializer.collect_seq(items),
+            Wire::DebugText(v) => serializer.collect_str(&format_args!("{:?}", v)),
+            Wire::Fields(fields) => serializer.collect_map(fields),
+        }
+    }
+}
+
+fn type_name(val: &Value) -> &'static str {
+    match val {
+        Value::Number(_) => "Number",
+        Value::String(_) => "String",
+        Value::Boolean(_) => "Boolean",
+        Value::Currency(_) => "Currency",
+        Value::DateTime(_) => "DateTime",
+        Value::Array(_) => "Array",
+        Value::Null => "Null",
+        Value::Json(_) => "Json",
+    }
+}
+
+/// A result in sk_server's wire format: arrays as JSON arrays whose nested arrays are `Debug`
+/// text, `Json` re-parsed (or sent as a string when it does not parse). `datetime_text`: send
+/// a `DateTime` as its text (simple output) instead of a number (`output_json`).
+fn to_wire(val: Value, datetime_text: bool) -> Wire {
+    match val {
+        Value::Array(items) => Wire::Array(
+            items
+                .into_iter()
+                .map(|v| match v {
+                    Value::Array(_) => Wire::DebugText(v),
+                    v => Wire::Json(scalar_json(v, datetime_text)),
+                })
+                .collect(),
+        ),
+        v => Wire::Json(scalar_json(v, datetime_text)),
+    }
+}
+
+fn scalar_json(val: Value, datetime_text: bool) -> serde_json::Value {
+    match val {
+        Value::Number(n) => serde_json::json!(n),
+        Value::String(s) => serde_json::json!(s),
+        Value::Boolean(b) => serde_json::json!(b),
+        Value::Currency(c) => serde_json::json!(c),
+        Value::DateTime(dt) if datetime_text => serde_json::json!(dt.to_string()),
+        Value::DateTime(dt) => serde_json::json!(dt),
+        Value::Null => serde_json::json!(null),
+        Value::Json(s) => serde_json::from_str(&s).unwrap_or(serde_json::Value::String(s)),
+        // Arrays are handled by `to_wire`; kept total for the old format.
+        Value::Array(_) => serde_json::Value::String(format!("{:?}", val)),
+    }
+}
+
+/// Stream one response line to the client, with no copy of the response in memory.
+fn write_response(stream: &TcpStream, response: &EvalResponse) -> std::io::Result<()> {
+    let mut out = BufWriter::new(stream);
+    serde_json::to_writer(&mut out, response)?;
+    out.write_all(b"\n")?;
+    out.flush()
 }
 
 fn daemonize() -> Result<(), Box<dyn std::error::Error>> {
