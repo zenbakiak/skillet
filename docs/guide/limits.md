@@ -14,11 +14,14 @@ goes over a limit returns an ordinary `Error`; it never crashes the process or t
 | Response write | 10 s for the whole response | both servers | none (the response is cut short and the connection closed) |
 | Cache entry | 64 KiB | `sk_http_server` result cache | none (bigger results are just not cached) |
 | Parse cache | 256 expressions, 128 KiB of text, 32 KiB per expression, per worker thread | both servers | none (longer expressions are parsed on every request) |
+| JS plugin heap | 64 MiB per call | library, CLI, servers (`plugins` feature) | `JS function NAME ran out of memory (max 64 MB)` |
+| JS plugin time | 10 s per call, or the request deadline if sooner | library, CLI, servers (`plugins` feature) | `JS function NAME timed out (max 10 s)` / `Evaluation timed out (max 10 s)` |
+| JS plugin stack | 256 KiB | library, CLI, servers (`plugins` feature) | `JS function NAME failed: RangeError: Maximum call stack size exceeded` |
 
 Request limits are described in [Server request limits](#server-request-limits-1-mb-30-s-10-s).
 
 Decisions and the full cost model: [ADR-0011](../adr/0011-evaluation-budget.md) (budget, deadline,
-cache) and BL-017 (depth). Requirements: PRD-001 NFR-4 to NFR-7.
+cache), BL-017 (depth) and [ADR-0017](../adr/0017-quickjs-resource-limits.md) (JavaScript plugins). Requirements: PRD-001 NFR-4 to NFR-7.
 
 All examples below were run with the release CLI (`cargo build --release --bin sk`, then
 `target/release/sk`). The CLI prints the result on stdout and errors on stderr, and exits with code
@@ -254,7 +257,49 @@ nesting-depth error, are never cached. Details: [servers](servers.md#parse-cache
 Live memory per evaluation is at most about twice the budget (the budget plus the value that crossed
 it), so plan for roughly `threads × 512 MB` in the worst case and set `--threads` with that in mind.
 
-Known gap: memory and CPU used inside a JavaScript plugin are not limited yet (BL-018).
+A JavaScript plugin adds at most 64 MiB per call on top of that (see the next section), so the
+worst case is about `threads × (512 MB + 64 MB)`.
+
+## JavaScript plugins (64 MiB, 10 s, 256 KiB)
+
+Each call to a JavaScript plugin runs in a fresh QuickJS runtime with its own limits
+([ADR-0017](../adr/0017-quickjs-resource-limits.md)). They apply in the library, the CLI, both
+servers, `/reload-hooks` and the `@example` check of `/upload-js` and `/update-js`. They cannot be
+changed.
+
+| Limit | Value | What happens |
+|---|---|---|
+| Heap | 64 MiB per call (arguments converted into JS count too) | `JS function NAME ran out of memory (max 64 MB)` |
+| Time | 10 s per call | `JS function NAME timed out (max 10 s)` |
+| Time, inside a server request | the 10 s request deadline, if it comes first | `Evaluation timed out (max 10 s)` |
+| Stack | 256 KiB | `JS function NAME failed: RangeError: Maximum call stack size exceeded` |
+| Result depth | 128 nested arrays; cyclic arrays hit it too | `Expression nested too deeply (max 128)` |
+
+`NAME` is the plugin's `@name`. The time limit cannot be caught inside JavaScript: a loop wrapped
+in `try`/`catch` is stopped the same way. When the request deadline stops a plugin, the request
+fails with the timeout error even if the formula would have ignored the plugin's error. Any other
+exception is reported with its own text, `JS function NAME failed: <exception>`. All of these are
+ordinary evaluation errors (HTTP 400, `success: false` on the servers).
+
+Release CLI, with test plugins in `SKILLET_HOOKS_DIR`:
+
+```console
+$ sk "=BIG()"          # return "x".repeat(4e8).length;
+Error: JS function BIG ran out of memory (max 64 MB)
+
+$ sk "=SPIN()"         # while (true) {}   (returns after 10 s)
+Error: JS function SPIN timed out (max 10 s)
+
+$ sk "=RECURSE()"      # function f(n) { return f(n + 1) + 1; }
+Error: JS function RECURSE failed: RangeError: Maximum call stack size exceeded
+
+$ sk "=CYCLE()"        # var a = [1]; a.push(a); return a;
+Error: Expression nested too deeply (max 128)
+```
+
+Plugins have no host functions: no file system, no network, no processes. The undocumented
+`httpGet(url)` global was removed (ADR-0017 §6); a plugin that calls it now fails with
+`JS function NAME failed: ReferenceError: httpGet is not defined`.
 
 ## Server request limits (1 MB, 30 s, 10 s)
 

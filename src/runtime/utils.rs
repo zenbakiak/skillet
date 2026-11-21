@@ -10,6 +10,52 @@ pub fn is_blank(v: &Value) -> bool {
     }
 }
 
+/// The type name used in error messages.
+pub(crate) fn type_name(v: &Value) -> &'static str {
+    match v {
+        Value::Number(_) => "number",
+        Value::Array(_) => "array",
+        Value::Boolean(_) => "boolean",
+        Value::String(_) => "string",
+        Value::Null => "null",
+        Value::Currency(_) => "currency",
+        Value::DateTime(_) => "datetime",
+        Value::Json(_) => "json",
+    }
+}
+
+/// A numeric argument of a builtin: a number or currency. Anything else, or a missing argument,
+/// is an error (Excel `#VALUE!`), never a silent default.
+pub(crate) fn number_arg(name: &str, args: &[Value], i: usize, what: &str) -> Result<f64, Error> {
+    match args.get(i) {
+        Some(Value::Number(n) | Value::Currency(n)) => Ok(*n),
+        Some(other) => {
+            let got = type_name(other);
+            let message = if what == "number" {
+                format!("{name} expects number, got {got}")
+            } else {
+                format!("{name} {what} must be a number, got {got}")
+            };
+            Err(Error::new(message, None))
+        }
+        None => Err(Error::new(format!("{name} expects {what}"), None)),
+    }
+}
+
+/// An optional numeric argument: `default` when missing or NULL, an error for other types.
+pub(crate) fn optional_number_arg(
+    name: &str,
+    args: &[Value],
+    i: usize,
+    what: &str,
+    default: f64,
+) -> Result<f64, Error> {
+    match args.get(i) {
+        None | Some(Value::Null) => Ok(default),
+        Some(_) => number_arg(name, args, i, what),
+    }
+}
+
 pub fn clamp_index(len: usize, idx: isize) -> Option<usize> {
     if idx >= 0 {
         let i = idx as usize;

@@ -47,6 +47,11 @@ Agents prepare steps 1–3; **only a human publishes, tags, or pushes to `main`.
 - Git hooks exist (`.githooks/`, ADR-0009), but GitHub branch protection on `main`/`develop`
   (required PR + required CI check) is not set yet → BL-022.
 - `cross` is installed from cross-rs git HEAD in `release-binaries.yml` (not pinned).
+- `Dockerfile` (sk_http_server): builder `rust:1.89.0-slim-bookworm` (bump with `RUST_TOOLCHAIN`),
+  runtime `debian:bookworm-slim`, `cargo build --locked`, no `curl` (health check is
+  `docker/healthcheck.sh` over bash `/dev/tcp`). `docker/entrypoint.sh` fails closed without
+  `SKILLET_AUTH_TOKEN` and `SKILLET_ADMIN_TOKEN` and passes them by env only. Compose publishes on
+  `127.0.0.1`. Not built in CI yet.
 
 ## Hand off
 Use the handoff template in `harness/roles/orchestrator.md`; include `cargo package --list` diff

@@ -1,6 +1,6 @@
 # 0016. Custom functions are visible in every sub-expression
 
-- Status: Proposed
+- Status: Accepted (2026-11-21, option A)
 - Date: 2026-11-20
 - Deciders: Language Designer (proposal), Maintainer
 - Related: BL-031, BL-030, ADR-0007 (`CustomFunction` + JS plugins), `src/runtime/evaluator.rs`
@@ -60,7 +60,7 @@ functions, Ruby methods, SQL UDFs).
 - **C. Partial: fix the builtin lambdas only.** Removes the `.map` vs `MAP` asymmetry but leaves
   method arguments and `:=`. Half a rule is still a rule to document.
 
-## Decision (recommended)
+## Decision
 Adopt **A**. The visibility rule becomes: "the entry point decides. `evaluate_with_custom`,
 `evaluate_with_json_custom` and the assignment entry points see registered functions in every
 sub-expression. `evaluate` and `evaluate_with` see none." PRD-001 gains one FR row with that sentence.

@@ -1,6 +1,6 @@
 # 0013. Null equality: `NULL == NULL` is `true`
 
-- Status: Proposed
+- Status: Accepted (2026-11-21, option A)
 - Date: 2026-11-20
 - Deciders: Language Designer (proposal), Maintainer
 - Related: BL-023, ADR-0006, PRD-001 FR-4/FR-7, `tests/evaluator_parity.rs`
@@ -50,7 +50,7 @@ equals both `0` and `""` (`=A1=0` is TRUE for an empty A1). **JS** `null == null
 - **C. SQL three-valued.** Comparisons with `Null` yield `Null`. Correct for SQL, but it spreads
   `Null` into `IF`/`AND`/`filter`, and `== NULL` becomes useless. Formula authors don't expect this.
 
-## Decision (recommended)
+## Decision
 Adopt **A**. `Null == Null` is `true`, `Null != Null` is `false`. `Null` compared with any non-null
 value is unequal. `<`, `<=`, `>`, `>=` with a `Null` operand stay an error, because ordering a
 missing value is a data bug. Error over silent coercion is the design rule here.

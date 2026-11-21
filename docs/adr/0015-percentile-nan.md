@@ -1,6 +1,6 @@
 # 0015. NaN and infinity in statistical builtins
 
-- Status: Proposed
+- Status: Accepted (2026-11-21, option B)
 - Date: 2026-11-20
 - Deciders: Language Designer (proposal), Maintainer
 - Related: BL-026, BL-003, ADR-0003 (`f64` numbers), `src/runtime/statistical.rs`
@@ -56,7 +56,7 @@ that is in range. Excel has no NaN; an error value in the data propagates.
   Excel-like, but it changes `AVG`, `VAR_P`, `STDEV_P`, `MODE_SNGL`, `MAX` and `MIN`, and it only
   makes sense together with a decision on whether `0/0` itself should be an error.
 
-## Decision (recommended)
+## Decision
 Adopt **B**. The panic is a crash on user input, so it gets fixed whichever option is chosen.
 Implementation: `!(0.0..=1.0).contains(&p)` (which rejects NaN), then drop the `allow`. Range-check
 `q` as an `f64` in `0.0..=4.0`, then truncate. Use `total_cmp` or a NaN pre-check instead of

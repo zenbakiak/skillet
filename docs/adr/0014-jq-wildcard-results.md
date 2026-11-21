@@ -1,6 +1,6 @@
 # 0014. `JQ` result shape follows the path, not the match count
 
-- Status: Proposed
+- Status: Accepted (2026-11-21, option B)
 - Date: 2026-11-20
 - Deciders: Language Designer (proposal), Maintainer
 - Related: BL-024, PRD-001 FR-8, ADR-0011 (JQ budget), `src/runtime/jsonpath.rs`
@@ -53,7 +53,7 @@ two cases into two functions.
   always returns an array, possibly `[]`. The type then follows from the expression alone.
 - **C. Keep, and document `.to_a()`.** Not a breaking change, but the trap stays in the most common use.
 
-## Decision (recommended)
+## Decision
 Adopt **B**. Singular-ness is decided from the parsed path, never from the data (RFC 9535 §2.3.5.1).
 A singular path that matches nothing returns `NULL`. That fits ADR-0006, where a missing value is `null`,
 and `SUM(NULL)` is already `0`. PRD-001 FR-8 gains: "`JQ` returns a value for a singular path

@@ -55,8 +55,8 @@ pub fn exec_method_with_custom(
 }
 
 /// Method dispatch used by the evaluator. Arguments and lambda bodies are evaluated against
-/// `ctx` without copying it; lambda bodies see `ctx`'s custom registry, plain method
-/// arguments do not (unchanged behaviour, see `eval_arg`).
+/// `ctx` without copying it; both lambda bodies and plain arguments see `ctx`'s custom
+/// registry (ADR-0016).
 pub(crate) fn exec_method_in(
     name: &str,
     predicate: bool,

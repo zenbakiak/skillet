@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod cache;
+pub mod cors;
 pub mod daemon;
 pub mod eval;
 #[cfg(feature = "plugins")]

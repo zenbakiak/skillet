@@ -26,8 +26,11 @@
 //! | [`evaluate_with_json`] | JSON object | no | no |
 //! | [`evaluate_with_custom`] | `HashMap` | global registry | no |
 //! | [`evaluate_with_json_custom`] | JSON object | global registry | no |
-//! | [`evaluate_with_assignments`] | `HashMap` | no | yes |
-//! | [`evaluate_with_assignments_and_context`] | `HashMap` | no | yes, returns the variables |
+//! | [`evaluate_with_assignments`] | `HashMap` | global registry | yes |
+//! | [`evaluate_with_assignments_and_context`] | `HashMap` | global registry | yes, returns the variables |
+//!
+//! Where custom functions are visible, they are visible in every sub-expression: builtin
+//! lambdas (`MAP`, `FILTER`, ...), method arguments and every `;` step (ADR-0016).
 //!
 //! Each of [`evaluate`], [`evaluate_with`], [`evaluate_with_custom`],
 //! [`evaluate_with_assignments`] and [`evaluate_with_assignments_and_context`] has an
@@ -460,7 +463,9 @@ pub fn evaluate_with_json_custom(input: &str, json_vars: &str) -> Result<Value, 
 /// Evaluate an expression that may assign variables (`:name := value`) and chain steps with `;`.
 ///
 /// Steps run left to right; later steps see earlier assignments, and the result is the value of
-/// the last step. `vars` is not modified (the evaluator works on a copy).
+/// the last step. `vars` is not modified (the evaluator works on a copy). Custom functions in
+/// the process-wide registry are visible in every step, as with [`evaluate_with_custom`]
+/// (ADR-0016).
 ///
 /// ```rust
 /// use std::collections::HashMap;
@@ -601,7 +606,8 @@ pub fn evaluate_parsed_with_assignments(
     expr: &Expr,
     vars: &HashMap<String, Value>,
 ) -> Result<Value, Error> {
-    runtime::evaluator::eval_with_assignments(expr, vars)
+    runtime::evaluator::eval_with_assignments_and_custom(expr, vars, &GLOBAL_REGISTRY)
+        .map(|(value, _)| value)
 }
 
 /// Like [`evaluate_parsed_with_assignments`], but also return the variables after evaluation:
@@ -621,7 +627,7 @@ pub fn evaluate_parsed_with_assignments_and_context(
     expr: &Expr,
     vars: &HashMap<String, Value>,
 ) -> Result<(Value, HashMap<String, Value>), Error> {
-    runtime::evaluator::eval_with_assignments_and_context(expr, vars)
+    runtime::evaluator::eval_with_assignments_and_custom(expr, vars, &GLOBAL_REGISTRY)
 }
 
 #[cfg(test)]
@@ -637,8 +643,10 @@ mod tests {
         assert!(approxv(evaluate("2 + 3 * 4").unwrap(), 14.0));
         assert!(approxv(evaluate("(2 + 3) * 4").unwrap(), 20.0));
         assert!(approxv(evaluate("2 ^ 3").unwrap(), 8.0));
-        assert!(approxv(evaluate("2 ^ 3 ^ 2").unwrap(), 512.0));
-        assert!(approxv(evaluate("-3 ^ 2").unwrap(), -9.0));
+        // Excel precedence (BL-054, D-10): `^` is left-associative, negation binds first.
+        assert!(approxv(evaluate("2 ^ 3 ^ 2").unwrap(), 64.0));
+        assert!(approxv(evaluate("-3 ^ 2").unwrap(), 9.0));
+        assert!(approxv(evaluate("-(3 ^ 2)").unwrap(), -9.0));
         assert!(approxv(evaluate("(-3) ^ 2").unwrap(), 9.0));
         assert!(approxv(evaluate("= 10 + 20 * 3").unwrap(), 70.0));
         assert!(approxv(evaluate("= (10 + 20) * 3").unwrap(), 90.0));
