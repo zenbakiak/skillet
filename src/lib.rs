@@ -521,8 +521,10 @@ mod tests {
         assert!(approxv(evaluate("2 + 3 * 4").unwrap(), 14.0));
         assert!(approxv(evaluate("(2 + 3) * 4").unwrap(), 20.0));
         assert!(approxv(evaluate("2 ^ 3").unwrap(), 8.0));
-        assert!(approxv(evaluate("2 ^ 3 ^ 2").unwrap(), 512.0));
-        assert!(approxv(evaluate("-3 ^ 2").unwrap(), -9.0));
+        // Excel precedence (BL-054, D-10): `^` is left-associative, negation binds first.
+        assert!(approxv(evaluate("2 ^ 3 ^ 2").unwrap(), 64.0));
+        assert!(approxv(evaluate("-3 ^ 2").unwrap(), 9.0));
+        assert!(approxv(evaluate("-(3 ^ 2)").unwrap(), -9.0));
         assert!(approxv(evaluate("(-3) ^ 2").unwrap(), 9.0));
         assert!(approxv(evaluate("= 10 + 20 * 3").unwrap(), 70.0));
         assert!(approxv(evaluate("= (10 + 20) * 3").unwrap(), 90.0));
