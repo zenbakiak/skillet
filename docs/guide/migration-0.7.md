@@ -157,7 +157,7 @@ Each evaluation has a budget of 256 MB of created values, and the servers stop a
 | Change | 0.6 | 0.7 |
 |---|---|---|
 | `sk_http_server` request bodies | parsed as JSON whatever the `Content-Type` | `Content-Type: application/json` is required; anything else gets `415 Unsupported Media Type` |
-| CORS on `sk_http_server` | every response has `Access-Control-Allow-Origin: *` | no CORS header when the server runs without a token (development mode), so web pages cannot drive a local server. Rules in ADR-0019 |
+| CORS on `sk_http_server` | every response has `Access-Control-Allow-Origin: *` | no CORS header when the server runs without a token (development mode), so web pages cannot drive a local server. Rules in [ADR-0019](../adr/0019-server-cors-and-development-mode.md) |
 | Admin token from the environment | only `--admin-token` | `SKILLET_ADMIN_TOKEN` is read too, like `SKILLET_AUTH_TOKEN` |
 | Docker image without tokens | starts unauthenticated on `0.0.0.0` | refuses to start; set `AUTH_TOKEN` and `ADMIN_TOKEN` ([Docker](../ops/docker.md)) |
 | Empty token (`--token ""`, `--admin-token ""`, empty `SKILLET_AUTH_TOKEN`) | auth silently off | the server exits with code 1 |
