@@ -214,15 +214,52 @@ fn bl051_bodies_must_be_json() {
 }
 
 #[test]
-fn bl051_browser_multipart_upload_needs_an_admin_token() {
+fn bl051_development_mode_refuses_browser_requests_to_admin_endpoints() {
     let server = Server::start(&[], &[]);
-    let body = "--b\r\nContent-Disposition: form-data; name=\"filename\"\r\n\r\nx.js\r\n--b--\r\n";
+    let origin = "\r\nOrigin: https://evil.example";
+    let multipart =
+        "--b\r\nContent-Disposition: form-data; name=\"filename\"\r\n\r\nx.js\r\n--b--\r\n";
+    let cases: [(&str, &str, &str); 7] = [
+        (
+            "POST",
+            "/upload-js",
+            "\r\nContent-Type: multipart/form-data; boundary=b",
+        ),
+        ("PUT", "/update-js", "\r\nContent-Type: application/json"),
+        ("DELETE", "/delete-js", "\r\nContent-Type: application/json"),
+        ("GET", "/list-js", ""),
+        ("POST", "/reload-hooks", ""),
+        ("DELETE", "/cache", ""),
+        ("POST", "/reload-hooks", "\r\nContent-Type: text/plain"),
+    ];
+    for (method, path, extra) in cases {
+        let body = if extra.contains("multipart") {
+            multipart
+        } else if extra.is_empty() {
+            ""
+        } else {
+            "{}"
+        };
+        let resp = server.raw(&format!("{method} {path} HTTP/1.1{extra}{origin}"), body);
+        assert!(status(&resp).contains("403"), "{method} {path}: {resp}");
+        assert!(resp.contains("admin token"), "{resp}");
+    }
+    // Without `Origin` (curl, scripts) development mode stays open.
+    let resp = server.raw("DELETE /cache HTTP/1.1", "");
+    assert!(status(&resp).contains("200"), "{resp}");
+    // Non-admin endpoints are not affected.
+    let resp = server.get("/health", origin);
+    assert!(status(&resp).contains("200"), "{resp}");
+
+    // With an admin token the normal token check applies instead.
+    let server = Server::start(&["--admin-token", "cors-admin"], &[]);
+    let resp = server.raw(&format!("DELETE /cache HTTP/1.1{origin}"), "");
+    assert!(status(&resp).contains("401"), "{resp}");
     let resp = server.raw(
-        "POST /upload-js HTTP/1.1\r\nContent-Type: multipart/form-data; boundary=b\r\n\
-         Origin: https://evil.example",
-        body,
+        &format!("DELETE /cache HTTP/1.1\r\nAuthorization: Bearer cors-admin{origin}"),
+        "",
     );
-    assert!(status(&resp).contains("415"), "{resp}");
+    assert!(status(&resp).contains("200"), "{resp}");
 }
 
 #[test]

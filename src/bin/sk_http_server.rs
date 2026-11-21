@@ -78,13 +78,15 @@ fn handle_http_request(
     // Handle paths that might have query parameters
     let path_only = path.split('?').next().unwrap_or(path);
 
-    // Before dispatch, so no handler parses a body that is not JSON (ADR-0019).
-    if let Err(message) = http_server::cors::check_content_type(
-        method,
-        path_only,
-        &request,
-        server_admin_token.is_some(),
-    ) {
+    // Before dispatch, so no handler runs for a browser in development mode or parses a body
+    // that is not JSON (ADR-0019).
+    if let Err(message) =
+        http_server::cors::check_browser_admin(path_only, &request, server_admin_token.is_some())
+    {
+        send_http_error(&mut stream, 403, message);
+        return;
+    }
+    if let Err(message) = http_server::cors::check_content_type(method, path_only, &request) {
         send_http_error(&mut stream, 415, message);
         return;
     }

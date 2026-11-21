@@ -136,6 +136,7 @@ pub fn send_http_response(stream: &mut TcpStream, status: u16, content_type: &st
         200 => "OK",
         400 => "Bad Request",
         401 => "Unauthorized",
+        403 => "Forbidden",
         408 => "Request Timeout",
         404 => "Not Found",
         413 => "Payload Too Large",

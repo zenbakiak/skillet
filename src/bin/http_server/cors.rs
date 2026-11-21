@@ -67,28 +67,44 @@ fn has_body(request: &str) -> bool {
         .is_some_and(|n| n > 0)
 }
 
-/// `Err(message)` for a 415: a request with a body that is not `application/json`.
-/// `multipart/form-data` is also accepted on the upload endpoints, but not from a browser
-/// (an `Origin` header) while no admin token is configured, since browsers send it without
-/// a preflight.
-pub fn check_content_type(
-    method: &str,
+/// Paths that need the admin token.
+const ADMIN_PATHS: [&str; 6] = [
+    "/upload-js",
+    "/update-js",
+    "/delete-js",
+    "/list-js",
+    "/reload-hooks",
+    "/cache",
+];
+
+/// `Err(message)` for a 403: in development mode (no admin token) a browser request (an
+/// `Origin` header) to an admin endpoint, whatever its method and body. Browsers send some
+/// requests without a preflight (multipart uploads, body-less POSTs), so CORS alone does not
+/// stop a page from driving these endpoints.
+pub fn check_browser_admin(
     path: &str,
     request: &str,
     admin_token_configured: bool,
 ) -> Result<(), &'static str> {
+    if admin_token_configured || !ADMIN_PATHS.contains(&path) || header(request, "origin").is_none()
+    {
+        return Ok(());
+    }
+    Err(
+        "Admin endpoints refuse browser requests (Origin header) in development mode; \
+         set an admin token (--admin-token or SKILLET_ADMIN_TOKEN)",
+    )
+}
+
+/// `Err(message)` for a 415: a request with a body that is not `application/json`.
+/// `/upload-js` and `/update-js` also accept `multipart/form-data`.
+pub fn check_content_type(method: &str, path: &str, request: &str) -> Result<(), &'static str> {
     if matches!(method, "GET" | "HEAD" | "OPTIONS") || !has_body(request) {
         return Ok(());
     }
     match media_type(request).as_deref() {
         Some("application/json") => Ok(()),
-        Some("multipart/form-data") if matches!(path, "/upload-js" | "/update-js") => {
-            if admin_token_configured || header(request, "origin").is_none() {
-                Ok(())
-            } else {
-                Err("multipart/form-data from a browser needs an admin token; send application/json")
-            }
-        }
+        Some("multipart/form-data") if matches!(path, "/upload-js" | "/update-js") => Ok(()),
         _ => Err("Content-Type must be application/json"),
     }
 }
@@ -120,11 +136,7 @@ mod tests {
             "application/json;charset=UTF-8",
         ] {
             let r = req(&format!("content-type: {ct}\r\n"));
-            assert_eq!(
-                check_content_type("POST", "/eval", &r, false),
-                Ok(()),
-                "{ct}"
-            );
+            assert_eq!(check_content_type("POST", "/eval", &r), Ok(()), "{ct}");
         }
     }
 
@@ -137,11 +149,11 @@ mod tests {
             "Content-Type: application/jsonx\r\n",
         ] {
             assert!(
-                check_content_type("POST", "/eval", &req(headers), true).is_err(),
+                check_content_type("POST", "/eval", &req(headers)).is_err(),
                 "{headers:?}"
             );
             assert!(
-                check_content_type("DELETE", "/delete-js", &req(headers), true).is_err(),
+                check_content_type("DELETE", "/delete-js", &req(headers)).is_err(),
                 "{headers:?}"
             );
         }
@@ -150,34 +162,38 @@ mod tests {
     #[test]
     fn requests_without_a_body_are_not_checked() {
         let r = "DELETE /cache HTTP/1.1\r\nHost: x\r\n\r\n";
-        assert_eq!(check_content_type("DELETE", "/cache", r, false), Ok(()));
+        assert_eq!(check_content_type("DELETE", "/cache", r), Ok(()));
         let r = "POST /reload-hooks HTTP/1.1\r\nContent-Length: 0\r\n\r\n";
-        assert_eq!(
-            check_content_type("POST", "/reload-hooks", r, false),
-            Ok(())
-        );
+        assert_eq!(check_content_type("POST", "/reload-hooks", r), Ok(()));
     }
 
     #[test]
-    fn multipart_only_on_upload_endpoints_and_not_from_browsers_in_dev_mode() {
+    fn multipart_only_on_upload_endpoints() {
         let mp = "Content-Type: multipart/form-data; boundary=x\r\n";
-        assert!(check_content_type("POST", "/eval", &req(mp), true).is_err());
-        assert_eq!(
-            check_content_type("POST", "/upload-js", &req(mp), false),
-            Ok(())
-        );
-        let browser = format!("{mp}Origin: https://evil.example\r\n");
-        assert!(check_content_type("POST", "/upload-js", &req(&browser), false).is_err());
-        assert_eq!(
-            check_content_type("PUT", "/update-js", &req(&browser), true),
-            Ok(())
-        );
+        assert!(check_content_type("POST", "/eval", &req(mp)).is_err());
+        assert_eq!(check_content_type("POST", "/upload-js", &req(mp)), Ok(()));
+        assert_eq!(check_content_type("PUT", "/update-js", &req(mp)), Ok(()));
+    }
+
+    #[test]
+    fn browser_requests_to_admin_endpoints_need_an_admin_token() {
+        let browser = "GET /list-js HTTP/1.1\r\nOrigin: https://evil.example\r\n\r\n";
+        let plain = "GET /list-js HTTP/1.1\r\nHost: x\r\n\r\n";
+        for path in ADMIN_PATHS {
+            assert!(check_browser_admin(path, browser, false).is_err(), "{path}");
+            assert_eq!(check_browser_admin(path, browser, true), Ok(()), "{path}");
+            assert_eq!(check_browser_admin(path, plain, false), Ok(()), "{path}");
+        }
+        assert_eq!(check_browser_admin("/eval", browser, false), Ok(()));
+        // An `Origin` line in the body is not a header.
+        let body = "POST /reload-hooks HTTP/1.1\r\nContent-Length: 20\r\n\r\nOrigin: https://x.y";
+        assert_eq!(check_browser_admin("/reload-hooks", body, false), Ok(()));
     }
 
     #[test]
     fn body_text_is_not_read_as_headers() {
         let r = "POST /eval HTTP/1.1\r\nContent-Length: 30\r\n\r\nContent-Type: application/json";
-        assert!(check_content_type("POST", "/eval", r, false).is_err());
+        assert!(check_content_type("POST", "/eval", r).is_err());
     }
 
     #[test]
