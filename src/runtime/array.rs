@@ -133,6 +133,7 @@ pub fn exec_array(name: &str, args: &[Value]) -> Result<Value, Error> {
                         }
                     }
                 }
+                crate::limits::charge_join(&parts, sep)?;
                 Ok(Value::String(parts.join(sep)))
             }
             _ => Err(Error::new("JOIN expects array, [separator]", None)),

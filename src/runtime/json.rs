@@ -27,6 +27,7 @@ pub fn exec_json(name: &str, args: &[Value]) -> Result<Value, Error> {
             };
 
             // Traverse JSON by keys and indexes
+            crate::limits::charge_json_parse(json_str)?;
             let found = match serde_json::from_str::<serde_json::Value>(json_str) {
                 Ok(parsed) => {
                     let mut cur = &parsed;

@@ -185,6 +185,7 @@ fn value_to_json_value(value: &Value) -> Result<serde_json::Value, Error> {
             Ok(serde_json::Value::Array(json_array?))
         }
         Value::Json(s) => {
+            crate::limits::charge_json_parse(s)?;
             serde_json::from_str(s).map_err(|e| Error::new(format!("Invalid JSON: {}", e), None))
         }
         Value::DateTime(dt) => Ok(serde_json::Value::String(dt.to_string())),

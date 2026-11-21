@@ -1,4 +1,5 @@
 use crate::error::Error;
+use crate::limits;
 use crate::types::Value;
 use jsonpath_rust::JsonPath;
 
@@ -17,11 +18,13 @@ pub fn apply_jsonpath(json_data: &Value, path: &str) -> Result<Value, Error> {
         Ok(Value::Array(vec![]))
     } else if results.len() == 1 {
         // Single-element -> unwrap for easier arithmetic
+        limits::charge_json_node(results[0])?;
         json_to_value(results[0].clone())
     } else {
-        // Multiple results -> array
+        // Multiple results -> array. Each match is charged before it is cloned out (ADR-0011).
         let mut arr = Vec::with_capacity(results.len());
         for r in results {
+            limits::charge_json_node(r)?;
             arr.push(json_to_value(r.clone())?);
         }
         Ok(Value::Array(arr))
@@ -56,8 +59,11 @@ fn value_to_json(value: &Value) -> Result<serde_json::Value, Error> {
             .map(serde_json::Value::Number)
             .ok_or_else(|| Error::new("Invalid currency for JSON conversion", None)),
         Value::DateTime(ts) => Ok(serde_json::Value::Number(serde_json::Number::from(*ts))),
-        Value::Json(json_str) => serde_json::from_str(json_str)
-            .map_err(|e| Error::new(format!("Invalid JSON string: {}", e), None)),
+        Value::Json(json_str) => {
+            limits::charge_json_parse(json_str)?;
+            serde_json::from_str(json_str)
+                .map_err(|e| Error::new(format!("Invalid JSON string: {}", e), None))
+        }
     }
 }
 

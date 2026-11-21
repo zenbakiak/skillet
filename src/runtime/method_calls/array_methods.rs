@@ -175,7 +175,9 @@ pub fn exec_array_method(
                 })
                 .collect();
 
-            Ok(Value::String(string_vals?.join(&separator)))
+            let parts = string_vals?;
+            crate::limits::charge_join(&parts, &separator)?;
+            Ok(Value::String(parts.join(&separator)))
         }
 
         "contains" | "includes" => {

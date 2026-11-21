@@ -1,4 +1,5 @@
 use crate::error::Error;
+use crate::limits;
 use crate::runtime::utils::is_blank;
 use crate::types::Value;
 
@@ -17,6 +18,16 @@ fn char_count(s: &str) -> usize {
     s.chars().count()
 }
 
+/// Collect split parts, charging `32 + part.len` for each one while collecting (ADR-0011).
+pub(crate) fn split_charged<'s>(parts: impl Iterator<Item = &'s str>) -> Result<Value, Error> {
+    let mut out = Vec::new();
+    for p in parts {
+        limits::charge_string(p.len())?;
+        out.push(Value::String(p.to_string()));
+    }
+    Ok(Value::Array(out))
+}
+
 pub fn exec_string(name: &str, args: &[Value]) -> Result<Value, Error> {
     match name {
         "SUBSTITUTE" => {
@@ -26,7 +37,10 @@ pub fn exec_string(name: &str, args: &[Value]) -> Result<Value, Error> {
                     Some(Value::String(text)),
                     Some(Value::String(substr)),
                     Some(Value::String(repl)),
-                ) => Ok(Value::String(text.replace(substr, repl))),
+                ) => {
+                    limits::charge_replace(text, substr, repl)?;
+                    Ok(Value::String(text.replace(substr, repl)))
+                }
                 _ => Err(Error::new(
                     "SUBSTITUTE expects (text: string, substr: string, replacement: string)",
                     None,
@@ -40,7 +54,10 @@ pub fn exec_string(name: &str, args: &[Value]) -> Result<Value, Error> {
                     Some(Value::String(text)),
                     Some(Value::String(substr)),
                     Some(Value::String(repl)),
-                ) => Ok(Value::String(text.replace(substr, repl))),
+                ) => {
+                    limits::charge_replace(text, substr, repl)?;
+                    Ok(Value::String(text.replace(substr, repl)))
+                }
                 _ => Err(Error::new(
                     "SUBSTITUTEM expects (text: string, substr: string, replacement: string)",
                     None,
@@ -244,14 +261,10 @@ pub fn exec_string(name: &str, args: &[Value]) -> Result<Value, Error> {
             }
         }
         "SPLIT" => match (args.first(), args.get(1)) {
-            (Some(Value::String(s)), Some(Value::String(sep))) => Ok(Value::Array(
-                s.split(sep).map(|p| Value::String(p.to_string())).collect(),
-            )),
-            (Some(Value::String(s)), None) => Ok(Value::Array(
-                s.split(',')
-                    .map(|p| Value::String(p.trim().to_string()))
-                    .collect(),
-            )),
+            (Some(Value::String(s)), Some(Value::String(sep))) => {
+                split_charged(s.split(sep.as_str()))
+            }
+            (Some(Value::String(s)), None) => split_charged(s.split(',').map(str::trim)),
             _ => Err(Error::new("SPLIT expects string, [separator]", None)),
         },
         "REPLACE" => {

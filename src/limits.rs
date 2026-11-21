@@ -206,6 +206,40 @@ pub(crate) fn charge_string(len: usize) -> Result<(), Error> {
     charge(VALUE_COST.saturating_add(len as u64))
 }
 
+/// Pre-charge `text.replace(find, repl)` (`SUBSTITUTE`, `SUBSTITUTEM`, `.replace`) with its exact
+/// output length, `len + matches × (repl.len − find.len)`; an empty `find` matches `chars + 1` times.
+pub(crate) fn charge_replace(text: &str, find: &str, repl: &str) -> Result<(), Error> {
+    let matches = if find.is_empty() {
+        text.chars().count() + 1
+    } else {
+        text.matches(find).count()
+    };
+    let delta = repl.len() as i128 - find.len() as i128;
+    let out = (text.len() as i128 + matches as i128 * delta).max(0);
+    charge_string(usize::try_from(out).unwrap_or(usize::MAX))
+}
+
+/// Pre-charge `parts.join(sep)` (`JOIN`, `.join`): `Σ part.len + (n − 1) × sep.len`.
+pub(crate) fn charge_join<S: AsRef<str>>(parts: &[S], sep: &str) -> Result<(), Error> {
+    let total = parts
+        .iter()
+        .fold(0usize, |acc, p| acc.saturating_add(p.as_ref().len()));
+    let seps = parts.len().saturating_sub(1).saturating_mul(sep.len());
+    charge_string(total.saturating_add(seps))
+}
+
+/// Pre-charge a value about to be built from a JSON node (a `JQ` match): numbers, booleans and
+/// null 32; strings 32 + len; arrays 32 + items; objects 32 + Σ (key len + value), since they
+/// become a `Json` string of about that size.
+pub(crate) fn charge_json_node(node: &serde_json::Value) -> Result<(), Error> {
+    let cap = remaining();
+    let mut cost = 0;
+    if !add_json_cost(node, &mut cost, cap) {
+        return charge(cost.max(cap.saturating_add(1)));
+    }
+    charge(cost)
+}
+
 /// Check a value the evaluator just built: depth within [`MAX_NESTING_DEPTH`] and its cost
 /// within the budget, in one walk that stops as soon as either limit is passed.
 ///
@@ -291,6 +325,30 @@ fn walk_items(items: &[Value], depth_left: usize, cost: &mut u64, cap: u64) -> W
     } else {
         Walk::Ok
     }
+}
+
+fn add_json_cost(node: &serde_json::Value, cost: &mut u64, cap: u64) -> bool {
+    *cost = cost.saturating_add(VALUE_COST);
+    match node {
+        serde_json::Value::String(s) => *cost = cost.saturating_add(s.len() as u64),
+        serde_json::Value::Array(items) => {
+            for item in items {
+                if !add_json_cost(item, cost, cap) {
+                    return false;
+                }
+            }
+        }
+        serde_json::Value::Object(map) => {
+            for (k, v) in map {
+                *cost = cost.saturating_add(k.len() as u64);
+                if !add_json_cost(v, cost, cap) {
+                    return false;
+                }
+            }
+        }
+        _ => {}
+    }
+    *cost <= cap
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
