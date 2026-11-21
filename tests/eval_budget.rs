@@ -914,14 +914,13 @@ fn bl027e_borrowed_operands_do_not_copy() {
     assert!((peak as u64) < 5 * MIB, "peak {peak}");
 }
 
-/// F4 (found in BL-027e, open, blocks BL-027): an object literal serializes its values
+/// F4 (found in BL-027e, fixed in BL-027f): an object literal serializes its values
 /// (JSON escaping, up to 6x for control characters) after the reads are charged and before
 /// the result is checked. Release `sk`, `:s` = 20 MB of `\x01`, `{"k0": :s, …}`: 1 key 199 MB,
 /// 4 keys 599 MB (sk_http_server 602 MB, sk_server 600 MB), 6 keys 866 MB peak; about
-/// +133 MB per key until the reads alone reach the budget (~2 GB). Fix sketch: pre-charge the
-/// serialized size (same as `.to_json()` on arrays) before `serde_json::to_string`.
+/// +133 MB per key until the reads alone reach the budget (~2 GB). Fixed: the serialized size
+/// is pre-charged (same as `.to_json()` on arrays) before `serde_json::to_string`.
 #[test]
-#[ignore = "open: F4 object literal escaping (BL-027f)"]
 fn bl027e_object_literal_escaping_is_charged_before_serializing() {
     let s = format!(":s := {}; ", big_string("\u{1}", 200)); // 200 KB of \x01
     let a = format!("{s}:a := [:s]; ");
@@ -936,4 +935,27 @@ fn bl027e_object_literal_escaping_is_charged_before_serializing() {
     ];
     let failures = peak_failures(&cases);
     assert!(failures.is_empty(), "\n{}", failures.join("\n"));
+}
+
+/// Same class as F4 (BL-027f): a `JQ` match that is an object becomes `Json` text again, so
+/// escaping grows it up to 6x over its parsed size. `$..*` on nested objects returns every
+/// level, each re-serialized with the whole string: charged by its text, not its parts.
+#[test]
+fn bl027f_jq_object_matches_are_charged_as_json_text() {
+    let budget = 4 * MIB;
+    let mut text = format!("\"{}\"", "\\u0001".repeat(100_000)); // 100 KB of \x01, 600 KB text
+    for _ in 0..20 {
+        text = format!("{{\"a\": {text}}}");
+    }
+    let vars = HashMap::from([("j".to_string(), Value::Json(text))]);
+    let (r, peak) = heap::peak_during(|| {
+        with_limits(limits(budget), || {
+            evaluate_with_custom("JQ(:j, \"$..*\").length()", &vars)
+        })
+    });
+    assert!(
+        matches!(&r, Err(e) if e.message.starts_with("Evaluation budget exceeded")),
+        "{r:?}"
+    );
+    assert!((peak as u64) < 2 * budget + MIB, "peak {peak}");
 }

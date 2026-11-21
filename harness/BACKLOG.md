@@ -518,8 +518,8 @@ Brief (orchestrator, 2026-11-20):
        budget: CONCAT 40 reads 131.6 MB, array literal 40.1, object literal 66.8, MERGE 75.2,
        to_a 47.2, to_json 13.9, ::String 13.0). F3 needs a server test (none yet; add with the fix).
 
-  BL-027e · security-reviewer · review
-  BL-027f · rust-engineer · `todo` · same branch · Found in BL-027e; BLOCKS this PR (same rule).
+  BL-027e · security-reviewer · `done`
+  BL-027f · rust-engineer (Claude Opus 5.5) · `review` · same branch · Found in BL-027e; BLOCKS this PR (same rule).
     F4 Object literals serialize their values after the reads are charged and before the result
        is checked; JSON escaping grows control characters 6x. `:s := <20 MB \x01>; {"k0": :s, …}`
        release: 1 key 199 MB, 4 keys 599 MB (sk_http_server 602 MB, sk_server 600 MB, 120 KB
@@ -536,6 +536,71 @@ Brief (orchestrator, 2026-11-20):
        but over the ~2x rule. Fix sketch: build sk_server's response with `to_json_exact` and
        write the Debug text straight into the escaper (or count it lower). No in-process test
        possible (bin code); repro with the release server, 1 worker.
+
+Handoff (rust-engineer, Claude Opus 5.5, 2026-11-20) — BL-027f:
+  Did: - F4: `Expr::ObjectLiteral` pre-charges the exact serialized size (new
+         `limits::charge_json_text`: serde_json into `ByteCounter`, no allocation; `.to_json()` on
+         arrays now uses the same helper) before `serde_json::to_string`. That charge is the
+         result's cost, so the result is not charged again by `check_value` (Json has no depth).
+         Arrays as values are covered (they are part of the counted tree). The literal moved to an
+         out-of-line helper `eval_object_literal` (inline it measured +6% on `:nums.map(:x * 1)`).
+       - F5: sk_server's `result` is a small `Serialize` type (`Wire`): arrays nested in an array
+         are written as their `Debug` text through `serializer.collect_str`, i.e. formatted
+         straight into serde_json's escaper, never built as a String; the response is streamed
+         to the socket via `BufWriter` (no response copy in memory at all). Deviation from the
+         brief: streaming instead of `to_json_exact` (that lives in http_server/utils.rs with the
+         buffer-pool deps; streaming needs no shared module and holds 0 instead of 240 MB). The
+         F3 sizer (response_size.rs, nested_debug=true) still rejects oversized results first.
+         Wire format unchanged: 18 requests (nested arrays with control chars/quotes/unicode,
+         output_json, DateTime both modes, Json, empty array, errors, bad JSON) diffed byte for
+         byte against the previous release build: identical. The serialize-failure fallback line
+         is gone (unreachable: serde_json::Value and Debug text cannot fail; IO errors end the
+         connection as before).
+       - Other JSON-text serialization inside evaluation (grep `serde_json::to_string|to_writer|
+         to_value` in src/runtime, src/lib.rs, src/limits.rs):
+         | Site | Before | Now |
+         | evaluator.rs `Expr::ObjectLiteral` | charged after (F4) | pre-charged exact (fixed) |
+         | conversion_methods.rs `.to_json()` String | pre-charged exact (027d) | unchanged |
+         | conversion_methods.rs `.to_json()` Array | pre-charged exact (027d) | same, via helper |
+         | conversion_methods.rs `.to_json()` Number/Bool/Currency/DateTime | tiny, constant | unchanged |
+         | jsonpath.rs `json_to_value` Object (JQ match) | charged by parts (unescaped, up to 6x low; `$..*` on nested objects re-serializes every level) | `charge_json_node` charges an object at least 32 + its serialized size (fixed, new test) |
+         | lib.rs `json_to_value` Object (property access `:j.a`, `.dig`, JSON(), method_calls/mod.rs) | input charged by `charge_json_parse` (text length); a re-serialized sub-object is never longer than its source text | unchanged (bounded 1x per parse) |
+         | lib.rs / sk.rs / sk_client / http_server js_management | outside evaluation (inputs, CLI output, admin replies) | unchanged |
+  Evidence: `cargo build --release --bin sk` + ./harness/check.sh (full, strict) green (==> OK).
+         `cargo test --test eval_budget`: 31 passed, 1 ignored (T1 slow server timeout).
+         `bl027e_object_literal_escaping_is_charged_before_serializing` un-ignored, passes (fails
+         on the previous code: 51.5 / 26.9 MB peak); new `bl027f_jq_object_matches_are_charged_as_json_text`
+         (fails on the previous code: 21.3 MB peak on a 4 MiB budget; now budget error < 9 MiB).
+         No existing expectations changed.
+         Release spot checks, before = a738bee, after = this branch; sk via /usr/bin/time -l,
+         servers 1 worker on 127.0.0.1, peak RSS by ps sampling, 2 runs each (same results):
+         | Case                                         | before                 | after                  |
+         |----------------------------------------------|------------------------|------------------------|
+         | F4 sk: `{"k0": :s, …×4}`, :s = 20 MB \x01     | 0.11-0.25 s, 629 MB, budget err | 0.17-0.33 s, 148 MB, budget err |
+         | F4 sk_http_server, same                       | 0.11-0.15 s, 633 MB, budget err | 0.21 s, 150 MB, budget err |
+         | F4 sk_server, same                            | 0.14-0.15 s, 631 MB, budget err | 0.21-0.22 s, 149 MB, budget err |
+         | F4 one key (passes): sk / http / sk_server    | 209 / 233 / 351 MB, ok | 209 / 233 / 231 MB, ok |
+         | F5 sk_server: `[[40 MB \x01]]` (240 MB body)  | 1.36-1.41 s, 770 MB, ok | 1.42-1.46 s, 129 MB, ok |
+         | F5 sk_http_server, same (reference)           | 0.23 s, 371 MB, ok     | 0.20-0.27 s, 370 MB, ok |
+         F4 is ~0.07 s slower when it fails: the counting pass makes many small writes; it then
+         stops before allocating 480 MB.
+         Bench `RUNS=5` lambda_scope, release, 15 interleaved rounds develop (bf7c20a) / before
+         (a738bee) / after, median of per-round medians (load ~5.5-9, syspolicyd at 100%):
+         | Formula                                      | develop | before  | after   | vs develop | vs before |
+         |----------------------------------------------|---------|---------|---------|------------|-----------|
+         | `:nums.map(:x * 1).sum()` (100k)             | 2.00 ms | 2.13 ms | 2.13 ms | +6%        | +0%       |
+         | `:nums.map(:x.abs()).sum()`                  | 4.01 ms | 4.46 ms | 4.50 ms | +12%       | +1%       |
+         | `:rows.map(:x.price).sum()` (10k)            | 2.62 ms | 2.77 ms | 2.76 ms | +5%        | -0%       |
+         | `:rows.map(:x.price.round(1)).sum()`         | 3.03 ms | 3.23 ms | 3.21 ms | +6%        | -1%       |
+         | `:rows.map(:x.price / :rows.length()).sum()` | 3.23 ms | 3.53 ms | 3.53 ms | +9%        | +0%       |
+         BL-027f adds 0-1%. `:x.abs()` is +12% vs develop on this machine today, but the branch
+         head before this item measured the same (+11%; BL-027d recorded +9% at load ~5): the
+         overhead is BL-027d's per-op tick, not this change.
+  Risks/Follow-ups: - `:x.abs()` row slightly over the 10% bench target vs develop (pre-existing,
+         see above); orchestrator to decide whether a quieter re-measure is needed.
+       - BL-033 (sk_server read timeout / line cap) unchanged.
+       - Docs (BL-028): nothing new user-visible (object literals just fail earlier on escapes).
+  ADR: none (implements ADR-0011 amendment 2)
 
 Handoff (security-reviewer, Claude Opus 5.5, 2026-11-20) — BL-027e:
   Did: confirmation pass on release builds (sk via /usr/bin/time -l; sk_http_server and
