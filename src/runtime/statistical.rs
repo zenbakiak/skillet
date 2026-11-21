@@ -221,9 +221,38 @@ pub fn exec_statistical(name: &str, args: &[Value]) -> Result<Value, Error> {
                 ))
             }
         }
+        "STDEV.S" | "STDEV_S" | "STDEV" => {
+            sample_variance(name, args).map(|v| Value::Number(v.sqrt()))
+        }
+        "VAR.S" | "VAR_S" | "VAR" => sample_variance(name, args).map(Value::Number),
         _ => Err(Error::new(
             format!("Unknown statistical function: {}", name),
             None,
         )),
     }
+}
+
+/// Numbers and currency in `v`, arrays flattened; other values are skipped.
+fn collect_numbers(v: &Value, out: &mut Vec<f64>) {
+    match v {
+        Value::Number(n) | Value::Currency(n) => out.push(*n),
+        Value::Array(items) => items.iter().for_each(|item| collect_numbers(item, out)),
+        _ => {}
+    }
+}
+
+/// Sample variance (divides by n - 1), as Excel `VAR.S`. Fewer than two numbers is an error
+/// (Excel `#DIV/0!`).
+fn sample_variance(name: &str, args: &[Value]) -> Result<f64, Error> {
+    let mut nums = Vec::new();
+    args.iter().for_each(|a| collect_numbers(a, &mut nums));
+    if nums.len() < 2 {
+        return Err(Error::new(
+            format!("{name} needs at least two numbers"),
+            None,
+        ));
+    }
+    let n = nums.len() as f64;
+    let mean = nums.iter().sum::<f64>() / n;
+    Ok(nums.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (n - 1.0))
 }

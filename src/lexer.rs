@@ -17,6 +17,8 @@ pub enum Token {
     Bang,
     Dot,
     SafeNavigation, // &.
+    /// `&` text concatenation (Excel).
+    Ampersand,
     Ellipsis,
     LParen,
     RParen,
@@ -371,7 +373,7 @@ impl<'a> Lexer<'a> {
                     self.bump();
                     Token::SafeNavigation
                 } else {
-                    return Err(Error::new("Unexpected '&'", Some(self.pos - 1)));
+                    Token::Ampersand
                 }
             }
             b'|' => {
@@ -407,6 +409,7 @@ impl<'a> Lexer<'a> {
                 | Token::Greater
                 | Token::Less
                 | Token::Semicolon
+                | Token::Ampersand
         ) {
             self.last_start = self.pos - 1;
             self.last_end = self.pos;

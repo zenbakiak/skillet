@@ -4,6 +4,7 @@ use crate::error::Error;
 use crate::limits::{self, charge_value, check_value};
 use crate::runtime::{
     function_dispatch::exec_builtin_fast,
+    logical,
     method_calls::exec_method_in,
     type_casting::cast_value,
     utils::{clamp_index, slice_items},
@@ -96,23 +97,18 @@ impl<'a> EvaluationContext for VariableContext<'a> {
 /// Local bindings (lambda item/accumulator) layered over a borrowed parent context.
 ///
 /// Lookups check the locals first, then the parent, so lambdas never copy the caller's
-/// variables (BL-030). `registry` is explicit because some call sites deliberately do not
-/// expose custom functions (plain method arguments, `FILTER(...)`-style builtins).
+/// variables (BL-030). Custom functions are the parent's: every sub-expression sees the same
+/// registry as the entry point (ADR-0016).
 pub(crate) struct Scope<'a> {
     parent: &'a dyn EvaluationContext,
     locals: Vec<(String, Value)>,
-    registry: Option<&'a Arc<RwLock<FunctionRegistry>>>,
 }
 
 impl<'a> Scope<'a> {
-    pub(crate) fn new(
-        parent: &'a dyn EvaluationContext,
-        registry: Option<&'a Arc<RwLock<FunctionRegistry>>>,
-    ) -> Self {
+    pub(crate) fn new(parent: &'a dyn EvaluationContext) -> Self {
         Self {
             parent,
             locals: Vec::new(),
-            registry,
         }
     }
 
@@ -134,7 +130,7 @@ impl EvaluationContext for Scope<'_> {
     }
 
     fn get_custom_registry(&self) -> Option<&Arc<RwLock<FunctionRegistry>>> {
-        self.registry
+        self.parent.get_custom_registry()
     }
 
     fn clone_variables(&self) -> HashMap<String, Value> {
@@ -146,9 +142,10 @@ impl EvaluationContext for Scope<'_> {
     }
 }
 
-/// Evaluate a plain (non-lambda) method argument: caller's variables, no custom functions.
+/// Evaluate a plain (non-lambda) method argument in the caller's context (variables and
+/// custom functions).
 pub(crate) fn eval_arg(expr: &Expr, ctx: &dyn EvaluationContext) -> Result<Value, Error> {
-    Evaluator::eval(expr, &Scope::new(ctx, None))
+    Evaluator::eval(expr, &Scope::new(ctx))
 }
 
 fn missing_variable(name: &str) -> Error {
@@ -379,6 +376,12 @@ impl Evaluator {
                         BinaryOp::Ne => x != y,
                         _ => false,
                     },
+                    // ADR-0013: NULL equals only NULL; ordering a NULL stays an error.
+                    (Value::Null, Value::Null) => match op {
+                        BinaryOp::Eq => true,
+                        BinaryOp::Ne => false,
+                        _ => return Err(Error::new("Comparison of incompatible types", None)),
+                    },
                     _ => match op {
                         BinaryOp::Eq => false,
                         BinaryOp::Ne => true,
@@ -465,11 +468,12 @@ impl Evaluator {
     /// Builtins that charge their own result before building it (ADR-0011 amendment 2); their
     /// result is only depth-checked. A custom function of the same name is charged as usual.
     fn is_prepaid_builtin<C: EvaluationContext>(name: &str, context: &C) -> bool {
-        matches!(name, "MERGE" | "CONCAT")
-            && !context
-                .get_custom_registry()
-                .and_then(|r| r.read().ok().map(|reg| reg.has_function(name)))
-                .unwrap_or(false)
+        name == crate::parser::CONCAT_OP
+            || matches!(name, "MERGE" | "CONCAT")
+                && !context
+                    .get_custom_registry()
+                    .and_then(|r| r.read().ok().map(|reg| reg.has_function(name)))
+                    .unwrap_or(false)
     }
 
     /// Evaluate function calls with optimized dispatch
@@ -492,6 +496,14 @@ impl Evaluator {
                 } else {
                     Self::eval(&args[2], context)
                 };
+            }
+            // `a & b` (D-10): both sides joined as text with `CONCAT` rules.
+            crate::parser::CONCAT_OP => {
+                let [a, b] = args else {
+                    return Err(Error::new("'&' expects 2 operands", None));
+                };
+                let joined = [Self::eval(a, context)?, Self::eval(b, context)?];
+                return exec_builtin_fast("CONCAT", &joined);
             }
             "__CONST_TRUE__" => return Ok(Value::Boolean(true)),
             "__CONST_FALSE__" => return Ok(Value::Boolean(false)),
@@ -534,6 +546,9 @@ impl Evaluator {
             "SUMIF" => Self::eval_sumif(args, context),
             "AVGIF" => Self::eval_avgif(args, context),
             "COUNTIF" => Self::eval_countif(args, context),
+            "IF" | "IFS" if !args.iter().any(|a| matches!(a, Expr::Spread(_))) => {
+                Self::eval_lazy_if(name, args, context)
+            }
             "JQ" => {
                 if args.len() != 2 {
                     return Err(Error::new(
@@ -583,6 +598,40 @@ impl Evaluator {
         }
     }
 
+    /// `IF` / `IFS` evaluate a condition, then only the branch it picks (D-8, Excel). Same
+    /// argument checks and truthiness as the eager versions in `logical.rs`, which still run
+    /// calls with a spread argument.
+    fn eval_lazy_if<C: EvaluationContext>(
+        name: &str,
+        args: &[Expr],
+        context: &C,
+    ) -> Result<Value, Error> {
+        let truthy = |e: &Expr| Self::eval(e, context).map(|v| logical::truthy(&v));
+        if name == "IF" {
+            if args.len() < 2 {
+                return Err(Error::new("IF expects at least 2 arguments", None));
+            }
+            return if truthy(&args[0])? {
+                Self::eval(&args[1], context)
+            } else {
+                args.get(2)
+                    .map_or(Ok(Value::Boolean(false)), |e| Self::eval(e, context))
+            };
+        }
+        if args.len() % 2 != 0 {
+            return Err(Error::new(
+                "IFS expects pairs of condition,value arguments",
+                None,
+            ));
+        }
+        for pair in args.chunks(2) {
+            if truthy(&pair[0])? {
+                return Self::eval(&pair[1], context);
+            }
+        }
+        Ok(Value::Boolean(false))
+    }
+
     /// Helper for higher-order functions - these need access to context for lambda evaluation
     fn eval_filter<C: EvaluationContext>(args: &[Expr], context: &C) -> Result<Value, Error> {
         if args.len() < 2 {
@@ -603,7 +652,7 @@ impl Evaluator {
         match arr_v {
             Value::Array(items) => {
                 let mut out = Vec::with_capacity(items.len());
-                let mut scope = Scope::new(context, None);
+                let mut scope = Scope::new(context);
                 for it in items {
                     charge_value(&it)?;
                     scope.set(&param_name, it.clone());
@@ -636,7 +685,7 @@ impl Evaluator {
 
         match arr_v {
             Value::Array(items) => {
-                let mut scope = Scope::new(context, None);
+                let mut scope = Scope::new(context);
                 for it in items {
                     charge_value(&it)?;
                     scope.set(&param_name, it.clone());
@@ -670,7 +719,7 @@ impl Evaluator {
         match arr_v {
             Value::Array(items) => {
                 let mut out = Vec::with_capacity(items.len());
-                let mut scope = Scope::new(context, None);
+                let mut scope = Scope::new(context);
                 for it in items {
                     charge_value(&it)?;
                     scope.set(&param_name, it);
@@ -711,7 +760,7 @@ impl Evaluator {
 
         match arr_v {
             Value::Array(items) => {
-                let mut scope = Scope::new(context, None);
+                let mut scope = Scope::new(context);
                 for it in items {
                     charge_value(&it)?;
                     scope.set(&val_param, it);
@@ -762,7 +811,7 @@ impl Evaluator {
         match arr_v {
             Value::Array(items) => {
                 let mut acc = 0.0;
-                let mut scope = Scope::new(context, None);
+                let mut scope = Scope::new(context);
                 for it in items {
                     charge_value(&it)?;
                     scope.set("x", it.clone());
@@ -922,7 +971,7 @@ impl Evaluator {
             Value::Array(items) => {
                 let mut acc = 0.0;
                 let mut count = 0usize;
-                let mut scope = Scope::new(context, None);
+                let mut scope = Scope::new(context);
                 for it in items {
                     charge_value(&it)?;
                     scope.set("x", it.clone());
@@ -957,7 +1006,7 @@ impl Evaluator {
         match arr_v {
             Value::Array(items) => {
                 let mut count = 0usize;
-                let mut scope = Scope::new(context, None);
+                let mut scope = Scope::new(context);
                 for it in items {
                     charge_value(&it)?;
                     scope.set("x", it);
@@ -1016,21 +1065,40 @@ pub fn eval_with_vars_and_custom(
     })
 }
 
-/// Evaluate with support for assignments and sequences
+/// Evaluate with support for assignments and sequences (no custom functions).
 pub fn eval_with_assignments(expr: &Expr, vars: &HashMap<String, Value>) -> Result<Value, Error> {
-    limits::evaluation(|| {
-        let mut context = VariableContext::with_owned(vars.clone());
-        eval_with_assignments_context(expr, &mut context)
-    })
+    eval_with_assignments_in(expr, vars, None).map(|(v, _)| v)
 }
 
-/// Evaluate with support for assignments and sequences, returning both result and variable context
+/// Evaluate with support for assignments and sequences, returning both result and variable
+/// context (no custom functions).
 pub fn eval_with_assignments_and_context(
     expr: &Expr,
     vars: &HashMap<String, Value>,
 ) -> Result<(Value, HashMap<String, Value>), Error> {
+    eval_with_assignments_in(expr, vars, None)
+}
+
+/// Like [`eval_with_assignments_and_context`], with the custom functions of `custom_registry`
+/// visible in every step (ADR-0016).
+pub fn eval_with_assignments_and_custom(
+    expr: &Expr,
+    vars: &HashMap<String, Value>,
+    custom_registry: &Arc<RwLock<FunctionRegistry>>,
+) -> Result<(Value, HashMap<String, Value>), Error> {
+    eval_with_assignments_in(expr, vars, Some(custom_registry))
+}
+
+fn eval_with_assignments_in(
+    expr: &Expr,
+    vars: &HashMap<String, Value>,
+    custom_registry: Option<&Arc<RwLock<FunctionRegistry>>>,
+) -> Result<(Value, HashMap<String, Value>), Error> {
     limits::evaluation(|| {
-        let mut context = VariableContext::with_owned(vars.clone());
+        let mut context = VariableContext {
+            variables: Cow::Owned(vars.clone()),
+            custom_registry,
+        };
         let result = eval_with_assignments_context(expr, &mut context)?;
         Ok((result, context.into_variables()))
     })
