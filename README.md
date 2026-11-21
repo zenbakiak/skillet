@@ -1,6 +1,6 @@
 ![logo](/skillet-logo.png)
 
-# Skillet — “Lightning-fast Excel-like formulas, Rust-powered.”
+# Skillet — “Excel-like formulas, Rust-powered.”
 
 [![Crates.io](https://img.shields.io/crates/v/skillet.svg)](https://crates.io/crates/skillet)
 [![Docs.rs](https://docs.rs/skillet/badge.svg)](https://docs.rs/skillet)
@@ -14,11 +14,10 @@ Skillet is a high-performance, embeddable expression engine written in Rust, ins
 - **JSON Digging**: `DIG(json, ['path','to','key'], default)` and method form `json.dig([...], default)`
 - **JSONPath Queries**: `JQ(json_data, "$.path.to.data")` for powerful JSON queries with aggregation support
 - **Enhanced Null Safety**: Conversion methods provide safe defaults for null values
-- **Performance Optimized**: ~3ms evaluation time (100x+ improvement from original 300ms)
 
 ## Core Features
 
-- 🚀 **Lightning Fast**: Optimized parser with string interning and memory pooling
+- 🚀 **Fast**: Hand-written recursive-descent parser and tree-walking evaluator (latency numbers: BL-005, `benches/BASELINE.md`)
 - 🛡️ **Null Safe**: Safe navigation (`&.`) and conversion methods handle null gracefully
 - 🔧 **Extensible**: JavaScript plugins for runtime extensibility without recompilation
 - 📊 **Excel-like**: Familiar syntax with advanced features like array operations

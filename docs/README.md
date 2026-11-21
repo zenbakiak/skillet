@@ -17,8 +17,9 @@ Welcome to the Skillet documentation! Here you'll find everything you need to ge
 - **[DOCKER_DEPLOYMENT_GUIDE.md](../DOCKER_DEPLOYMENT_GUIDE.md)** - Container deployment
 - **[BINARY_DISTRIBUTION_GUIDE.md](../BINARY_DISTRIBUTION_GUIDE.md)** - Binary distribution
 
-### ⚡ **Performance & Architecture**  
-- **[performance-optimization.prd.md](../performance-optimization.prd.md)** - Performance optimization details
+### ⚡ **Performance & Architecture**
+- **[DEVELOPMENT_GUIDE.md](DEVELOPMENT_GUIDE.md)** - Architecture and contributor guide
+- Measured performance baseline: BL-005 (`benches/BASELINE.md`)
 
 ---
 
@@ -29,10 +30,6 @@ Welcome to the Skillet documentation! Here you'll find everything you need to ge
 - **Safe Navigation Operator**: `obj&.property&.method()` 
 - **Enhanced Error Prevention**: Handle null values gracefully
 
-### 🚀 **Performance Improvements**
-- **100x+ Speed Increase**: From 300ms to ~3ms evaluation time
-- **Memory Optimizations**: String interning, AST pooling, copy-on-write
-- **Parser Enhancements**: Lookahead buffering, optimized lexing
 
 ### 🎯 **Language Enhancements**
 - **Safe Method Calls**: Chain methods without null errors
@@ -68,9 +65,7 @@ Welcome to the Skillet documentation! Here you'll find everything you need to ge
 
 ## 🤝 Need Help?
 
-- **Issues**: Report bugs or request features on [GitHub Issues](https://github.com/anthropics/claude-code/issues)
 - **Documentation**: All features are documented with examples
-- **Performance**: See optimization guide for tuning tips
 
 ---
 

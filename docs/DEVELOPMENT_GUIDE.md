@@ -43,7 +43,7 @@ Skillet is a **high-performance, embeddable expression language** written in Rus
 
 ### Key Differentiators
 
-- **Sub-3ms evaluation time** (100x+ faster than original design)
+- **Low-latency evaluation** (no measured baseline yet; see BL-005 / `benches/BASELINE.md`)
 - **Null-safe by design** with `&.` operator and conversion methods
 - **Runtime extensible** via JavaScript plugins (no recompilation needed)
 - **Production-ready servers** with authentication, caching, and daemon mode
@@ -67,9 +67,9 @@ Skillet is a **high-performance, embeddable expression language** written in Rus
 
 #### 3. **Performance Matters**
 - Zero-cost abstractions where possible
-- String interning for repeated identifiers
-- Memory pooling for AST nodes
-- HashMap reuse in loops (no per-iteration clones)
+- Shared `Rc<Expr>` AST nodes (no arena or pool)
+- Lambdas bind `:x`/`:acc` in a small local scope over the borrowed parent scope (no per-item copy of the variables)
+- Measure before claiming: numbers go in `benches/` (BL-005)
 
 #### 4. **Extensibility by Design**
 - JavaScript plugins for runtime customization
@@ -511,7 +511,6 @@ curl -X POST http://localhost:5074/eval \
 - Use `&[Value]` slices for read-only array access
 - Pre-allocate `Vec` with `Vec::with_capacity(n)` when size is known
 - Reuse `HashMap` across loop iterations
-- Use string interning for repeated identifiers
 - Match on references (`match &value`) to avoid clones
 
 #### ❌ DON'T:
@@ -523,6 +522,10 @@ curl -X POST http://localhost:5074/eval \
 
 ### 7.3 Benchmarking Results (Phase 2)
 
+> **Unverified.** These numbers predate the current code and no script in the repo reproduces
+> them. The measured baseline is BL-005 (`benches/BASELINE.md`); `cargo bench --bench lambda_scope`
+> is the one reproducible benchmark today.
+
 | Operation | Before | After | Improvement |
 |-----------|--------|-------|-------------|
 | FILTER (100 items) | 15.2ms | 1.8ms | **8.4x** |
@@ -530,7 +533,6 @@ curl -X POST http://localhost:5074/eval \
 | String ops | 850µs | 120µs | **7.0x** |
 | Array reverse | 450µs | 80µs | **5.6x** |
 
-**Overall:** ~3ms average evaluation time (100x+ improvement from original 300ms baseline)
 
 ---
 
