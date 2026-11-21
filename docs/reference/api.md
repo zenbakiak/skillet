@@ -33,11 +33,11 @@ admin-token check. Details: [limits](../guide/limits.md#server-request-limits-1-
 
 ### Arithmetic Operators
 - `+` - Addition
-- `-` - Subtraction  
+- `-` - Subtraction
 - `*` - Multiplication
 - `/` - Division
-- `%` - Modulo
-- `^` - Exponentiation
+- `%` - Percent suffix (`10%` is `0.1`), or modulo when an operand follows (`10 % 3` is `1`)
+- `^` - Exponentiation (left-associative: `2^3^2` is `64`)
 - `=` - Equals prefix (Excel-style)
 
 The arithmetic operators never produce NaN or infinity (BL-054, ADR-0018). Division or `%` by 0
@@ -51,13 +51,20 @@ is not a finite number (overflow, a non-real power) are a `#NUM!` error.
 0 ^ 0                        # Error: 0 ^ 0 is undefined (#NUM!)
 ```
 
+### Text Operator
+- `&` - Joins both sides as text, with `CONCAT` rules: `"a" & 1 & TRUE` is `"a1TRUE"`,
+  `NULL` adds nothing. Write `& .5` with a space: `&.` is safe navigation.
+
 ### Comparison Operators
 - `>` - Greater than
 - `<` - Less than
 - `>=` - Greater than or equal
 - `<=` - Less than or equal
-- `==` - Equal to
+- `==` (or `=`) - Equal to
 - `!=` - Not equal to
+
+`NULL == NULL` is `TRUE` and `NULL` is unequal to every other value (`NULL == 0` is `FALSE`).
+`<`, `<=`, `>`, `>=` with a `NULL` operand are an error (ADR-0013).
 
 ### Logical Operators
 - `AND`, `&&` - Logical AND
@@ -76,6 +83,27 @@ is not a finite number (overflow, a non-real power) are a `#NUM!` error.
 - `&.` - Safe navigation operator
 - `::` - Type casting operator
 - `...` - Spread operator
+
+### Precedence
+Tightest first, as in Excel. Operators on the same row are left-associative.
+
+| Level | Operators |
+|---|---|
+| 1 | postfix `.method()`, `.prop`, `&.`, `[i]`, `::type` |
+| 2 | unary `-`, `+`, `!` (`-2^2` is `4`) |
+| 3 | percent suffix `%` |
+| 4 | `^` (`2^3^2` is `64`) |
+| 5 | `*`, `/`, `%` (modulo) |
+| 6 | `+`, `-` |
+| 7 | `&` |
+| 8 | `>`, `<`, `>=`, `<=` |
+| 9 | `==`, `!=` |
+| 10 | `AND`, `&&` |
+| 11 | `OR`, `\|\|` |
+| 12 | `? :` |
+
+`-(2^2)` gives `-4`. Before BL-054, `^` was right-associative (`2^3^2` was `512`) and
+unary minus bound looser than `^` (`-2^2` was `-4`).
 
 ---
 
@@ -213,11 +241,15 @@ SQRT(-1)                     # Error: SQRT of a negative number (#NUM!)
 With no numbers in the data these return Excel's error: `MEDIAN`, `PERCENTILE_INC` and
 `QUARTILE_INC` `#NUM!`, `STDEV_P` and `VAR_P` `#DIV/0!`, `MODE_SNGL` `#N/A`.
 
-#### `STDEV.P(...)`, `VAR.P(...)`
-Population standard deviation and variance. Write them `STDEV_P` and `VAR_P` (or `STDEVP`, `VARP`).
+#### `STDEV.P(...)`, `VAR.P(...)`, `STDEV.S(...)`, `VAR.S(...)`
+Population (divide by n) and sample (divide by n - 1) standard deviation and variance, as in
+Excel. The dotted names work as written; `STDEV_P`, `STDEVP`, `VAR_P`, `VARP`, `STDEV_S`,
+`STDEV`, `VAR_S` and `VAR` are aliases. The sample functions need at least two numbers.
 ```bash
-STDEV_P(2, 4, 4, 4, 5, 5, 7, 9)    # 2
-VAR_P(2, 4, 4, 4, 5, 5, 7, 9)      # 4
+STDEV.P(2, 4, 4, 4, 5, 5, 7, 9)    # 2
+VAR.P(2, 4, 4, 4, 5, 5, 7, 9)      # 4
+STDEV.S(2, 4, 4, 4, 5, 5, 7, 9)    # 2.138...
+VAR.S(2, 4, 4, 4, 5, 5, 7, 9)      # 4.571... (32/7)
 STDEV_P()                          # Error: STDEV.P of no numbers (#DIV/0!)
 ```
 
@@ -262,14 +294,16 @@ QUARTILE_INC([1,2,3,4], -0.5)      # Error: Quartile must be 0-4 (#NUM!)
 ### Logical Functions
 
 #### `IF(condition, true_value, false_value)`
-Basic conditional.
+Basic conditional. Only the chosen branch is evaluated, so it can guard an error.
 ```bash
 IF(5 > 3, "Yes", "No")       # "Yes"
 IF(false, 10, 20)            # 20
+IF(:a == 0, 0, 1 / :a)       # 0 when :a is 0
 ```
 
 #### `IFS(condition1, value1, condition2, value2, ...)`
-Multiple conditions (returns first matching).
+Multiple conditions (returns first matching). Conditions are evaluated in order up to the
+first true one, and only its value is evaluated.
 ```bash
 IFS(false, "A", true, "B", true, "C")  # "B"
 IFS(score >= 90, "A", score >= 80, "B", true, "C")

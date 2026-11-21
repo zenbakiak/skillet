@@ -26,7 +26,7 @@ fn param_name(args_expr: &[Expr], idx: usize, default: &str) -> String {
 }
 
 fn lambda_scope(ctx: &dyn EvaluationContext) -> Scope<'_> {
-    Scope::new(ctx, ctx.get_custom_registry())
+    Scope::new(ctx)
 }
 
 /// Handle FILTER method call (higher-order function)

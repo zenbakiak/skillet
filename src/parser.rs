@@ -117,7 +117,7 @@ impl<'a> Parser<'a> {
 
     // Stack use (BL-029): every nesting level of the input runs the functions on the path
     // parse_expr -> parse_assignment -> parse_ternary -> parse_binary -> parse_unary ->
-    // parse_power -> parse_atom -> (parse_paren | literal | call) -> parse_expr. Keep those
+    // parse_postfix -> parse_atom -> (parse_paren | literal | call) -> parse_expr. Keep those
     // frames small: the branches a level does not always take live in `#[inline(never)]`
     // helpers, so their locals are not reserved on every level (debug builds give every
     // local its own stack slot).
@@ -204,12 +204,18 @@ impl<'a> Parser<'a> {
     }
 
     /// Left-associative binary operators by precedence climbing, loosest first:
-    /// `or` (1), `and` (2), `== !=` (3), `> < >= <=` (4), `+ -` (5), `* / %` (6).
+    /// `or` (1), `and` (2), `== !=` (3), `> < >= <=` (4), `&` (5), `+ -` (6), `* / %` (7).
+    /// Operands are `unary`, then postfix `%` and `^` (see `parse_power_rest`), so the full
+    /// Excel order is: negation > `%` > `^` > `* /` > `+ -` > `&` > comparisons (D-10).
     /// Builds the same tree, in the same order, as one function per level would, but
     /// with one frame instead of two per level on the path to an operand. Each operator
     /// wraps the tree one level deeper, so chain length counts against the depth limit.
     fn parse_binary(&mut self, min_prec: u8) -> Parsed {
-        let (mut node, mut depth) = self.parse_unary()?;
+        let mut parsed = self.parse_unary()?;
+        if matches!(self.lookahead, Token::Percent | Token::Caret) {
+            parsed = self.parse_power_rest(parsed)?;
+        }
+        let (mut node, mut depth) = parsed;
         while let Some((op, prec)) = binary_op(&self.lookahead) {
             if prec < min_prec {
                 break;
@@ -217,17 +223,24 @@ impl<'a> Parser<'a> {
             self.bump()?;
             let (rhs, dr) = self.parse_binary(prec + 1)?;
             depth = self.node_depth(Some(depth.max(dr)))?;
-            node = Expr::Binary(Rc::new(node), op, Rc::new(rhs));
+            node = match op {
+                Some(op) => Expr::Binary(Rc::new(node), op, Rc::new(rhs)),
+                None => Expr::FunctionCall {
+                    name: CONCAT_OP.to_string(),
+                    args: vec![node, rhs],
+                },
+            };
         }
         Ok((node, depth))
     }
 
+    /// Prefix `-`, `+` and `!` bind tightest (Excel: `-2^2` is 4).
     fn parse_unary(&mut self) -> Parsed {
         let op = match self.lookahead {
             Token::Plus => UnaryOp::Plus,
             Token::Minus => UnaryOp::Minus,
             Token::Bang => UnaryOp::Not,
-            _ => return self.parse_power(),
+            _ => return self.parse_postfix(),
         };
         self.bump()?;
         self.enter()?;
@@ -238,23 +251,20 @@ impl<'a> Parser<'a> {
         Ok((Expr::Unary(op, Rc::new(expr)), depth))
     }
 
-    /// `atom postfix* (:: type)? (^ unary)?`: postfix chain, then an optional cast, then
-    /// the right-associative power operator (binds tighter than unary).
-    fn parse_power(&mut self) -> Parsed {
+    /// `atom postfix* (:: type)?`: the postfix chain, then an optional cast.
+    fn parse_postfix(&mut self) -> Parsed {
         let atom = self.parse_atom()?;
         match self.lookahead {
-            Token::Dot
-            | Token::SafeNavigation
-            | Token::LBracket
-            | Token::DoubleColon
-            | Token::Caret => self.parse_power_rest(atom),
+            Token::Dot | Token::SafeNavigation | Token::LBracket | Token::DoubleColon => {
+                self.parse_postfix_rest(atom)
+            }
             _ => Ok(atom),
         }
     }
 
-    /// The optional parts of `parse_power` after the atom.
+    /// The optional parts of `parse_postfix` after the atom.
     #[inline(never)]
-    fn parse_power_rest(&mut self, mut parsed: (Expr, usize)) -> Parsed {
+    fn parse_postfix_rest(&mut self, mut parsed: (Expr, usize)) -> Parsed {
         if matches!(
             self.lookahead,
             Token::Dot | Token::SafeNavigation | Token::LBracket
@@ -264,26 +274,65 @@ impl<'a> Parser<'a> {
         if let Token::DoubleColon = self.lookahead {
             parsed = self.parse_cast_tail(parsed)?;
         }
-        if let Token::Caret = self.lookahead {
-            return self.parse_power_tail(parsed);
-        }
         Ok(parsed)
     }
 
-    /// `^ exponent` after an already parsed base.
+    /// After a unary operand: postfix percent (`50%` is `50 / 100`), then a left-associative
+    /// `^` chain whose operands are unary operands with their own percent suffix
+    /// (`2^3^2` is 64, `2^50%` is `2^0.5`).
     #[inline(never)]
-    fn parse_power_tail(&mut self, (left, dl): (Expr, usize)) -> Parsed {
-        self.bump()?;
-        // exponent can be unary like -2
-        self.enter()?;
-        let exponent = self.parse_unary();
-        self.nesting -= 1;
-        let (right, dr) = exponent?;
-        let depth = self.node_depth(Some(dl.max(dr)))?;
-        Ok((
-            Expr::Binary(Rc::new(left), BinaryOp::Pow, Rc::new(right)),
-            depth,
-        ))
+    fn parse_power_rest(&mut self, parsed: (Expr, usize)) -> Parsed {
+        let (mut node, mut depth) = self.parse_percent_suffix(parsed)?;
+        while let Token::Caret = self.lookahead {
+            self.bump()?;
+            self.enter()?;
+            let exponent = self.parse_unary();
+            self.nesting -= 1;
+            let (right, dr) = self.parse_percent_suffix(exponent?)?;
+            depth = self.node_depth(Some(depth.max(dr)))?;
+            node = Expr::Binary(Rc::new(node), BinaryOp::Pow, Rc::new(right));
+        }
+        Ok((node, depth))
+    }
+
+    /// Zero or more postfix `%` after an operand. A `%` followed by something that starts an
+    /// operand stays the binary modulo operator (`10 % 3`, `:a % :b`), as before D-10.
+    fn parse_percent_suffix(&mut self, (mut node, mut depth): (Expr, usize)) -> Parsed {
+        while matches!(self.lookahead, Token::Percent) && !self.percent_is_modulo() {
+            self.bump()?;
+            depth = self.node_depth(Some(depth))?;
+            node = Expr::Binary(Rc::new(node), BinaryOp::Div, Rc::new(Expr::Number(100.0)));
+        }
+        Ok((node, depth))
+    }
+
+    /// With `%` as the lookahead: is the next token the start of a right operand? A `:` only
+    /// counts when a variable name follows it directly (`:x`), so `c ? 10% : 2` is a percent.
+    fn percent_is_modulo(&self) -> bool {
+        let mut next = self.lexer.clone();
+        match next.next_token() {
+            Ok(Token::Colon) => {
+                let colon_end = next.last_end();
+                matches!(next.next_token(), Ok(Token::Identifier(_)))
+                    && next.last_start() == colon_end
+            }
+            Ok(tok) => matches!(
+                tok,
+                Token::Number(_)
+                    | Token::String(_)
+                    | Token::Identifier(_)
+                    | Token::True
+                    | Token::False
+                    | Token::Null
+                    | Token::LParen
+                    | Token::LBracket
+                    | Token::LBrace
+                    | Token::Minus
+                    | Token::Plus
+                    | Token::Bang
+            ),
+            Err(_) => false,
+        }
     }
 
     /// Comma-separated arguments after an already consumed `(`, through the closing `)`.
@@ -344,14 +393,31 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Function call: `IDENT '(' args? ')'`
+    /// Function call: `IDENT ('.' IDENT)* '(' args? ')'`. The dotted form is Excel's
+    /// (`STDEV.P(`); the parts must touch (no spaces around the dots). A bare identifier is
+    /// only ever a function name (variables start with `:`), so this cannot clash with
+    /// `:var.method()`.
     #[inline(never)]
     fn parse_function_call(&mut self) -> Parsed {
-        let name = match &self.lookahead {
+        let mut name = match &self.lookahead {
             Token::Identifier(name) => name.to_uppercase(),
             _ => return self.parse_leaf(),
         };
+        let mut end = self.lexer.last_end();
         self.bump()?; // consume ident
+        while matches!(self.lookahead, Token::Dot) && self.look_pos == end {
+            let mut next = self.lexer.clone();
+            match next.next_token()? {
+                Token::Identifier(part) if next.last_start() == end + 1 => {
+                    name.push('.');
+                    name.push_str(&part.to_uppercase());
+                    end = next.last_end();
+                    self.bump()?; // '.'
+                    self.bump()?; // part
+                }
+                _ => break,
+            }
+        }
         match self.lookahead {
             Token::LParen => {
                 self.bump()?; // '('
@@ -665,9 +731,14 @@ impl<'a> Parser<'a> {
     }
 }
 
-/// Binary operator and precedence (higher binds tighter) for a token, if it is one.
-fn binary_op(tok: &Token) -> Option<(BinaryOp, u8)> {
-    Some(match tok {
+/// Internal function name the `&` operator parses to (two arguments, joined as text with
+/// `CONCAT` rules). Like `__TERNARY__`, the evaluator handles it before custom functions.
+pub(crate) const CONCAT_OP: &str = "__CONCAT__";
+
+/// Binary operator and precedence (higher binds tighter) for a token, if it is one. The
+/// operator is `None` for `&`, which has no `BinaryOp` and becomes a `CONCAT_OP` call.
+fn binary_op(tok: &Token) -> Option<(Option<BinaryOp>, u8)> {
+    let (op, prec) = match tok {
         Token::Or | Token::OrOr => (BinaryOp::Or, 1),
         Token::And | Token::AndAnd => (BinaryOp::And, 2),
         Token::EqEq => (BinaryOp::Eq, 3),
@@ -676,13 +747,15 @@ fn binary_op(tok: &Token) -> Option<(BinaryOp, u8)> {
         Token::Less => (BinaryOp::Lt, 4),
         Token::Ge => (BinaryOp::Ge, 4),
         Token::Le => (BinaryOp::Le, 4),
-        Token::Plus => (BinaryOp::Add, 5),
-        Token::Minus => (BinaryOp::Sub, 5),
-        Token::Star => (BinaryOp::Mul, 6),
-        Token::Slash => (BinaryOp::Div, 6),
-        Token::Percent => (BinaryOp::Mod, 6),
+        Token::Ampersand => return Some((None, 5)),
+        Token::Plus => (BinaryOp::Add, 6),
+        Token::Minus => (BinaryOp::Sub, 6),
+        Token::Star => (BinaryOp::Mul, 7),
+        Token::Slash => (BinaryOp::Div, 7),
+        Token::Percent => (BinaryOp::Mod, 7),
         _ => return None,
-    })
+    };
+    Some((Some(op), prec))
 }
 
 #[cfg(test)]

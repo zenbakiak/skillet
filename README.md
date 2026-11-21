@@ -245,7 +245,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ## Language Features (MVP)
 
 - Numbers, booleans (`TRUE`/`FALSE`), strings ('...' or "..."), `NULL`
-- Operators: `+ - * / % ^`, `> < >= <= == !=`, `AND/OR/NOT` (also `&&/||/!`), ternary `? :`
+- Operators: `+ - * / % ^`, percent suffix `10%`, text join `&`, `> < >= <= == !=`, `AND/OR/NOT` (also `&&/||/!`), ternary `? :`; Excel precedence (`-2^2` = 4, `2^3^2` = 64)
 - Variables: `:name` (provided via `evaluate_with` map)
 - Functions (subset):
   - Math: `SUM`, `AVG/AVERAGE`, `MIN`, `MAX`, `ROUND`, `CEIL`, `FLOOR`, `ABS`, `SQRT`, `POW`

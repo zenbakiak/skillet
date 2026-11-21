@@ -16,6 +16,10 @@ pub fn exec_statistical(name: &str, args: &[Value]) -> Result<Value, Error> {
         "VAR.P" | "VARP" | "VAR_P" => Ok(Value::Number(variance(&numbers(args), "VAR.P")?)),
         "PERCENTILE.INC" | "PERCENTILEINC" | "PERCENTILE_INC" => percentile(args),
         "QUARTILE.INC" | "QUARTILEINC" | "QUARTILE_INC" => quartile(args),
+        "STDEV.S" | "STDEV_S" | "STDEV" => {
+            sample_variance(name, args).map(|v| Value::Number(v.sqrt()))
+        }
+        "VAR.S" | "VAR_S" | "VAR" => sample_variance(name, args).map(Value::Number),
         _ => Err(Error::new(
             format!("Unknown statistical function: {}", name),
             None,
@@ -126,4 +130,19 @@ fn quartile(args: &[Value]) -> Result<Value, Error> {
         return Err(Error::new("Quartile must be 0-4 (#NUM!)", None));
     }
     interpolate(nums, q.trunc() / 4.0, "QUARTILE.INC")
+}
+
+/// Sample variance (divides by n - 1), as Excel `VAR.S`. Fewer than two numbers is an error
+/// (Excel `#DIV/0!`).
+fn sample_variance(name: &str, args: &[Value]) -> Result<f64, Error> {
+    let nums = numbers(args);
+    if nums.len() < 2 {
+        return Err(Error::new(
+            format!("{name} needs at least two numbers"),
+            None,
+        ));
+    }
+    let n = nums.len() as f64;
+    let mean = nums.iter().sum::<f64>() / n;
+    Ok(nums.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (n - 1.0))
 }
