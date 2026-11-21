@@ -176,3 +176,19 @@ fn test_string_and_datetime_together() {
     assert!(year_str.starts_with("Year: "));
     assert!(year_str.contains("202")); // Should contain 2024, 2025, etc.
 }
+
+#[test]
+fn test_time_with_arguments_is_seconds_since_midnight() {
+    // Regression (Excel audit B-1): TIME(h, m, s) used to ignore its arguments and return the
+    // current local time. docs/reference/api.md: TIME(14, 30, 0) = 52200.
+    // 14*3600 + 30*60 + 0 = 50400 + 1800 = 52200
+    assert_eq!(as_number(evaluate("=TIME(14, 30, 0)").unwrap()), 52200.0);
+    // 0*3600 + 0*60 + 0 = 0
+    assert_eq!(as_number(evaluate("=TIME(0, 0, 0)").unwrap()), 0.0);
+    // 23*3600 + 59*60 + 59 = 82800 + 3540 + 59 = 86399
+    assert_eq!(as_number(evaluate("=TIME(23, 59, 59)").unwrap()), 86399.0);
+    // Wrong arity or non-numeric parts are errors.
+    assert!(evaluate("=TIME(1)").is_err());
+    assert!(evaluate("=TIME(1, 2)").is_err());
+    assert!(evaluate("=TIME('a', 0, 0)").is_err());
+}
