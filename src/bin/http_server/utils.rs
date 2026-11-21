@@ -4,6 +4,7 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 
 use super::cache::{get_pooled_buffer, return_pooled_buffer};
+use super::request_limits::{DeadlineReader, MAX_REQUEST_SIZE, WRITE_TIMEOUT};
 
 pub fn sanitize_json_key(key: &str) -> String {
     // Fast path: if key is already valid, return as-is (no allocation)
@@ -23,10 +24,11 @@ pub fn sanitize_json_key(key: &str) -> String {
         .collect()
 }
 
+/// Read one HTTP request of at most `MAX_REQUEST_SIZE` bytes. The whole request must arrive
+/// within `REQUEST_READ_DEADLINE` (BL-037); a slow client cannot extend it read by read.
 pub fn read_complete_http_request(stream: &mut TcpStream) -> Result<String, std::io::Error> {
-    // Set socket timeouts to prevent hanging connections
-    stream.set_read_timeout(Some(std::time::Duration::from_secs(30)))?;
-    stream.set_write_timeout(Some(std::time::Duration::from_secs(10)))?;
+    stream.set_write_timeout(Some(WRITE_TIMEOUT))?;
+    let mut reader = DeadlineReader::new(stream);
 
     let mut buffer = get_pooled_buffer();
     let mut temp_buffer = [0; 4096]; // Increased buffer size for better performance
@@ -34,12 +36,9 @@ pub fn read_complete_http_request(stream: &mut TcpStream) -> Result<String, std:
     let mut content_length: usize = 0;
     let mut headers_end_pos = 0;
 
-    // Maximum request size limit (1MB)
-    const MAX_REQUEST_SIZE: usize = 1024 * 1024;
-
     // First, read until we have complete headers
     while !headers_complete {
-        let bytes_read = stream.read(&mut temp_buffer)?;
+        let bytes_read = reader.read(&mut temp_buffer)?;
         if bytes_read == 0 {
             break;
         }
@@ -86,7 +85,7 @@ pub fn read_complete_http_request(stream: &mut TcpStream) -> Result<String, std:
 
         while total_read < remaining_bytes {
             let to_read = std::cmp::min(temp_body_buffer.len(), remaining_bytes - total_read);
-            let bytes_read = stream.read(&mut temp_body_buffer[..to_read])?;
+            let bytes_read = reader.read(&mut temp_body_buffer[..to_read])?;
             if bytes_read == 0 {
                 break; // Connection closed by client
             }

@@ -1,4 +1,4 @@
-//! Request size and time limits of `sk_server` and `sk_http_server` (BL-033).
+//! Request size and time limits of `sk_server` and `sk_http_server` (BL-033, BL-037).
 //! Servers run on 127.0.0.1 with one worker, so a held worker shows as a delayed next request.
 
 use std::io::{BufRead, BufReader, Read, Write};
@@ -37,6 +37,13 @@ impl Server {
         Server { child, port }
     }
 
+    /// `sk_http_server` with one worker.
+    fn http() -> Server {
+        Server::spawn(env!("CARGO_BIN_EXE_sk_http_server"), |port| {
+            vec![port.to_string(), "--threads".into(), "1".into()]
+        })
+    }
+
     /// `sk_server` with one worker.
     fn line() -> Server {
         Server::spawn(env!("CARGO_BIN_EXE_sk_server"), |port| {
@@ -57,6 +64,20 @@ impl Server {
         let mut line = String::new();
         let _ = BufReader::new(s).read_line(&mut line);
         line
+    }
+
+    /// POST `body` to `/eval`; returns the raw response.
+    fn post(&self, body: &str) -> String {
+        let mut s = self.connect();
+        let req = format!(
+            "POST /eval HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        s.write_all(req.as_bytes()).unwrap();
+        let mut resp = String::new();
+        let _ = s.read_to_string(&mut resp);
+        resp
     }
 }
 
@@ -160,7 +181,7 @@ fn bl033_sk_server_keeps_serving_a_persistent_connection() {
     assert!(third.contains("\"result\":6.0"), "{third}");
 }
 
-// ---------------------------------------------------------------- total read deadline
+// ---------------------------------------------------------------- BL-037: total read deadline
 
 /// A client trickling a request line holds the only worker for at most 30 s, then gets a
 /// timeout error; the next client is served.
@@ -186,6 +207,34 @@ fn bl037_sk_server_trickling_client_times_out() {
     let _ = BufReader::new(slow_reader).read_line(&mut slow_resp);
     assert!(
         slow_resp.contains("Request read timed out (max 30 s)"),
+        "{}",
+        head(&slow_resp)
+    );
+}
+
+/// Same for `sk_http_server`: the 30 s limit covers the whole request, not each read.
+#[test]
+#[ignore = "slow: 30 s request read deadline"]
+fn bl037_sk_http_server_trickling_client_times_out() {
+    let server = Server::http();
+    let slow = server.connect();
+    let mut slow_reader = slow.try_clone().unwrap();
+    let _t = trickle(slow, b"POST /eval HTTP/1.1\r\nHost: localhost\r\nX-Pad: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    std::thread::sleep(Duration::from_millis(300));
+
+    let start = Instant::now();
+    let resp = server.post("{\"expression\":\"=2 + 3\"}");
+    let took = start.elapsed();
+    assert!(resp.starts_with("HTTP/1.1 200"), "{}", head(&resp));
+    assert!(
+        took >= Duration::from_secs(25) && took < Duration::from_secs(40),
+        "{took:?}"
+    );
+
+    let mut slow_resp = String::new();
+    let _ = slow_reader.read_to_string(&mut slow_resp);
+    assert!(
+        slow_resp.contains("408 Request Timeout"),
         "{}",
         head(&slow_resp)
     );
