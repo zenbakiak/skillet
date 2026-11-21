@@ -40,8 +40,13 @@ info:
     `Content-Type: application/json` (parameters such as `; charset=utf-8` are allowed; the
     media type is case-insensitive). Otherwise the server answers HTTP 415 with
     `"error": "Content-Type must be application/json"`, before checking tokens.
-    `/upload-js` and `/update-js` also accept `multipart/form-data`, except from a browser
-    (a request with an `Origin` header) while no admin token is configured.
+    `/upload-js` and `/update-js` also accept `multipart/form-data`.
+
+    ## Browser requests in development mode
+    With no admin token configured, the admin endpoints (`/upload-js`, `/update-js`,
+    `/delete-js`, `/list-js`, `/reload-hooks`, `DELETE /cache`) answer HTTP 403 to any request
+    with an `Origin` header, whatever its method and body, with an error that says to set an
+    admin token.
 
     ## Request limits
     - A request (headers + body) may be at most 1 MB (1,048,576 bytes). A larger request, or a
@@ -618,7 +623,7 @@ components:
     UnsupportedMediaType:
       description: |
         The request has a body but its `Content-Type` is not `application/json` (or, on
-        `/upload-js` and `/update-js`, an allowed `multipart/form-data`). See "Request bodies".
+        `/upload-js` and `/update-js`, `multipart/form-data`). See "Request bodies".
       content:
         application/json:
           schema:

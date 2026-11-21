@@ -180,8 +180,12 @@ A request with a body (other than `GET` and `OPTIONS`) must send `Content-Type:
 application/json`; parameters such as `; charset=utf-8` are allowed and case does not matter.
 Otherwise the answer is HTTP **415**, before any token check. Browsers send a JSON request
 from another origin only after a preflight, so a page cannot post to a local server without the
-server's consent. `/upload-js` and `/update-js` also accept `multipart/form-data`, except from a
-browser (a request with an `Origin` header) while no admin token is configured.
+server's consent. `/upload-js` and `/update-js` also accept `multipart/form-data`.
+
+In development mode (no admin token) the admin endpoints (`/upload-js`, `/update-js`,
+`/delete-js`, `/list-js`, `/reload-hooks`, `DELETE /cache`) answer HTTP **403** to any request
+with an `Origin` header, which browsers send, telling you to set an admin token. curl and
+scripts, which send no `Origin`, are not affected.
 
 ```console
 $ curl -si -X POST localhost:5611/eval -d '{"expression":"=1"}'
