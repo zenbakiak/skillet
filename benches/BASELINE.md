@@ -121,13 +121,38 @@ parsing JSON text (BL-036 would remove it).
 2. **The CLI takes ~3–4 ms per call no matter which expression runs.** About 1 ms of that is
    OS process start; the other ~2–2.5 ms is `sk` start-up. Loading the repo's one JS hook does
    not change it: QuickJS only starts when an expression calls a hook (BL-040). The time goes to
-   loading system libraries (CoreFoundation) before `main` runs (BL-055).
+   loading system libraries (CoreFoundation) before `main` runs (BL-055, measured below).
 3. **HTTP takes ~0.1 ms per request** (new connection each time), 10× less than the first
    baseline. Evaluation is still only 0.5–30 µs of that, so cached and uncached requests cost
    about the same; the cache shows only for text that is expensive to parse (`parse_heavy`: 109 µs cached, 147 µs uncached).
    The connection itself (connect, thread hand-off, write, close) is now the floor.
 4. **`sk_http_bench -c` has no effect.** The concurrency sweep is fixed at 1, 5, 10, 20, 50
    (`run_concurrent_tests` in `src/bin/sk_http_bench.rs`); `-c` is only printed in the header.
+
+### BL-055: what CoreFoundation costs `sk`
+
+`sk` on macOS links `CoreFoundation.framework` through `chrono` (`clock` feature) →
+`iana-time-zone` → `core-foundation-sys`. Two crates turn `clock` on: `skillet` itself (default
+features, for `chrono::Local` in `DATE()` and `TIME()`) and `tera` (through `scalar-doc`, used only
+for the `/docs` page of `sk_http_server`). Cargo unifies features, so both must go before the
+framework drops out of any binary. Prototypes built from `3f59ae1` (not merged; see
+[ADR-0020](../docs/adr/0020-drop-corefoundation.md)):
+
+| Build | `otool -L target/release/sk` | `sk` size | `sk "=1+1"` median (range of 5 round medians) | p95 |
+|---|---|---|---|---|
+| `3f59ae1` as is | CoreFoundation, libSystem | 4 382 000 B | 5.84 ms (4.38–6.32) | 11.7 ms |
+| `skillet` chrono without `clock`, `Local` → `Utc` | CoreFoundation, libSystem | 4 340 400 B | 5.95 ms (4.38–6.54) | 11.9 ms |
+| same, and `scalar-doc` removed | libSystem only | 4 340 096 B | 4.31 ms (3.28–4.76) | 8.7 ms |
+| `/usr/bin/true` (floor) | | | 2.94 ms (2.12–3.46) | 6.6 ms |
+
+Dropping CoreFoundation saves 1.1–1.6 ms per call (per-round deltas 1.37, 1.56, 1.53, 1.10,
+1.15 ms), about 55% of the time `sk` spends above the process-start floor. Changing only
+`skillet`'s chrono features saves nothing while `tera` keeps `clock` on. Method: 5 rounds × 300
+calls of each binary, interleaved, Python `subprocess` (so every number includes launcher
+overhead; compare rows, not with the table above), empty working directory, release build,
+Apple M3 Pro, macOS 27.0.1, rustc 1.89.0, 1-min load ~20 (other agents compiling).
+Command (from an empty directory, with each build copied aside):
+`python3 -I benches/cli_startup.py /usr/bin/true sk_before sk_after`.
 
 ## The "100x" claim
 
