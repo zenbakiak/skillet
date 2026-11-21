@@ -1,5 +1,5 @@
 use crate::ast::{BinaryOp, Expr, UnaryOp};
-use crate::custom::FunctionRegistry;
+use crate::custom::{execute_checked, FunctionRegistry};
 use crate::error::Error;
 use crate::limits::{self, charge_value, check_value};
 use crate::runtime::{
@@ -497,30 +497,31 @@ impl Evaluator {
             _ => {}
         }
 
-        // Check custom functions first
-        if let Some(registry) = context.get_custom_registry() {
-            if let Ok(reg) = registry.read() {
-                if reg.has_function(name) {
-                    let mut ev_args = Vec::new();
-                    for a in args {
-                        match a {
-                            Expr::Spread(inner) => {
-                                let v = Self::eval(inner, context)?;
-                                if let Value::Array(items) = v {
-                                    ev_args.extend(items);
-                                } else {
-                                    return Err(Error::new("Spread expects array", None));
-                                }
-                            }
-                            _ => {
-                                let val = Self::eval(a, context)?;
-                                ev_args.push(val);
-                            }
+        // Check custom functions first. Take a handle and release the registry lock before
+        // evaluating arguments or running the function, so a slow function doesn't block
+        // writers (registration, reload) and nested custom calls don't re-lock.
+        let custom = context
+            .get_custom_registry()
+            .and_then(|registry| registry.read().ok()?.get_shared(name));
+        if let Some(function) = custom {
+            let mut ev_args = Vec::new();
+            for a in args {
+                match a {
+                    Expr::Spread(inner) => {
+                        let v = Self::eval(inner, context)?;
+                        if let Value::Array(items) = v {
+                            ev_args.extend(items);
+                        } else {
+                            return Err(Error::new("Spread expects array", None));
                         }
                     }
-                    return reg.execute(name, ev_args);
+                    _ => {
+                        let val = Self::eval(a, context)?;
+                        ev_args.push(val);
+                    }
                 }
             }
+            return execute_checked(function.as_ref(), name, ev_args);
         }
 
         // Handle higher-order functions
