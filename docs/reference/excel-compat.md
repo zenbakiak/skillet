@@ -1,7 +1,8 @@
 # Excel compatibility audit (BL-020)
 
-- Status: research. Nothing here changes behavior. Every "fix" below needs a backlog item, and
-  an ADR when it changes a result that tests pin today (AGENTS.md section 7).
+- Status: research, decided. The maintainer decided D-1…D-10 on 2026-11-21 in
+  [ADR-0018](../adr/0018-excel-compatibility.md): Excel is the contract for UPPERCASE builtins and
+  operators. The Skillet column below still shows the audited v0.6.3 output; the fixes ship in 0.7.0.
 - Scope: every builtin registered in `src/runtime/function_dispatch.rs`, plus the functions the
   evaluator handles itself (`FILTER`, `FIND`, `MAP`, `REDUCE`, `SUMIF`, `AVGIF`, `COUNTIF`, `JQ`).
 - Skillet column: real output of the release build (`./target/release/sk "<expr>"`, v0.6.3,
@@ -40,7 +41,7 @@ These patterns repeat across many rows. They are listed once here, and the table
 | X-3 | **Direct text and boolean arguments** | Aggregates ignore them anywhere: `SUM(1, "2", TRUE)` → `1`, `MAX(-1, "5")` → `-1` | Values inside a range or array are ignored, which matches Skillet. Values typed directly as arguments are converted: `SUM(1,"2",TRUE)` = 4, `MAX(-1,"5")` = 5 (**verify in Excel**) | **document**. Skillet has no cell ranges, so treating every argument like a range is a reasonable and simpler rule |
 | X-4 | **Dotted Excel names do not parse** | `STDEV.P(1,2)` → `Error: Unexpected identifier (expected function call) at position 5`. The same happens for `VAR.P`, `MODE.SNGL`, `PERCENTILE.INC`, `QUARTILE.INC` (and `STDEV.S`, `VAR.S` if added). Dispatch registers the dotted names, but the lexer does not allow `.` in identifiers (`src/lexer.rs:164`) | `STDEV.P(...)` | **fix**. The lexer should accept `IDENT(.IDENT)*` when it is upper case and directly followed by `(`. Lower-case `.method` chains are not affected. Until then, document `STDEV_P` or the legacy `STDEVP` |
 | X-5 | **Arguments that are silently ignored** | `CEILING(n, sig)`, `FLOOR(n, sig)`, `SUBSTITUTE(..., instance_num)`, `SORT(arr, -1)`, `ROUND(n, "x")`, `PMT(..., fv="x")` accept the extra argument and do nothing with it | The argument is honored, or `#VALUE!` | **fix**: honor it, or return an error. Never ignore it |
-| X-6 | **Operators** | `2 ^ 3 ^ 2` → `512` (right-associative). `-2 ^ 2` → `-4`. `%` is modulo (`-10 % 3` → `-1`). `&` is a parse error. `"a" == "A"` → `false` | `=2^3^2` = 64 (left-associative). `=-2^2` = 4 (negation binds before `^`). `%` is the percent suffix (`10%` = 0.1). `&` joins text. Text comparison ignores case | **document**. PRD-001 FR-1 says "Excel precedence", which is not true for `^` and unary minus. Changing this is a breaking change to the grammar. Recommendation: keep the math convention and correct FR-1 |
+| X-6 | **Operators** | `2 ^ 3 ^ 2` → `512` (right-associative). `-2 ^ 2` → `-4`. `%` is modulo (`-10 % 3` → `-1`). `&` is a parse error. `"a" == "A"` → `false` | `=2^3^2` = 64 (left-associative). `=-2^2` = 4 (negation binds before `^`). `%` is the percent suffix (`10%` = 0.1). `&` joins text. Text comparison ignores case | **document**. PRD-001 FR-1 says "Excel precedence", which is not true for `^` and unary minus. Changing this is a breaking change to the grammar. Recommendation: keep the math convention and correct FR-1. **Decided otherwise** (D-10): Excel precedence |
 | X-7 | **Number to text** | `CONCAT(0.1 + 0.2)` → `"0.30000000000000004"` (Rust's shortest round-trip format) | Uses 15 significant digits, so `"0.3"` | **document**. Point users to `ROUND` first |
 | X-8 | **No lazy evaluation** | `IF(TRUE, 1, UPPER(1))` → `Error: UPPER expects string`. `IF(FALSE, FIRST([]), 0)` → error. The ternary `c ? a : b` is lazy: `ISBLANK(NULL) ? "" : UPPER(NULL)` → `""` | `IF` evaluates only the branch it picks, so `=IF(A1=0, 0, 1/A1)` is the standard guard | **fix**. Evaluate `IF` and `IFS` lazily, like `SUMIF` and `FILTER` already are in `evaluator.rs`. Results only change where an error used to be returned, so this is low risk |
 
@@ -209,29 +210,39 @@ headings use dotted names that do not parse.
    Skillet `Error`, and that ignored or wrong-typed arguments are errors. Exception: functions
    ADR-0006 explicitly makes null-tolerant. This is a breaking change for anyone relying on
    `AVERAGE([])` being `0`, so it needs a minor-version note.
+   - **Decided 2026-11-21** ([ADR-0018](../adr/0018-excel-compatibility.md)): match Excel's errors; `Null` stays tolerated under ADR-0006. Not implemented yet.
 2. **D-2: Fix the high-severity bugs now** (B-1 `TIME`, B-2 `IPMT`, B-3 `COUNTIF`). They return
    wrong numbers silently, so no ADR is needed to restore documented or Excel behavior. Send each
    to the Rust Engineer with the expected values above as tests.
+   - **Decided 2026-11-21** ([ADR-0018](../adr/0018-excel-compatibility.md)): fix all three; `TIME` returns a fraction of a day, as in Excel. Not implemented yet.
 3. **D-3: `COUNT` semantics.** Make it variadic and numbers-only like Excel, and add `COUNTA`.
    This is breaking: `COUNT([1,"a"])` goes from 2 to 1. The current docs already promise the
    Excel behavior. Alternative: keep it as "length" and fix the docs. Recommendation: match Excel.
+   - **Decided 2026-11-21** ([ADR-0018](../adr/0018-excel-compatibility.md)): match Excel (`COUNT` numbers-only and variadic), add `COUNTA`. Not implemented yet.
 4. **D-4: Dotted names** (X-4/B-9). Allow `NAME.NAME(` in the lexer. Purely additive, but it is
    a grammar change, so it needs a short ADR. Check that it cannot conflict with `:var.method`
    (variables always start with `:`, and methods are lower case).
+   - **Decided 2026-11-21** ([ADR-0018](../adr/0018-excel-compatibility.md)): allow `NAME.NAME(`. Not implemented yet.
 5. **D-5: `DATE` rollover and date arithmetic.** Rollover is additive (it replaces errors).
    `DateTime ± Number` (in days, Excel-like) and `DateTime - DateTime` are new semantics that
    need an ADR, together with ADR-0004 and the cast proposal below.
+   - **Decided 2026-11-21** ([ADR-0018](../adr/0018-excel-compatibility.md)): rollover, Excel's 0–1899 year rule (not strict years), date arithmetic in days; string casts stay strict. Not implemented yet.
 6. **D-6: The `FIND` name collision.** Decide whether `FIND(text, text)` dispatches to an
    Excel-compatible text search.
+   - **Decided 2026-11-21** ([ADR-0018](../adr/0018-excel-compatibility.md)): dispatch on the first argument's type. Not implemented yet.
 7. **D-7: `MOD` sign, `TRIM` inner spaces, `SUMIF` case-insensitivity and wildcards.** Each one
    changes results for existing inputs. Recommendation: match Excel for the UPPER_CASE functions
    (the name is the promise) and keep Ruby semantics on the lowercase methods.
+   - **Decided 2026-11-21** ([ADR-0018](../adr/0018-excel-compatibility.md)): Excel `MOD`, `TRIM` and `SUMIF` for the functions, Ruby semantics for the methods. Not implemented yet.
 8. **D-8: Lazy `IF`/`IFS`** (X-8). Results only change where an error used to be returned.
    Recommendation: do it.
+   - **Decided 2026-11-21** ([ADR-0018](../adr/0018-excel-compatibility.md)): lazy `IF`/`IFS`. Not implemented yet.
 9. **D-9: Fill the gaps** with Excel aliases that cost little: `LEN`, `AVERAGEIF`, `STDEV.S`/`STDEV`,
    `VAR.S`/`VAR`, `TODAY`, `PPMT`, `PV`, `NPV`, `TEXTJOIN`, `PERCENTILE`, `QUARTILE`, `MODE`.
+   - **Decided 2026-11-21** ([ADR-0018](../adr/0018-excel-compatibility.md)): add all of them. Not implemented yet.
 10. **D-10: Operators** (X-6). Keep `^` right-associative and unary minus binding looser than
     `^` (the math convention), and correct PRD-001 FR-1, which says "Excel precedence".
+    - **Decided 2026-11-21** ([ADR-0018](../adr/0018-excel-compatibility.md)): **Excel precedence**, against the recommendation above: `-2^2` = 4, `2^3^2` = 64. Not implemented yet.
 
 ## Proposal: canonical form (`SUM(:a)` vs `:a.sum()`)
 

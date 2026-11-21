@@ -569,6 +569,16 @@ function execute(args) {
 }
 ```
 
+A thrown error fails the evaluation with `JS function NAME failed: <exception>`, for example
+`JS function VALIDATE_POSITIVE failed: Error: Number must be positive`.
+
+#### Limits
+
+Plugins are pure functions of their arguments: they get no file system, network or process access
+(the old undocumented `httpGet` global is gone). Each call is limited to 64 MiB of memory, 10 s
+(or the server's request deadline), a 256 KiB stack and results nested at most 128 arrays deep.
+The limits, error texts and examples are in [Limits](limits.md#javascript-plugins-64-mib-10-s-256-kib).
+
 #### JavaScript Value Types
 
 The `args` array contains JavaScript representations of Skillet values:
