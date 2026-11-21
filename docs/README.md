@@ -18,6 +18,9 @@ One topic, one home. Start with the [README](../README.md) for the pitch, instal
 - [Alpine / musl](ops/alpine.md) — static builds and adding Skillet to Alpine images
 - [Binaries](ops/binaries.md) — packaging and distributing release binaries, systemd
 
+## Security (`docs/security/`)
+- [Threat model](security/THREAT_MODEL.md) — surfaces, limits that hold, known gaps, how to report a vulnerability
+
 ## Decisions and requirements
 - [ADRs](adr/README.md) — architecture decisions
 - [PRDs](prd/README.md) — product requirements
