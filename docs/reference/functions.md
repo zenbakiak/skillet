@@ -41,6 +41,7 @@ Methods (`:arr.sum()`), operators and the rest of the language: [api.md](api.md)
 | `XOR` | `XOR(a, b)` | 2 | TRUE when exactly one argument is truthy. | `XOR(TRUE, FALSE)` | `TRUE` |
 | `IF` | `IF(condition, then, [else])` | 2-3 | `then` when `condition` is truthy, otherwise `else` (default FALSE). Both branches are evaluated. | `IF(1 > 0, 'yes', 'no')` | `"yes"` |
 | `IFS` | `IFS(condition, value, …)` | 2+ | Value of the first truthy condition; FALSE when none matches. | `IFS(FALSE, 'a', TRUE, 'b')` | `"b"` |
+| `BETWEEN` | `BETWEEN(min, max, value)` | 3 | TRUE when `min <= value <= max` (both bounds inclusive). All three arguments must be numbers. | `BETWEEN(10, 20, 15)` | `TRUE` |
 
 ## String
 
