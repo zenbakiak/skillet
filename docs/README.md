@@ -10,6 +10,7 @@ One topic, one home. Start with the [README](../README.md) for the pitch, instal
 
 ## Reference (`docs/reference/`)
 - [Functions, methods and operators](reference/api.md)
+- [Builtin functions](reference/functions.md) — generated from the builtin table in code (BL-010)
 - HTTP API: [`openapi.yml`](../openapi.yml) (also served by `sk_http_server` at `/openapi.yml`)
 
 ## Operations (`docs/ops/`)

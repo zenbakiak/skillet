@@ -1,8 +1,8 @@
 //! The single table of `UPPERCASE()` builtins (BL-010).
 //!
 //! One row per function: name, aliases, category, arity, signature, one-line summary and an
-//! example. The table drives dispatch (`function_dispatch`) and documents
-//! each builtin.
+//! example. The table drives dispatch (`function_dispatch`) and generates
+//! `docs/reference/functions.md` (see the tests at the bottom; `UPDATE_DOCS=1` rewrites it).
 //!
 //! For [`Dispatch::Module`] rows the category picks the module that runs the function
 //! (`arithmetic.rs`, `string.rs`, ...). [`Dispatch::Evaluator`] rows document functions the
@@ -200,10 +200,26 @@ pub(crate) static BUILTINS: &[Builtin] = &[
 mod tests {
     use super::*;
     use crate::runtime::function_dispatch::{builtin_function_count, has_builtin_function};
+    use crate::types::Value;
     use std::collections::HashSet;
+    use std::fmt::Write as _;
+
+    /// Documentation order and section titles.
+    const SECTIONS: [(Category, &str); 8] = [
+        (Category::Arithmetic, "Arithmetic"),
+        (Category::Logical, "Logical"),
+        (Category::String, "String"),
+        (Category::Array, "Array"),
+        (Category::DateTime, "Date and time"),
+        (Category::Financial, "Financial"),
+        (Category::Statistical, "Statistical"),
+        (Category::Json, "JSON"),
+    ];
 
     /// Variables every example is evaluated with.
     const EXAMPLE_VARS: &str = r#"{"obj": {"user": {"name": "alice", "tags": ["a", "b"]}}}"#;
+    const DOC_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/docs/reference/functions.md");
+
     #[test]
     fn names_are_unique_and_uppercase() {
         let mut seen = HashSet::new();
@@ -246,5 +262,116 @@ mod tests {
             let r = crate::evaluate_with_json(&format!("={}", b.example), EXAMPLE_VARS);
             assert!(r.is_ok(), "{}: {:?}", b.example, r);
         }
+    }
+
+    fn render_value(v: &Value) -> String {
+        match v {
+            Value::Number(n) | Value::Currency(n) => format!("{n}"),
+            Value::String(s) => format!("{s:?}"),
+            Value::Boolean(b) => (if *b { "TRUE" } else { "FALSE" }).to_string(),
+            Value::Null => "NULL".to_string(),
+            Value::Array(items) => {
+                let parts: Vec<_> = items.iter().map(render_value).collect();
+                format!("[{}]", parts.join(", "))
+            }
+            Value::DateTime(ts) => chrono::DateTime::from_timestamp(*ts, 0)
+                .map(|d| d.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+                .unwrap_or_else(|| ts.to_string()),
+            Value::Json(s) => s.clone(),
+        }
+    }
+
+    fn arity(b: &Builtin) -> String {
+        match b.max_args {
+            None => format!("{}+", b.min_args),
+            Some(max) if max == b.min_args => max.to_string(),
+            Some(max) => format!("{}-{}", b.min_args, max),
+        }
+    }
+
+    fn cell(s: &str) -> String {
+        s.replace('|', "\\|")
+    }
+
+    fn render_row(out: &mut String, b: &Builtin) {
+        let mut name = format!("`{}`", b.name);
+        if b.dispatch == Dispatch::Evaluator {
+            name.push_str(" †");
+        }
+        if !b.aliases.is_empty() {
+            let aliases: Vec<_> = b.aliases.iter().map(|a| format!("`{a}`")).collect();
+            let _ = write!(name, "<br>alias {}", aliases.join(", "));
+        }
+        let result = if b.volatile {
+            "(depends on the clock)".to_string()
+        } else {
+            let r = crate::evaluate_with_json(&format!("={}", b.example), EXAMPLE_VARS);
+            format!(
+                "`{}`",
+                r.map(|v| render_value(&v)).unwrap_or_else(|e| e.message)
+            )
+        };
+        let _ = writeln!(
+            out,
+            "| {} | `{}({})` | {} | {} | `{}` | {} |",
+            name,
+            b.name,
+            cell(b.args),
+            arity(b),
+            cell(b.summary),
+            cell(b.example),
+            cell(&result)
+        );
+    }
+
+    fn render_markdown() -> String {
+        let mut out = String::new();
+        out.push_str(
+            "# Builtin function reference\n\n\
+             <!-- Generated from src/runtime/builtin_table.rs. Do not edit by hand: change the \
+             table, then run `UPDATE_DOCS=1 cargo test --lib builtin_table`. -->\n\n\
+             Every `UPPERCASE()` builtin. Names are case-insensitive in expressions (the parser \
+             upper-cases them, so `sum(1, 2)` calls `SUM`). Custom functions registered with \
+             `register_function` are checked first and can shadow a builtin.\n\n\
+             - **Arity** is the number of arguments the function reads (`2+` = two or more). \
+             Functions check their own arguments: some return an error for a wrong count, others \
+             use a default for a missing argument and ignore extra ones.\n\
+             - **Result** is what the example evaluates to, produced by the test that writes this \
+             file. Examples run with `:obj` = `{\"user\": {\"name\": \"alice\", \"tags\": [\"a\", \"b\"]}}`.\n\
+             - **†** marks functions the evaluator runs itself because they take a lambda \
+             (`:x` is the item, `:acc` the accumulator) or need unevaluated arguments.\n\
+             - Dotted Excel spellings (`MODE.SNGL`, `STDEV.P`, ...) are registered aliases, but \
+             the parser cannot read a dot in a function name; use the underscore form.\n\n\
+             Methods (`:arr.sum()`), operators and the rest of the language: [api.md](api.md).\n",
+        );
+        for (category, title) in SECTIONS {
+            let _ = write!(
+                out,
+                "\n## {title}\n\n\
+                 | Function | Signature | Arity | Summary | Example | Result |\n\
+                 |---|---|---|---|---|---|\n"
+            );
+            for b in BUILTINS.iter().filter(|b| b.category == category) {
+                render_row(&mut out, b);
+            }
+        }
+        out
+    }
+
+    /// Fails when `docs/reference/functions.md` does not match the table.
+    /// `UPDATE_DOCS=1 cargo test --lib builtin_table` rewrites it.
+    #[test]
+    fn functions_reference_is_up_to_date() {
+        let want = render_markdown();
+        if std::env::var_os("UPDATE_DOCS").is_some() {
+            std::fs::write(DOC_PATH, &want).expect("write docs/reference/functions.md");
+            return;
+        }
+        let have = std::fs::read_to_string(DOC_PATH).unwrap_or_default();
+        assert!(
+            have == want,
+            "docs/reference/functions.md is out of date; run \
+             `UPDATE_DOCS=1 cargo test --lib builtin_table` and commit the result"
+        );
     }
 }
