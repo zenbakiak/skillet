@@ -511,7 +511,7 @@ down to 1 MB). Affects embedders spawning threads in debug and in-process tests.
 binary precedence levels into one precedence-climbing loop and shrinking `parse_atom`'s frame;
 measure stack per level before/after.
 
-### BL-030 · Lambdas clone the whole variable map per call (CPU/alloc DoS) · P1 · `in-progress` · rust-engineer (+ performance-engineer for numbers)
+### BL-030 · Lambdas clone the whole variable map per call (CPU/alloc DoS) · P1 · `review` · rust-engineer (+ performance-engineer for numbers)
 Found in BL-027a. Every method/function call inside a lambda runs `context.clone_variables()` and the
 lambda helpers `base_vars.cloned()`, so cost is O(items × size of all vars). Measured (release):
 `:nums.map(:x.abs()).sum()` over 100k numbers (589 KB JSON) = 14.6 s and 305 GB allocated;
@@ -540,3 +540,48 @@ Brief (orchestrator, 2026-11-20):
         `:rows.map(:x.price / :rows.length()).sum()` (10k rows, ADR-0011 A12) — 3.5 s → report.
       Put the harness that builds these inputs in benches/ (script or #[ignore] test) so BL-005 can reuse it.
     - Peak/total allocation for the first case reported if easy (counting allocator in a scratch bin is fine).
+
+Handoff (rust-engineer, Claude Opus 5.5, 2026-11-20):
+  Did: - benches/lambda_scope.rs + `[[bench]] harness = false` (std only, no new dependency):
+         `cargo bench --bench lambda_scope` (RUNS=n optional) builds the 100k-nums / 10k-rows
+         inputs in-process (vars shaped like evaluate_with_json_custom, incl. `arguments`), prints
+         median/p95 and the result of each formula. Library layer; avoids the argv size limit.
+       - `runtime::evaluator::Scope`: local bindings (item/acc) over a borrowed `&dyn EvaluationContext`,
+         local-first lookup. Used by method lambdas, FILTER/MAP/FIND/REDUCE/SUMIF/AVGIF/COUNTIF and
+         plain method arguments (`eval_arg`). Method/property targets that are plain variables are
+         borrowed, not cloned (fixes the `:rows.length()` per-item copy). No `clone_variables` call
+         left on any evaluation path; the 8 lambda methods (plain + _with_custom) collapse into 4.
+       - Custom-registry visibility kept exactly: lambdas in methods see the caller's registry;
+         plain method arguments and FILTER()-style builtin lambdas do not (as before).
+  Evidence: ./harness/check.sh (full, strict) green; tests/ untouched (evaluator_parity +
+         security_limits green). New unit tests in evaluator.rs: a context whose clone_variables()
+         panics evaluates lambda/method/builtin cases (fails on the old code); shadowing and
+         reduce same-name (acc wins) unchanged.
+         Release, median of 5 (p95), MacBook 11 cores, macOS 27.0.1, rustc 1.81, `cargo bench --bench
+         lambda_scope`; before = efaeed5, after = fix commit. Results identical before/after.
+         | Formula                                        | before            | after          |
+         |------------------------------------------------|-------------------|----------------|
+         | `:nums.map(:x * 1).sum()` (100k, 700 KB)       | 6.02 (7.44) ms    | 2.82 (3.04) ms |
+         | `:nums.map(:x.abs()).sum()`                    | 15444 (15675) ms  | 4.63 (5.24) ms |
+         | `:rows.map(:x.price).sum()` (10k, 449 KB)      | 4.13 (4.72) ms    | 2.68 (2.88) ms |
+         | `:rows.map(:x.price.round(1)).sum()`           | 2027 (2033) ms    | 3.12 (3.20) ms |
+         | `:rows.map(:x.price / :rows.length()).sum()`   | 3996 (3997) ms    | 3.26 (3.38) ms |
+         Acceptance: abs case 1.6x of `:x * 1`; round case 1.2x of `:x.price`; A12 now 3.3 ms.
+         Total allocation, `:nums.map(:x.abs()).sum()` (counting allocator, scratch bin outside the
+         repo): before 390 GB total / 18 MB peak, 15.9 s; after 3.8 MB total / 3.2 MB peak.
+  Risks/Follow-ups:
+       - `skillet::runtime::method_calls` is a pub module: sub-handler signatures changed
+         (`exec_filter/map/find/reduce`, `exec_string_method`, `exec_array_method` now take
+         `&dyn EvaluationContext`; `exec_*_with_custom` removed). `exec_method` /
+         `exec_method_with_custom`, the `EvaluationContext` trait and everything in src/lib.rs are
+         unchanged. Not part of the AGENTS §7 contract, but flag for the changelog.
+       - Pre-existing inconsistency, kept as is (Language Designer to decide): custom functions are
+         not visible in plain method arguments (`:s.contains(MYFN())`) nor in FILTER()/MAP()-style
+         builtin lambdas, but are visible in `.map()`/`.filter()` lambdas.
+       - Variable reads elsewhere still clone the value (`SUM(:rows)`, `:rows[0]`); only method and
+         property targets are borrowed. ADR-0011 amendment (no read charge) holds for A12.
+       - Flaky gate note: tests/sk_concurrency.rs runs `cargo run --release` in parallel; if the release
+         `sk` is stale, concurrent rebuilds make 1–2 runs fail. `cargo build --release --bin sk`
+         first avoids it (QA item worth filing).
+       - BL-027b is unblocked.
+  ADR: none
