@@ -364,6 +364,15 @@ fn parse_args(args: &[String]) -> (Option<String>, Option<String>, bool, String,
         i += 1;
     }
 
+    // An empty token would match a request with no token, so auth would be off while the
+    // banner says it is on (BL-048).
+    for (flag, token) in [("--token", &auth_token), ("--admin-token", &admin_token)] {
+        if token.as_deref() == Some("") {
+            eprintln!("Error: {flag} must not be empty");
+            std::process::exit(1);
+        }
+    }
+
     (
         auth_token,
         admin_token,

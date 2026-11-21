@@ -68,7 +68,7 @@ mod response_size;
 
 #[path = "http_server/request_limits.rs"]
 mod request_limits;
-use request_limits::{DeadlineReader, MAX_REQUEST_SIZE, WRITE_TIMEOUT};
+use request_limits::{DeadlineReader, DeadlineWriter, MAX_REQUEST_SIZE};
 
 #[path = "http_server/token_eq.rs"]
 mod token_eq;
@@ -127,13 +127,12 @@ fn handle_client(
     request_counter: Arc<AtomicU64>,
     server_token: Arc<Option<String>>,
 ) {
-    let _ = stream.set_write_timeout(Some(WRITE_TIMEOUT));
+    // The read deadline counts from the connection start or the end of the last real request.
+    // Blank, invalid-JSON and unauthorized lines are not work and do not reset it (BL-046).
     let mut reader = BufReader::new(DeadlineReader::new(&stream));
     let mut buf = Vec::new();
 
     loop {
-        // Each request gets the full deadline, counted from when the server starts reading it.
-        *reader.get_mut() = DeadlineReader::new(&stream);
         let line = match read_request_line(&mut reader, &mut buf) {
             Line::Request(line) => line,
             Line::Closed => break,
@@ -160,39 +159,21 @@ fn handle_client(
         let request_id = request_counter.fetch_add(1, Ordering::Relaxed);
         let start_time = Instant::now();
 
-        let response = match serde_json::from_str::<EvalRequest>(&line) {
-            Ok(req) => {
-                if let Some(cfg_token) = server_token.as_ref() {
-                    let supplied = req.token.as_deref().unwrap_or("");
-                    if !tokens_match(supplied, cfg_token) {
-                        EvalResponse {
-                            success: false,
-                            result: None,
-                            error: Some("Unauthorized: invalid token".to_string()),
-                            execution_time_ms: 0.0,
-                            request_id,
-                        }
-                    } else {
-                        process_request(req, request_id)
-                    }
-                } else {
-                    process_request(req, request_id)
-                }
-            }
-            Err(e) => EvalResponse {
-                success: false,
-                result: None,
-                error: Some(format!("Invalid JSON request: {}", e)),
-                execution_time_ms: 0.0,
-                request_id,
-            },
-        };
+        let (response, outcome) = answer(&line, request_id, &server_token);
 
         let execution_time = start_time.elapsed();
         stats.record_request(execution_time.as_micros() as u64);
 
         if write_response(&stream, &response).is_err() {
             break;
+        }
+        match outcome {
+            Outcome::Work => *reader.get_mut() = DeadlineReader::new(&stream),
+            Outcome::NotWork => {}
+            Outcome::Unauthorized => {
+                close_after_reject(&stream, reader.get_mut());
+                break;
+            }
         }
 
         // Log request for monitoring
@@ -204,6 +185,41 @@ fn handle_client(
             );
         }
     }
+}
+
+/// What answering a request line means for the connection.
+enum Outcome {
+    /// An authorized request was evaluated: the read deadline starts again.
+    Work,
+    /// Invalid JSON: answered, but the deadline keeps running.
+    NotWork,
+    /// Wrong or missing token: answered, then the connection is closed.
+    Unauthorized,
+}
+
+/// Parse, authorize and evaluate one non-blank request line.
+fn answer(line: &str, request_id: u64, server_token: &Option<String>) -> (EvalResponse, Outcome) {
+    let failure = |error: String| EvalResponse {
+        success: false,
+        result: None,
+        error: Some(error),
+        execution_time_ms: 0.0,
+        request_id,
+    };
+    let req = match serde_json::from_str::<EvalRequest>(line) {
+        Ok(req) => req,
+        Err(e) => {
+            let response = failure(format!("Invalid JSON request: {}", e));
+            return (response, Outcome::NotWork);
+        }
+    };
+    if let Some(cfg_token) = server_token {
+        if !tokens_match(req.token.as_deref().unwrap_or(""), cfg_token) {
+            let response = failure("Unauthorized: invalid token".to_string());
+            return (response, Outcome::Unauthorized);
+        }
+    }
+    (process_request(req, request_id), Outcome::Work)
 }
 
 /// After rejecting a request, close so the client still receives the error: closing a socket
@@ -362,9 +378,10 @@ fn scalar_json(val: Value, datetime_text: bool) -> serde_json::Value {
     }
 }
 
-/// Stream one response line to the client, with no copy of the response in memory.
+/// Stream one response line to the client, with no copy of the response in memory. The whole
+/// line must be written within `WRITE_TIMEOUT` (BL-047).
 fn write_response(stream: &TcpStream, response: &EvalResponse) -> std::io::Result<()> {
-    let mut out = BufWriter::new(stream);
+    let mut out = BufWriter::new(DeadlineWriter::new(stream));
     serde_json::to_writer(&mut out, response)?;
     out.write_all(b"\n")?;
     out.flush()
@@ -545,6 +562,13 @@ fn main() {
             }
         }
         i += 1;
+    }
+
+    // An empty token would match a request with no token, so auth would be off while the
+    // banner says it is on (BL-048).
+    if auth_token.as_deref() == Some("") {
+        eprintln!("Error: the auth token is empty (--token or SKILLET_AUTH_TOKEN); give a non-empty token or unset it");
+        std::process::exit(1);
     }
 
     // Handle daemon mode before any output

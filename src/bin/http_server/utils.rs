@@ -4,7 +4,7 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 
 use super::cache::{get_pooled_buffer, return_pooled_buffer};
-use super::request_limits::{DeadlineReader, MAX_REQUEST_SIZE, WRITE_TIMEOUT};
+use super::request_limits::{DeadlineReader, DeadlineWriter, MAX_REQUEST_SIZE};
 
 pub fn sanitize_json_key(key: &str) -> String {
     // Fast path: if key is already valid, return as-is (no allocation)
@@ -27,7 +27,6 @@ pub fn sanitize_json_key(key: &str) -> String {
 /// Read one HTTP request of at most `MAX_REQUEST_SIZE` bytes. The whole request must arrive
 /// within `REQUEST_READ_DEADLINE` (BL-037); a slow client cannot extend it read by read.
 pub fn read_complete_http_request(stream: &mut TcpStream) -> Result<String, std::io::Error> {
-    stream.set_write_timeout(Some(WRITE_TIMEOUT))?;
     let mut reader = DeadlineReader::new(stream);
 
     let mut buffer = get_pooled_buffer();
@@ -159,9 +158,11 @@ pub fn send_http_response(stream: &mut TcpStream, status: u16, content_type: &st
         body.len(),
     );
 
-    let _ = stream
+    // The whole response must be written within `WRITE_TIMEOUT` (BL-047).
+    let mut out = DeadlineWriter::new(stream);
+    let _ = out
         .write_all(headers.as_bytes())
-        .and_then(|()| stream.write_all(body.as_bytes()));
+        .and_then(|()| out.write_all(body.as_bytes()));
 }
 
 /// Serialize `value` into a string allocated once at its exact size: a first pass counts the
@@ -204,7 +205,7 @@ pub fn handle_cors_preflight(stream: &mut TcpStream) {
         Access-Control-Allow-Headers: Content-Type, Authorization\r\n\
         Content-Length: 0\r\n\
         \r\n";
-    let _ = stream.write_all(response.as_bytes());
+    let _ = DeadlineWriter::new(stream).write_all(response.as_bytes());
 }
 
 pub fn parse_json_body<T: DeserializeOwned>(request: &str) -> Result<T, String> {
