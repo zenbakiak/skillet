@@ -4,6 +4,7 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 
 use super::cache::{get_pooled_buffer, return_pooled_buffer};
+use super::cors;
 use super::request_limits::{DeadlineReader, DeadlineWriter, MAX_REQUEST_SIZE};
 
 pub fn sanitize_json_key(key: &str) -> String {
@@ -136,8 +137,9 @@ pub fn send_http_response(stream: &mut TcpStream, status: u16, content_type: &st
         400 => "Bad Request",
         401 => "Unauthorized",
         408 => "Request Timeout",
-        413 => "Payload Too Large",
         404 => "Not Found",
+        413 => "Payload Too Large",
+        415 => "Unsupported Media Type",
         500 => "Internal Server Error",
         _ => "Unknown",
     };
@@ -145,15 +147,14 @@ pub fn send_http_response(stream: &mut TcpStream, status: u16, content_type: &st
     // Headers and body are written separately, so a large body is not copied again.
     let headers = format!(
         "HTTP/1.1 {} {}\r\n\
-         Access-Control-Allow-Origin: *\r\n\
-         Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS\r\n\
-         Access-Control-Allow-Headers: Content-Type, Authorization\r\n\
+         {}\
          Content-Type: {}\r\n\
          Content-Length: {}\r\n\
          Connection: close\r\n\
          \r\n",
         status,
         status_text,
+        cors::response_headers(),
         content_type,
         body.len(),
     );
@@ -198,13 +199,13 @@ pub fn send_http_error(stream: &mut TcpStream, status: u16, message: &str) {
     send_http_response(stream, status, "application/json", &error_json.to_string());
 }
 
+/// `OPTIONS`: the CORS headers when an origin is allowed (ADR-0019), otherwise none, so the
+/// browser refuses the cross-origin request.
 pub fn handle_cors_preflight(stream: &mut TcpStream) {
-    let response = "HTTP/1.1 200 OK\r\n\
-        Access-Control-Allow-Origin: *\r\n\
-        Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS\r\n\
-        Access-Control-Allow-Headers: Content-Type, Authorization\r\n\
-        Content-Length: 0\r\n\
-        \r\n";
+    let response = format!(
+        "HTTP/1.1 200 OK\r\n{}Content-Length: 0\r\nConnection: close\r\n\r\n",
+        cors::response_headers()
+    );
     let _ = DeadlineWriter::new(stream).write_all(response.as_bytes());
 }
 

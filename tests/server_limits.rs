@@ -34,6 +34,8 @@ impl Server {
             .env("SKILLET_HOOKS_DIR", hooks)
             .env("SKILLET_BIND_HOST", "127.0.0.1")
             .env_remove("SKILLET_AUTH_TOKEN")
+            .env_remove("SKILLET_ADMIN_TOKEN")
+            .env_remove("SKILLET_CORS_ORIGIN")
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null());
         if let Some(t) = env_token {
@@ -519,6 +521,8 @@ fn refuses_to_start(bin: &str, args: &[&str], env_token: Option<&str>) -> String
         )
         .env("SKILLET_BIND_HOST", "127.0.0.1")
         .env_remove("SKILLET_AUTH_TOKEN")
+        .env_remove("SKILLET_ADMIN_TOKEN")
+        .env_remove("SKILLET_CORS_ORIGIN")
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped());
     if let Some(t) = env_token {
