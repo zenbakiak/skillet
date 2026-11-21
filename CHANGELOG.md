@@ -8,12 +8,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 (`0.x.0`) may contain breaking changes and a patch release (`0.x.y`) contains fixes only.
 Breaking changes are marked **BREAKING**.
 
-Releases are tagged `crate-vX.Y.Z` (crates.io) in this repository. Entries for 0.6.3 and earlier
-were reconstructed from git tags and commit messages, so they are brief.
+Releases are tagged `vX.Y.Z` (binaries, GitHub release and crates.io, ADR-0022). Tags for 0.6.3
+and earlier are `crate-vX.Y.Z`. Entries for 0.6.3 and earlier were reconstructed from git tags and
+commit messages, so they are brief.
 
 ## [Unreleased]
 
-Planned as 0.7.0 (it contains breaking changes, see "Removed").
+Planned as 0.7.0. It contains breaking changes, marked **BREAKING** below; the
+[migration guide](docs/guide/migration-0.7.md) lists each one with the old and the new result.
 
 ### Added
 - `benches/baseline.rs` and `benches/BASELINE.md`: a reproducible performance baseline for the
@@ -34,6 +36,25 @@ Planned as 0.7.0 (it contains breaking changes, see "Removed").
 - `docs/reference/functions.md` is generated from the builtin table, and a test fails when it is
   stale (#58). `docs/reference/excel-compat.md` lists how each builtin compares with Excel (#56).
   Rustdoc examples for the public API (#60).
+- `evaluate_parsed`, `evaluate_parsed_with`, `evaluate_parsed_with_custom`,
+  `evaluate_parsed_with_assignments` and `evaluate_parsed_with_assignments_and_context` evaluate
+  the `Expr` returned by `parse` (ADR-0021). The `evaluate*` functions call them, so results,
+  errors and limits are the same (#80).
+- New Excel builtins (ADR-0018): `LEN`, `TEXTJOIN`, `TODAY`, `PPMT`, `PV`, `NPV`, `COUNTA`,
+  `AVERAGEIF`, the sample statistics `STDEV.S`/`STDEV` and `VAR.S`/`VAR`, and the names `MODE`,
+  `PERCENTILE` and `QUARTILE` (#82, #83, #84).
+- Dotted function names parse, so `STDEV.P(…)`, `PERCENTILE.INC(…)` and the like work (#82).
+- `&` joins text, and a `%` suffix divides by 100 (`15%` is 0.15); `%` followed by an operand is
+  still modulo (#82).
+- `FIND(text, within, [start])` is Excel's 1-based, case-sensitive text search;
+  `FIND(array, lambda)` is unchanged (#83).
+- Date arithmetic in days: `date ± n` and `n + date` give a DateTime, and `date - date` gives the
+  number of days (#83).
+- `sk_http_server --cors-origin` / `SKILLET_CORS_ORIGIN` sets the CORS origin, and
+  `SKILLET_ADMIN_TOKEN` sets the admin token (the flag wins) (ADR-0019, #78).
+- `docs/security/THREAT_MODEL.md`: the threat model for the library, servers and JS plugins (#73).
+  `docs/guide/migration-0.7.md`: every 0.7.0 breaking change (#77).
+- `sk_http_bench --expr` selects the expression for the sweep (#80).
 
 ### Changed
 - The parser uses about 4x less stack per nesting level, so debug builds handle the maximum
@@ -88,12 +109,64 @@ Planned as 0.7.0 (it contains breaking changes, see "Removed").
 - Two timing-sensitive tests no longer fail on fast or loaded machines; the accept-floor test
   runs only with `--ignored` (#65, #66).
 - The crate is formatted with `rustfmt` and clippy-clean (#42).
+- **BREAKING** Excel precedence (ADR-0018 D-10): negation, then `%`, then `^` (left-associative),
+  then `* /`, `+ -`, `&` and comparisons. `-2^2` is 4 (was -4) and `2^3^2` is 64 (was 512) (#82).
+- **BREAKING** `NULL == NULL` is `true` and `NULL != NULL` is `false` (ADR-0013); ordering with
+  `NULL` is still an error (#82).
+- **BREAKING** Custom and JS functions are visible in builtin lambdas, method arguments and
+  assignment formulas, so a custom function can shadow a builtin there too (ADR-0016) (#82).
+- `IF` and `IFS` evaluate only the chosen branch (#82). **BREAKING**: a non-boolean condition
+  (`IF("x", 1, 2)`) and `IFS` with no true condition are errors (#84).
+- **BREAKING** `JQ` result shape follows the path (ADR-0014): a singular path (`.name`, `['name']`,
+  `[n]`) returns the value, or `NULL` when it misses (was `[]`); any other path returns an array,
+  even with one match. `JQ({"a":[3]}, "$.a[*]")` is `[3]` (was `3`) (#76).
+- **BREAKING** Existing builtins follow Excel (ADR-0018) (#84):
+  - `COUNTIF`, `SUMIF` and `AVERAGEIF` share Excel's criteria matcher: operators (`">2"`),
+    case-insensitive text, `*`/`?`/`~` wildcards, blanks, and a scalar range.
+  - `TIME(h, m, s)` returns a fraction of a day, with Excel's truncation and wrap
+    (`TIME(14, 30, 0)` is 0.6041666666666666).
+  - `IPMT` uses Excel's sign; `COUNT` is variadic and counts numbers only.
+  - `MOD` takes the sign of the divisor, `TRIM` collapses inner spaces, `ROUND` accepts negative
+    digits, `CEILING`/`FLOOR` round to a significance, `SUBSTITUTE` honours `instance_num`, and
+    `SORT(arr, -1)` sorts descending.
+  - Methods (`.trim()`, `.round()`, `.int()`, …) keep Ruby semantics.
+- **BREAKING** Errors instead of 0, NaN or infinity (ADR-0018 D-1, ADR-0015): `x/0`, `0^0`,
+  `SQRT(-1)`, `MOD(n, 0)`, `POWER(0, 0)`, empty `AVERAGE`/`MEDIAN`/…, arguments of the wrong type,
+  NaN or out-of-range percentiles, and any non-finite operator result (#84).
+- **BREAKING** `DATE` rolls months and days over like Excel (`DATE(2026, 13, 1)` is 2027-01-01),
+  adds 1900 to years 0–1899, and fails outside 1900–9999 (#83).
+- **BREAKING** `sk_http_server` requires `Content-Type: application/json` on POST, PUT and DELETE
+  requests with a body and answers 415 otherwise; multipart is still accepted on `/upload-js` and
+  `/update-js` (ADR-0019, #78).
+- **BREAKING** `sk_http_server` sends `Access-Control-Allow-Origin` only when an origin is
+  configured, or `*` when a token is set. Without a token (development mode) it sends no CORS
+  headers (ADR-0019, #78).
+- **BREAKING** The Docker image refuses to start (exit 64) unless `SKILLET_AUTH_TOKEN` and
+  `SKILLET_ADMIN_TOKEN` are both set; the old `AUTH_TOKEN`/`ADMIN_TOKEN` names get a rename hint.
+  It builds on `rust:1.89.0-slim-bookworm` with `--locked`, runs on `debian:bookworm-slim` without
+  `curl`, and Compose publishes on `127.0.0.1` by default (`SKILLET_PUBLISH_ADDR`) (#74).
+- JavaScript errors carry the real exception: `JS function NAME failed: …` (#79).
+- Both servers keep a per-worker cache of parsed expressions (256 entries, ADR-0021). On a 1.8 KB
+  expression the HTTP server handles 41% more requests per second on one connection (#80).
+- `DATE()` and `TIME()` read the local offset from libc on unix instead of CoreFoundation, and
+  chrono is built without default features; results are unchanged (ADR-0020). `sk "=1+1"` starts
+  about 1.3 ms faster on macOS and `sk_http_server` is 3 MB smaller (#81).
+- `GET /docs` serves the Scalar API page as static HTML (#81).
+- One `vX.Y.Z` tag drives the release: binaries, GitHub release (notes from this file) and
+  crates.io (ADR-0022). `release-binaries.yml` is renamed to `release.yml`, and `cross` and the
+  musl images are pinned (#75).
+- Public enum `lexer::Token` gains `Ampersand`, and `runtime::evaluator` gains
+  `eval_with_assignments_and_custom` (#82).
 
 ### Removed
 - **BREAKING** (ADR-0010): the unused public modules `skillet::memory_pool`, `skillet::traits`,
   `skillet::concurrent_registry` and the `skillet::runtime::evaluation` re-export shim. Use
   `skillet::runtime::evaluator` or the top-level `evaluate*` functions instead (#41, #43).
 - Unused dependencies `dashmap`, `string-interner`, `typed-arena` and `beef` (#43).
+- **BREAKING** The undocumented `httpGet` global for JavaScript hooks, which ran `curl`
+  (ADR-0017, #79).
+- `scalar-doc` and `tera` (about 30 crates) and `iana-time-zone` (ADR-0020, #81).
+- `crate-release.yml` and the `crate-v*` release trigger (ADR-0022, #75).
 
 ### Fixed
 - `sk_http_server` reported a request read timeout as "500 Internal Server Error"; it now
@@ -109,10 +182,12 @@ Planned as 0.7.0 (it contains breaking changes, see "Removed").
   no response), and `.sort()` returned arrays of up to 20 items containing NaN unsorted (#59).
 - `TIME(h, m, s)` returns `h*3600 + m*60 + s`; it used to ignore its arguments and return the
   current time. `TIME()` still returns the current local time, and one or two arguments are an
-  error (#61).
+  error (#61). From #84 the result is a fraction of a day (see Changed).
 - `sk_http_server` serves its built-in documentation page on `GET /` from any working directory
   (#54).
 - The "Range operations" case in `sk_http_bench` failed every request (#57).
+- JavaScript arguments and results nested deeper than 128, or cyclic, aborted the process; they
+  now give `Expression nested too deeply (max 128)` (#79).
 
 ### Security
 - `sk_server` limits each request line to 1 MB and both servers limit reading one request to
@@ -134,6 +209,15 @@ Planned as 0.7.0 (it contains breaking changes, see "Removed").
 - A slow custom function no longer blocks function registration or `/reload-hooks` (#63).
 - `sk_http_server` writes its daemon PID file without following symlinks (#63).
 - `lru` 0.19 fixes RUSTSEC-2026-0253 (#57).
+- Each JavaScript call runs with a 64 MiB heap, a 256 KiB stack and a time limit (the request
+  deadline, or 10 s per call); the upload `@example` check runs under the same limits
+  (ADR-0017, #79).
+- Web pages can no longer drive a `sk_http_server` that runs without a token: there are no CORS
+  headers, and admin requests with an `Origin` header get 403 when no admin token is set. An
+  origin with whitespace or control characters is refused (ADR-0019, #78).
+- The Docker image fails closed without tokens, never prints them, and runs a root-owned binary
+  with only `/app/hooks` writable (#74).
+- The threat model is published (`docs/security/THREAT_MODEL.md`, #73).
 
 ## [0.6.3] - 2026-03-25
 

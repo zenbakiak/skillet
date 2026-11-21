@@ -10,7 +10,7 @@ ADRs 0001–0008 are **retroactive**: they record decisions already embodied in 
 | [0002](0002-tree-walking-interpreter.md) | Tree-walking interpreter over an `Rc` AST | Accepted (retroactive) |
 | [0003](0003-dynamic-value-f64-numbers.md) | Single dynamic `Value` enum; all numbers are `f64` | Accepted (retroactive) |
 | [0004](0004-json-objects-as-strings.md) | Nested JSON objects carried as strings | Accepted (retroactive) |
-| [0005](0005-hybrid-excel-ruby-syntax.md) | Hybrid Excel + Ruby syntax with `:var` sigil | Accepted (retroactive) |
+| [0005](0005-hybrid-excel-ruby-syntax.md) | Hybrid Excel + Ruby syntax with `:var` sigil | Accepted (retroactive), amended by 0018 |
 | [0006](0006-null-safety-model.md) | Null safety via `&.` and total conversions | Accepted (retroactive) |
 | [0007](0007-extensibility-custom-and-js.md) | Extensibility: `CustomFunction` + QuickJS plugins | Accepted (retroactive) |
 | [0008](0008-servers-std-threads-unix-daemon.md) | Servers on `std::net` + thread pool; Unix-only daemon | Accepted (retroactive) |
@@ -18,11 +18,16 @@ ADRs 0001–0008 are **retroactive**: they record decisions already embodied in 
 | [0010](0010-remove-dead-public-modules-pre-1-0.md) | Remove dead public modules in 0.7.0 without deprecation | Accepted |
 | [0011](0011-evaluation-budget.md) | Per-evaluation budget and server evaluation timeout | Accepted |
 | [0012](0012-msrv-1-85.md) | Minimum supported Rust version 1.85; CI on 1.89 | Accepted |
-| [0013](0013-null-equality.md) | Null equality: `NULL == NULL` is `true` | Proposed |
-| [0014](0014-jq-wildcard-results.md) | `JQ` result shape follows the path, not the match count | Proposed |
-| [0015](0015-percentile-nan.md) | NaN and infinity in statistical builtins | Proposed |
-| [0016](0016-custom-function-visibility.md) | Custom functions are visible in every sub-expression | Proposed |
+| [0013](0013-null-equality.md) | Null equality: `NULL == NULL` is `true` | Accepted |
+| [0014](0014-jq-wildcard-results.md) | `JQ` result shape follows the path, not the match count | Accepted |
+| [0015](0015-percentile-nan.md) | NaN and infinity in statistical builtins | Accepted |
+| [0016](0016-custom-function-visibility.md) | Custom functions are visible in every sub-expression | Accepted |
 | [0017](0017-quickjs-resource-limits.md) | Resource limits for JavaScript plugins (QuickJS) | Accepted |
+| [0018](0018-excel-compatibility.md) | Excel compatibility: Excel is the contract for builtins and operators | Accepted |
+| [0019](0019-server-cors-and-development-mode.md) | Server CORS and development mode | Accepted |
+| [0020](0020-drop-corefoundation.md) | Drop CoreFoundation from the macOS binaries | Accepted |
+| [0021](0021-parsed-expression-api-and-server-cache.md) | Evaluate a parsed expression; servers cache parsed expressions per worker thread | Accepted |
+| [0022](0022-single-release-tag.md) | One release tag drives binaries, GitHub release and crates.io | Accepted |
 
 ## Template
 
