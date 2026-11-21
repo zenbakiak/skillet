@@ -472,27 +472,34 @@ server {
 
 ### 3. Docker Deployment
 
+The repository's `Dockerfile` runs `sk_http_server` and requires `SKILLET_AUTH_TOKEN` and
+`SKILLET_ADMIN_TOKEN`; see [Docker deployment](../ops/docker.md). For the TCP `sk_server`, a
+minimal image looks like this:
+
 ```dockerfile
-# Dockerfile
-FROM rust:1.81 as builder
+# Dockerfile.sk_server
+FROM rust:1.89.0-slim-bookworm AS builder
 WORKDIR /app
 COPY . .
-RUN cargo build --release --bin sk_server
+RUN cargo build --release --locked --bin sk_server
 
 FROM debian:bookworm-slim
+RUN useradd -r -d /app -s /bin/false skillet
 WORKDIR /app
 COPY --from=builder /app/target/release/sk_server .
+USER skillet
 EXPOSE 8080
-CMD ["./sk_server", "8080", "4"]
+# The token comes from SKILLET_AUTH_TOKEN at run time, never from argv.
+CMD ["./sk_server", "8080", "4", "--host", "0.0.0.0"]
 ```
 
 ```bash
-# Build and run
-docker build -t skillet-server .
-docker run -p 8080:8080 skillet-server
+# Build and run; publish on the host loopback only
+docker build -f Dockerfile.sk_server -t skillet-server .
+docker run -p 127.0.0.1:8080:8080 -e SKILLET_AUTH_TOKEN skillet-server
 
-# Test from host
-echo '{"expression": "=2+3*4", "variables": null}' | nc localhost 8080
+# Test from host (sk_server expects the token in each request; see "Connections and authentication" above)
+echo '{"expression": "=2+3*4", "variables": null}' | nc 127.0.0.1 8080
 ```
 
 ## Performance Monitoring

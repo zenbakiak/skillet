@@ -184,6 +184,15 @@ curl -X POST http://localhost:5074/eval \
   -d '{"expression": "null.to_s().length()"}'
 ```
 
+**Docker:** the image requires both tokens and will not start without them. Compose publishes on
+`127.0.0.1` only. See [docs/ops/docker.md](docs/ops/docker.md).
+
+```bash
+cp .env.example .env   # set SKILLET_AUTH_TOKEN and SKILLET_ADMIN_TOKEN (openssl rand -hex 32)
+docker compose up -d
+curl http://127.0.0.1:8080/health
+```
+
 ### ⚡ TCP Server (`sk_server`)
 
 High-performance TCP server for custom protocol access:
