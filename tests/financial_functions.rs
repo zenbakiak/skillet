@@ -201,23 +201,26 @@ fn test_fv_zero_rate() {
 fn test_ipmt_basic() {
     // Interest payment for period 1 of a $100,000 loan at 5% for 30 years
     let result = evaluate("=IPMT(0.05/12, 1, 360, 100000)").unwrap();
-    // First payment should be mostly interest: approximately $416.67
-    assert!(approx(result, 416.67));
+    // First payment should be mostly interest. Excel sign convention (BL-054): the interest you
+    // pay is negative, -416.67 (was asserted as +416.67).
+    assert!(approx(result, -416.67));
 }
 
 #[test]
 fn test_ipmt_later_period() {
     // Interest payment for period 180 (halfway through) - should be less than period 1
     let result = evaluate("=IPMT(0.05/12, 180, 360, 100000)").unwrap();
-    // Should be significantly less than first payment (note: result is negative)
-    assert!(matches!(result, Value::Number(i) if i < 0.0 && i > -100.0));
+    // Less interest than period 1. Excel: -283.90 (BL-054; the old assertion, -100 < i < 0,
+    // pinned the wrong balance roll-forward).
+    assert!(approx(result, -283.90));
 }
 
 #[test]
 fn test_ipmt_with_future_value() {
     // IPMT with future value (balloon payment)
     let result = evaluate("=IPMT(0.04/12, 1, 60, 50000, 10000)").unwrap();
-    assert!(matches!(result, Value::Number(i) if i > 0.0));
+    // Excel: -166.67, interest on the full balance (BL-054; was asserted positive).
+    assert!(approx(result, -166.67));
 }
 
 #[test]
