@@ -1,4 +1,5 @@
-//! Request size and time limits of `sk_server` and `sk_http_server` (BL-033, BL-037, BL-034).
+//! Request size and time limits of `sk_server` and `sk_http_server` (BL-033, BL-037, BL-034),
+//! and their token checks (BL-018).
 //! Servers run on 127.0.0.1 with one worker, so a held worker shows as a delayed next request.
 
 use std::io::{BufRead, BufReader, Read, Write};
@@ -68,9 +69,14 @@ impl Server {
 
     /// POST `body` to `/eval`; returns the raw response.
     fn post(&self, body: &str) -> String {
+        self.post_with_headers(body, "")
+    }
+
+    /// POST `body` to `/eval` with extra header lines (each ending in `\r\n`).
+    fn post_with_headers(&self, body: &str, headers: &str) -> String {
         let mut s = self.connect();
         let req = format!(
-            "POST /eval HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            "POST /eval HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\n{headers}Content-Length: {}\r\nConnection: close\r\n\r\n{}",
             body.len(),
             body
         );
@@ -265,4 +271,60 @@ fn bl034_sk_http_server_sends_large_responses_complete() {
     assert!(length > 20_000_000, "{length}");
     assert_eq!(body.len(), length);
     assert!(body.contains(&"b".repeat(20_000_000)));
+}
+
+// ---------------------------------------------------------------- BL-018: token check
+
+/// Tokens are compared in constant time; what is accepted is unchanged: only the exact token.
+#[test]
+fn bl018_servers_accept_only_the_exact_token() {
+    let token = "s3cret-token";
+    let http = Server::spawn(env!("CARGO_BIN_EXE_sk_http_server"), |port| {
+        vec![
+            port.to_string(),
+            "--threads".into(),
+            "1".into(),
+            "--token".into(),
+            token.into(),
+        ]
+    });
+    let body = "{\"expression\":\"=2 + 3\"}";
+    for (auth, ok) in [
+        ("Authorization: Bearer s3cret-token\r\n", true),
+        ("Authorization: s3cret-token\r\n", true),
+        ("Authorization: Bearer s3cret-tokeN\r\n", false),
+        ("Authorization: Bearer s3cret\r\n", false),
+        ("Authorization: Bearer s3cret-token-and-more\r\n", false),
+        ("", false),
+    ] {
+        let resp = http.post_with_headers(body, auth);
+        let want = if ok { "HTTP/1.1 200" } else { "HTTP/1.1 401" };
+        assert!(resp.starts_with(want), "{auth:?}: {}", head(&resp));
+    }
+    drop(http);
+
+    let line = Server::spawn(env!("CARGO_BIN_EXE_sk_server"), |port| {
+        vec![port.to_string(), "1".into(), "--token".into(), token.into()]
+    });
+    for (supplied, ok) in [
+        (Some("s3cret-token"), true),
+        (Some("s3cret-tokeN"), false),
+        (Some("s3cret"), false),
+        (None, false),
+    ] {
+        let req = match supplied {
+            Some(t) => format!("{{\"expression\":\"=2 + 3\",\"token\":\"{t}\"}}"),
+            None => body.to_string(),
+        };
+        let resp = line.send_line(&req);
+        if ok {
+            assert!(resp.contains("\"success\":true"), "{}", head(&resp));
+        } else {
+            assert!(
+                resp.contains("Unauthorized: invalid token"),
+                "{}",
+                head(&resp)
+            );
+        }
+    }
 }

@@ -68,6 +68,10 @@ mod response_size;
 mod request_limits;
 use request_limits::{DeadlineReader, MAX_REQUEST_SIZE, WRITE_TIMEOUT};
 
+#[path = "http_server/token_eq.rs"]
+mod token_eq;
+use token_eq::tokens_match;
+
 /// Wall-clock limit for one evaluation (ADR-0011), same as `sk_http_server`. No flag or env var.
 const SERVER_EVAL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
@@ -158,7 +162,7 @@ fn handle_client(
             Ok(req) => {
                 if let Some(cfg_token) = server_token.as_ref() {
                     let supplied = req.token.as_deref().unwrap_or("");
-                    if supplied != cfg_token {
+                    if !tokens_match(supplied, cfg_token) {
                         EvalResponse {
                             success: false,
                             result: None,
