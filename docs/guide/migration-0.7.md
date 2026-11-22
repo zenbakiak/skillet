@@ -12,6 +12,8 @@ Check these first. They change results without an error:
 4. **`JQ`** with a wildcard path that matches one item now returns an array.
 5. **`%` before `-` or `+`** is now a percent, not modulo: `10 % -3` is `-2.9` (was `1`).
 6. **`1e3`** is now `1000` (it was silently `1`).
+7. **`DATEADD`/`DATEDIFF` units `"m"`, `"y"`, `"w"`** now follow Excel (B-15): `"m"` is months
+   (was minutes), `"y"` is days (was years), `"w"` adds days (was weeks). Search for them.
 
 ## Expressions
 
@@ -105,10 +107,28 @@ The methods keep Ruby semantics and do not change: `"  a   b  ".trim()` is still
 | `DATE(2026, 1, 2) - DATE(2026, 1, 1)` | `Error` | `1` |
 | `"2026-02-30"::DateTime` | `Error` | `Error` (casts never roll over) |
 
+### Date units follow Excel (B-15)
+`DATEADD` and `DATEDIFF` read the unit codes of VBA's `DateAdd`/`DateDiff`, case-insensitively.
+The long words (`"months"`, `"minutes"`, …) are unchanged. Use them, or the new codes, to keep the
+old result. The new `DATEDIF` has Excel's worksheet codes (`"y"`, `"m"`, `"d"`, `"md"`, `"ym"`,
+`"yd"`).
+
+| Expression | 0.6 | 0.7 | Keep the old result with |
+|---|---|---|---|
+| `DATEADD(DATE(2026, 1, 1), 1, "m")` | +1 minute | 2026-02-01 (+1 month) | `"n"` or `"minutes"` |
+| `DATEDIFF(DATE(2026, 1, 1), DATE(2026, 3, 1), "m")` | `84960` (minutes) | `2` (months) | `"n"` or `"minutes"` |
+| `DATEADD(DATE(2026, 1, 1), 1, "y")` | 2027-01-01 | 2026-01-02 (`"y"` is day of year) | `"yyyy"` or `"years"` |
+| `DATEDIFF(DATE(2025, 1, 1), DATE(2026, 1, 1), "y")` | `1` | `365` (days) | `"yyyy"` or `"years"` |
+| `DATEADD(DATE(2026, 1, 1), 1, "w")` | 2026-01-08 | 2026-01-02 (`"w"` is weekday) | `"ww"` or `"weeks"` |
+| `DATEADD(DATE(2024, 1, 31), 1, "months")`, `DATEADD(DATE(2026, 3, 31), 1, "months")` | 2024-02-28, 2026-04-28 | 2024-02-29, 2026-04-30 (end of month, as VBA) | |
+| `DATEADD(…, 1, "eons")` | `Error: DATEADD unit must be one of: …` | the same error, ending in `(#VALUE!)` | |
+| `DATEADD(DATE(2026, 1, 1), 1e15, "m")`, `…, 1e18, "days")` | hang or panic | `Error: DATEADD result is out of range (#NUM!)` | |
+| `DATEADD(…, "q")`, `"yyyy"`, `"ww"`, `"n"` | `Error` | quarters, years, weeks, minutes | |
+
 ### New names (additive)
 These used to fail with `Unknown function` or a parse error: `STDEV.P`, `STDEV.S`, `STDEV`,
 `VAR.P`, `VAR.S`, `VAR`, `MODE.SNGL`, `MODE`, `PERCENTILE.INC`, `PERCENTILE`, `QUARTILE.INC`,
-`QUARTILE`, `COUNTA`, `LEN`, `TODAY`, `PPMT`, `PV`, `NPV`, `TEXTJOIN`, `AVERAGEIF`.
+`QUARTILE`, `COUNTA`, `LEN`, `TODAY`, `PPMT`, `PV`, `NPV`, `TEXTJOIN`, `AVERAGEIF`, `DATEDIF`.
 
 ### Null equality (ADR-0013)
 | Expression | 0.6 | 0.7 |
