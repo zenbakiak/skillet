@@ -10,6 +10,7 @@ use std::time::Instant;
 use super::auth::check_authentication;
 use super::cache::{clear_cache, evaluate_cached, get_cache_stats};
 use super::eval_limits::server_limits;
+use super::json_keys::{check_json_keys, sanitize_json_key};
 use super::parse_cache;
 use super::response_size;
 use super::stats::ServerStats;
@@ -17,9 +18,7 @@ use super::types::{
     CacheStatsResponse, EvalRequest, EvalResponse, HealthResponse, IncludeVariables,
     ParseCacheStatsResponse,
 };
-use super::utils::{
-    parse_json_body, sanitize_json_key, send_http_error, send_http_response, to_json_exact,
-};
+use super::utils::{parse_json_body, send_http_error, send_http_response, to_json_exact};
 
 pub fn handle_eval_post(
     stream: &mut TcpStream,
@@ -225,17 +224,25 @@ fn process_eval_request(
     // Convert JSON variables to Skillet values with key sanitization
     let vars = match req.arguments {
         Some(json_vars) => {
+            if let Err(e) = check_json_keys(json_vars.keys().map(String::as_str)) {
+                return EvalResponse {
+                    success: false,
+                    result: None,
+                    variables: None,
+                    error: Some(e),
+                    execution_time_ms: start_time.elapsed().as_secs_f64() * 1000.0,
+                    request_id,
+                };
+            }
             // Pre-allocate HashMap with known size + 1 for "arguments"
             let mut result = HashMap::with_capacity(json_vars.len() + 1);
 
-            // Add the original JSON data for JQ function (serialize once)
+            // The original JSON data for the JQ function (serialize once)
             let json_str = serde_json::to_string(&json_vars).unwrap_or_default();
-            result.insert("arguments".to_string(), Value::Json(json_str));
 
             for (key, value) in json_vars {
                 match skillet::json_to_value(value) {
                     Ok(v) => {
-                        // Only sanitize if necessary (fast path optimization)
                         let sanitized_key = sanitize_json_key(&key);
                         result.insert(sanitized_key, v);
                     }
@@ -251,6 +258,8 @@ fn process_eval_request(
                     }
                 }
             }
+            // Inserted last so a request key named `arguments` cannot replace it (BL-077).
+            result.insert("arguments".to_string(), Value::Json(json_str));
             result
         }
         None => HashMap::new(),

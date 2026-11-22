@@ -28,7 +28,7 @@ Methods (`:arr.sum()`), operators and the rest of the language: [api.md](api.md)
 | `MOD` | `MOD(number, divisor)` | 2 | Remainder of `number / divisor`; the sign follows the divisor (Excel). Error for 0. | `MOD(-10, 3)` | `2` |
 | `INT` | `INT(number)` | 1 | Round down to an integer: `INT(-3.9)` is -4. | `INT(5.9)` | `5` |
 | `PRODUCT`<br>alias `MULTIPLY` | `PRODUCT(values…)` | 0+ | Product of numbers and currency (arrays flattened); Currency when any value is Currency; 1 when there are none. | `PRODUCT(2, 3, 4)` | `24` |
-| `SUMIF` † | `SUMIF(range, criteria, [sum_range])` | 2-3 | Sum of items meeting an Excel criteria (`">2"`, `5`, `"a*"`) or a lambda over `:x`. | `SUMIF([1, -2, 3], ">0")` | `4` |
+| `SUMIF` † | `SUMIF(range, criteria, [sum_range])` | 2-3 | Sum of items meeting an Excel criteria (`">2"`, `5`, `"a*"`) or a lambda over `:x`; Currency when any summed value is Currency. | `SUMIF([1, -2, 3], ">0")` | `4` |
 
 ## Logical
 
@@ -127,7 +127,7 @@ Methods (`:arr.sum()`), operators and the rest of the language: [api.md](api.md)
 | `VAR_S`<br>alias `VAR.S`, `VAR` | `VAR_S(values…)` | 1+ | Sample variance (divides by n - 1); error with fewer than two numbers. | `VAR_S(1, 2, 3, 4)` | `1.6666666666666667` |
 | `PERCENTILE_INC`<br>alias `PERCENTILEINC`, `PERCENTILE.INC`, `PERCENTILE` | `PERCENTILE_INC(values…, k)` | 2+ | Inclusive percentile `k` (0-1) of the values, interpolated. | `PERCENTILE_INC([1, 2, 3, 4], 0.5)` | `2.5` |
 | `QUARTILE_INC`<br>alias `QUARTILEINC`, `QUARTILE.INC`, `QUARTILE` | `QUARTILE_INC(values…, quart)` | 2+ | Inclusive quartile `quart` (0-4) of the values. | `QUARTILE_INC([1, 2, 3, 4, 5], 1)` | `2` |
-| `AVERAGEIF` †<br>alias `AVGIF` | `AVERAGEIF(range, criteria, [average_range])` | 2-3 | Mean of items meeting an Excel criteria or a lambda over `:x`; error when none match. | `AVERAGEIF([1, 3, 5, -1], ">0")` | `3` |
+| `AVERAGEIF` †<br>alias `AVGIF` | `AVERAGEIF(range, criteria, [average_range])` | 2-3 | Mean of items meeting an Excel criteria or a lambda over `:x`; Currency when any averaged value is Currency; error when none match. | `AVERAGEIF([1, 3, 5, -1], ">0")` | `3` |
 | `COUNTIF` † | `COUNTIF(range, criteria)` | 2 | Number of items meeting an Excel criteria (`">2"`, `"<>a"`, `"a*"`) or a lambda over `:x`. | `COUNTIF([1, 2, 3, 4], ">2")` | `2` |
 
 ## JSON
