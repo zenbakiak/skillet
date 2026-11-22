@@ -25,10 +25,11 @@ pub fn server_limits() -> EvalLimits {
     limits
 }
 
-/// Same cost model as the evaluation budget (32 per value + string bytes, arrays sum items).
+/// Same cost model as the evaluation budget (32 per value, 48 + bytes per string, arrays sum
+/// items).
 fn approx_size(value: &Value) -> u64 {
     32 + match value {
-        Value::String(s) | Value::Json(s) => s.len() as u64,
+        Value::String(s) | Value::Json(s) => 16 + s.len() as u64,
         Value::Array(items) => items.iter().map(approx_size).sum(),
         _ => 0,
     }

@@ -157,7 +157,7 @@ pub(crate) fn find_text(args: &[Value]) -> Result<Value, Error> {
     }
 }
 
-/// Collect split parts, charging `32 + part.len` for each one while collecting (ADR-0011).
+/// Collect split parts, charging `48 + part.len` for each one while collecting (ADR-0011).
 pub(crate) fn split_charged<'s>(parts: impl Iterator<Item = &'s str>) -> Result<Value, Error> {
     let mut out = Vec::new();
     for p in parts {

@@ -256,7 +256,7 @@ fn a7_a9_amplifying_builtins_fail_before_allocating() {
 
 #[test]
 fn split_is_charged_per_part() {
-    // 1 MB string split into ~1M one-char parts: 32 + 1 bytes each, ~33 MB, passes.
+    // 1 MB string split into ~1M one-char parts: 48 + 1 bytes each, ~49 MB, passes.
     let s = "a".repeat(1_000_000);
     assert_eq!(
         evaluate(&format!("SPLIT(\"{s}\", \"\").length()")),
@@ -404,14 +404,14 @@ fn c1_c4_cost_model_boundaries() {
         "Evaluation budget exceeded (max 160 bytes)"
     );
     assert_eq!(
-        with_limits(limits(36), || evaluate("\"abcd\".upper()")),
+        with_limits(limits(52), || evaluate("\"abcd\".upper()")),
         Ok(Value::String("ABCD".into()))
     );
     assert_eq!(
-        with_limits(limits(35), || evaluate("\"abcd\".upper()"))
+        with_limits(limits(51), || evaluate("\"abcd\".upper()"))
             .unwrap_err()
             .message,
-        "Evaluation budget exceeded (max 35 bytes)"
+        "Evaluation budget exceeded (max 51 bytes)"
     );
 }
 
@@ -635,6 +635,8 @@ mod heap {
     thread_local! {
         static LIVE: Cell<usize> = const { Cell::new(0) };
         static PEAK: Cell<usize> = const { Cell::new(0) };
+        /// Bytes the system allocator really handed out (its usable size, BL-035).
+        static REAL: Cell<usize> = const { Cell::new(0) };
     }
 
     pub struct Counting;
@@ -651,20 +653,67 @@ mod heap {
         let _ = LIVE.try_with(|l| l.set(l.get().saturating_sub(n)));
     }
 
+    /// Usable size of a live block: what the allocator really reserved for a request of
+    /// `requested` bytes (rounded up to its size class). Falls back to the request elsewhere.
+    unsafe fn usable(ptr: *mut u8, requested: usize) -> usize {
+        if ptr.is_null() {
+            0
+        } else if cfg!(target_vendor = "apple") || cfg!(target_os = "linux") {
+            system_usable(ptr)
+        } else {
+            requested
+        }
+    }
+
+    #[cfg(target_vendor = "apple")]
+    unsafe fn system_usable(ptr: *mut u8) -> usize {
+        libc::malloc_size(ptr as *const libc::c_void)
+    }
+
+    #[cfg(target_os = "linux")]
+    unsafe fn system_usable(ptr: *mut u8) -> usize {
+        libc::malloc_usable_size(ptr as *mut libc::c_void)
+    }
+
+    #[cfg(not(any(target_vendor = "apple", target_os = "linux")))]
+    unsafe fn system_usable(_ptr: *mut u8) -> usize {
+        0
+    }
+
+    fn real(add: usize, sub: usize) {
+        let _ = REAL.try_with(|r| r.set(r.get().saturating_add(add).saturating_sub(sub)));
+    }
+
     unsafe impl GlobalAlloc for Counting {
         unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
             add(layout.size());
-            System.alloc(layout)
+            let ptr = System.alloc(layout);
+            real(usable(ptr, layout.size()), 0);
+            ptr
         }
         unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
             sub(layout.size());
+            real(0, usable(ptr, layout.size()));
             System.dealloc(ptr, layout)
         }
         unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
             add(new_size);
             sub(layout.size());
-            System.realloc(ptr, layout, new_size)
+            let old = usable(ptr, layout.size());
+            let new = System.realloc(ptr, layout, new_size);
+            if !new.is_null() {
+                real(usable(new, new_size), old);
+            }
+            new
         }
+    }
+
+    /// Run `f` and return its result plus the bytes the allocator really holds for it
+    /// afterwards (usable sizes, not requested sizes), on this thread.
+    pub fn real_held_by<R>(f: impl FnOnce() -> R) -> (R, usize) {
+        let start = REAL.with(|r| r.get());
+        let r = f();
+        (r, REAL.with(|r| r.get()).saturating_sub(start))
     }
 
     /// Run `f` and return its result plus the peak heap growth (bytes) on this thread.
@@ -962,4 +1011,29 @@ fn bl027f_jq_object_matches_are_charged_as_json_text() {
         "{r:?}"
     );
     assert!((peak as u64) < 2 * budget + MIB, "peak {peak}");
+}
+
+// ---------------------------------------------------------------- BL-035: hardening
+
+/// The per-string charge matches what a small string really costs: its 32-byte `Value` slot
+/// plus the smallest heap block. Measured with the allocator's usable sizes; BL-027c found 33
+/// charged against ~48 real for a 1-char string (macOS: 16-byte minimum block, so 48 exactly).
+#[test]
+fn bl035_tiny_strings_are_charged_what_they_really_cost() {
+    const N: usize = 100_000;
+    let (strings, held) = heap::real_held_by(|| {
+        let mut v: Vec<Value> = Vec::with_capacity(N);
+        v.extend((0..N).map(|_| Value::String("x".to_string())));
+        v
+    });
+    let real = held as f64 / N as f64;
+    drop(strings);
+    // Charged per 1-char string: `"x".upper()` is a 1-char result, 48 + 1 bytes.
+    let charged = 49.0;
+    assert!(with_limits(limits(49), || evaluate("\"x\".upper()")).is_ok());
+    assert!(with_limits(limits(48), || evaluate("\"x\".upper()")).is_err());
+    assert!(
+        real <= charged * 1.25 && real >= charged * 0.6,
+        "real {real:.1} B per 1-char string, charged {charged}"
+    );
 }

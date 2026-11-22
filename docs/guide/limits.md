@@ -82,9 +82,13 @@ creates is charged against it, at a fixed cost:
 
 ```
 cost(Number | Boolean | Null | Currency | DateTime) = 32
-cost(String(s) | Json(s))                           = 32 + byte length of s
+cost(String(s) | Json(s))                           = 48 + byte length of s
 cost(Array(items))                                  = 32 + sum of cost(item)
 ```
+
+32 bytes is the size of one value. A string also holds a heap block, and the smallest block an
+allocator hands out is 16 bytes, so a string costs 48 plus its bytes. A one-character string really
+takes about 48 bytes and is charged 49 (measured with the allocator's own sizes, BL-035).
 
 The count only goes up. Freeing a value gives nothing back, so the budget limits the total work as
 well as memory. The count is deterministic: the same formula with the same variables always passes

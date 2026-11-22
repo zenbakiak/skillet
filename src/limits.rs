@@ -40,8 +40,8 @@ pub const MAX_NESTING_DEPTH: usize = 128;
 
 /// Default per-evaluation budget, in bytes of values created (ADR-0011).
 ///
-/// Cost model: every `Value` costs 32 bytes, plus its byte length for `String`/`Json`, plus the
-/// cost of its items for `Array`. The count is cumulative (freeing a value gives nothing back)
+/// Cost model: every `Value` costs 32 bytes, a `String`/`Json` 48 bytes plus its byte length, and
+/// an `Array` 32 bytes plus the cost of its items. The count is cumulative (freeing a value gives nothing back)
 /// and deterministic: the same expression with the same variables always passes or always fails.
 /// Exceeding it returns `Evaluation budget exceeded (max 256 MB)`.
 ///
@@ -57,6 +57,9 @@ pub const MAX_EVAL_BYTES: u64 = 256 * 1024 * 1024;
 
 /// Size charged for every value (`size_of::<Value>()`).
 const VALUE_COST: u64 = 32;
+/// Size charged for a `String`/`Json` before its bytes: the `Value` plus the smallest heap block
+/// (16 bytes on the system allocators measured in BL-035), so tiny strings are not undercounted.
+pub(crate) const STRING_COST: u64 = VALUE_COST + 16;
 /// The deadline is checked on every `TICKS_PER_CLOCK_READ`th charge.
 const TICKS_PER_CLOCK_READ: u32 = 256;
 const MIB: u64 = 1024 * 1024;
@@ -291,7 +294,7 @@ const NODE_BYTE: [u8; 256] = {
 
 /// Pre-charge a string result of `len` bytes.
 pub(crate) fn charge_string(len: usize) -> Result<(), Error> {
-    charge(VALUE_COST.saturating_add(len as u64))
+    charge(STRING_COST.saturating_add(len as u64))
 }
 
 /// Pre-charge `text.replace(find, repl)` (`SUBSTITUTE`, `SUBSTITUTEM`, `.replace`) with its exact
@@ -317,7 +320,7 @@ pub(crate) fn charge_join<S: AsRef<str>>(parts: &[S], sep: &str) -> Result<(), E
 }
 
 /// Pre-charge a value about to be built from a JSON node (a `JQ` match): numbers, booleans and
-/// null 32; strings 32 + len; arrays 32 + items; objects 32 + Σ (key len + value), or 32 + their
+/// null 32; strings 48 + len; arrays 32 + items; objects 32 + Σ (key len + value), or 48 + their
 /// serialized size when that is larger (escapes), since they become a `Json` string.
 pub(crate) fn charge_json_node(node: &serde_json::Value) -> Result<(), Error> {
     let cap = remaining();
@@ -438,13 +441,13 @@ pub(crate) fn check_value(value: Value) -> Result<Value, Error> {
     }
 }
 
-/// The charge of a non-array value (32, plus the length of a string): `Some(true)` when done,
+/// The charge of a non-array value (32, or 48 plus the length of a string): `Some(true)` when done,
 /// `Some(false)` when charged but the slow path must run, `None` for an array (not charged).
 #[inline(never)]
 fn charge_scalar(value: &Value) -> Option<bool> {
     let bytes = match value {
         Value::Array(_) => return None,
-        Value::String(s) | Value::Json(s) => VALUE_COST.saturating_add(s.len() as u64),
+        Value::String(s) | Value::Json(s) => STRING_COST.saturating_add(s.len() as u64),
         _ => VALUE_COST,
     };
     Some(BUDGET.with(|b| b.add(bytes)))
@@ -486,8 +489,9 @@ enum Walk {
 
 /// Walk the items of an array: depth (same rule as the parser: non-arrays and empty arrays are
 /// 0, an array is one more than its deepest element; `depth_left` levels remain for the items)
-/// and cost (32 per item plus string bytes, nested arrays recursively). Scalars are handled
-/// inline and the cap is checked once per array, so the hot flat-array case is one tight loop.
+/// and cost (32 per item, 48 plus their bytes for strings, nested arrays recursively). Scalars
+/// are handled inline and the cap is checked once per array, so the hot flat-array case is one
+/// tight loop.
 fn walk_items(items: &[Value], depth_left: usize, cost: &mut u64, cap: u64) -> Walk {
     *cost = cost.saturating_add(VALUE_COST.saturating_mul(items.len() as u64));
     for item in items {
@@ -501,7 +505,9 @@ fn walk_items(items: &[Value], depth_left: usize, cost: &mut u64, cap: u64) -> W
                     stop => return stop,
                 }
             }
-            Value::String(s) | Value::Json(s) => *cost = cost.saturating_add(s.len() as u64),
+            Value::String(s) | Value::Json(s) => {
+                *cost = cost.saturating_add(STRING_COST - VALUE_COST + s.len() as u64)
+            }
             _ => {}
         }
     }
@@ -521,7 +527,9 @@ fn add_json_node_cost(node: &serde_json::Value, cost: &mut u64, cap: u64, in_obj
     let start = *cost;
     *cost = cost.saturating_add(VALUE_COST);
     match node {
-        serde_json::Value::String(s) => *cost = cost.saturating_add(s.len() as u64),
+        serde_json::Value::String(s) => {
+            *cost = cost.saturating_add(STRING_COST - VALUE_COST + s.len() as u64)
+        }
         serde_json::Value::Array(items) => {
             for item in items {
                 if !add_json_node_cost(item, cost, cap, in_object) {
@@ -541,7 +549,7 @@ fn add_json_node_cost(node: &serde_json::Value, cost: &mut u64, cap: u64, in_obj
             if !in_object {
                 let mut text = ByteCounter(0);
                 if serde_json::to_writer(&mut text, node).is_ok() {
-                    let as_text = start.saturating_add(VALUE_COST).saturating_add(text.0);
+                    let as_text = start.saturating_add(STRING_COST).saturating_add(text.0);
                     *cost = (*cost).max(as_text);
                 }
             }
@@ -653,7 +661,7 @@ impl Budget {
         match value {
             Value::Array(items) => self.charge_items(items),
             Value::String(s) | Value::Json(s) => {
-                self.charge(VALUE_COST.saturating_add(s.len() as u64))
+                self.charge(STRING_COST.saturating_add(s.len() as u64))
             }
             _ => self.charge(VALUE_COST),
         }
@@ -785,7 +793,7 @@ mod tests {
             walk_items(items, usize::MAX, &mut cost, u64::MAX),
             Walk::Ok
         ));
-        assert_eq!(cost, 32 + 32 + (32 + 4) + (32 + 32 + 2));
+        assert_eq!(cost, 32 + 32 + (48 + 4) + (32 + 48 + 2));
         assert!(matches!(
             walk_items(items, usize::MAX, &mut 0, 100),
             Walk::TooBig
