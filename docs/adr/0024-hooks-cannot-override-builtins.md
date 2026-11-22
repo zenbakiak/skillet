@@ -17,7 +17,8 @@ hook's result (threat model §2.6, Medium). The same applied to `sk_server`, `sk
 ## Decision
 
 1. A **reserved name** is any name or alias in the builtin table, dotted names included
-   (`STDEV.P`), plus the internal operator names (`__TERNARY__`, `__CONCAT__`, ...). The table
+   (`STDEV.P`), plus the internal operator names (`__TERNARY__`, `__CONST_TRUE__`, `__CONST_FALSE__`; see the
+   note below on `__CONCAT__`). The table
    rows already include the names the evaluator runs itself (`IF`, `IFS`, `FILTER`, `MAP`,
    `REDUCE`, `FIND`, `SUMIF`, `COUNTIF`, `AVERAGEIF`, `JQ`, ...). Matching is case-insensitive,
    with the same `to_uppercase` the custom registry uses. One crate-private function,
@@ -44,3 +45,11 @@ hook's result (threat model §2.6, Medium). The same applied to `sk_server`, `sk
   register a Rust `CustomFunction` instead. The skip is visible on stderr, not silent.
 - New builtins become reserved with no extra code. A builtin added later can make an existing
   hook of the same name stop loading; the warning names it.
+
+## Note (2026-11-22): `__CONCAT__` is no longer an internal name
+
+Since #129 (ADR-0034, BL-091) `&` parses to `Expr::Binary(_, BinaryOp::Concat, _)`, not to a
+`__CONCAT__` call. `__CONCAT__` is no longer in `INTERNAL_NAMES` (`src/runtime/builtin_table.rs`)
+and is an unknown function in a formula. A hook named `__CONCAT__` is therefore not reserved;
+it cannot change what `&` does, because `&` never looks the name up. The reserved internal names
+are now `__TERNARY__`, `__CONST_TRUE__` and `__CONST_FALSE__`.

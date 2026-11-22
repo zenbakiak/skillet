@@ -370,7 +370,7 @@ Absolute value.
 ```bash
 ABS(-5)                      # 5
 ABS(3.14)                    # 3.14
-ABS("x")                     # Error: ABS expects number, got string
+ABS("x")                     # Error: ABS: cannot convert "x" to a number (#VALUE!)
 ```
 
 #### `ROUND(number, [digits])`
@@ -384,7 +384,7 @@ ROUND(2.15, 1)               # 2.2
 ROUND(-2.5)                  # -3
 ROUND(1234.567, -2)          # 1200
 ROUND(15, -1)                # 20
-ROUND(2.5, "x")              # Error: ROUND num_digits must be a number, got string
+ROUND(2.5, "x")              # Error: ROUND num_digits: cannot convert "x" to a number (#VALUE!)
 ```
 
 #### `CEILING(number, [significance])`, `FLOOR(number, [significance])`
@@ -761,6 +761,10 @@ worksheet `DATEDIF`. `"m"` is **months** everywhere; minutes are `"n"`.
 An unknown unit is an error: `#VALUE!` in `DATEADD` and `DATEDIFF` (VBA rejects it), `#NUM!` in
 `DATEDIF` (as Excel).
 
+The same letter can mean different things: `"y"` is years in `DATEDIF` but days in `DATEDIFF`,
+and `"w"` in `DATEADD` adds one day. In `DATEADD` and `DATEDIFF`, prefer the long words
+(`"years"`, `"weeks"`, …), which cannot be misread (ADR-0035).
+
 #### `DATEADD(date, amount, unit)`
 Add `amount` units to a date, like VBA `DateAdd`. `amount` is truncated. Months, quarters and
 years keep the day, clamped to the end of a shorter month. A result out of range is `#NUM!`.
@@ -922,10 +926,10 @@ REVERSE([1, 2, 3])           # [3, 2, 1]
 REVERSE("abc")               # "cba"
 ```
 
-#### `COMPACT(array)`
-Remove null values.
+#### `.compact()`
+Remove null values. There is no `COMPACT()` function; use the method.
 ```bash
-COMPACT([1, null, 2, null])  # [1, 2]
+[1, null, 2, null].compact() # [1, 2]
 ```
 
 ### Financial Functions
@@ -942,13 +946,13 @@ Calculate loan payment.
 
 ```bash
 # 30-year mortgage at 5% annual rate
-PMT(0.05/12, 30*12, 100000)    # Monthly payment: $536.82
+PMT(0.05/12, 30*12, 100000)    # -536.82 (monthly payment)
 
 # Car loan: 4% for 5 years
-PMT(0.04/12, 5*12, 25000)      # Monthly payment: $460.41
+PMT(0.04/12, 5*12, 25000)      # -460.41 (monthly payment)
 
 # Savings goal: 6% return, save for 10 years to reach $50k
-PMT(0.06/12, 10*12, 0, 50000)  # Need to save: $305.10/month
+PMT(0.06/12, 10*12, 0, 50000)  # -305.10 (to save each month)
 ```
 
 Results follow Excel's sign convention: money you pay is negative. The examples above return
@@ -1363,19 +1367,19 @@ The `&.` operator prevents errors when accessing properties or calling methods o
 
 ### Safe Property Access
 ```bash
-obj&.property                # Returns null if obj is null
+:obj&.property               # Returns null if :obj is null
 null&.anything               # Returns null (no error)
 ```
 
 ### Safe Method Calls
 ```bash
-str&.length()                # Returns null if str is null
+:str&.length()               # Returns null if :str is null
 null&.method()               # Returns null (no error)
 ```
 
 ### Chaining
 ```bash
-user&.profile&.name&.length()  # Stops at first null, returns null
+:user&.profile&.name&.length()  # Stops at first null, returns null
 ```
 
 ---
@@ -1412,7 +1416,7 @@ An unknown type name is `Error: Unknown cast type at position N`, N being where 
 42 :: String                 # "42"
 1 :: Boolean                 # true
 0 :: Boolean                 # false
-"hello" :: Array             # ["h", "e", "l", "l", "o"]
+"hello" :: Array             # ["hello"] (a scalar becomes a one-item array)
 ```
 
 ### Number conversions

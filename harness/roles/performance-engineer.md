@@ -23,9 +23,9 @@ Rust Engineer with your profile attached.
 ## Known suspects (verify, don't assume)
 | Suspect | Where | Hypothesis |
 |---|---|---|
-| JSON re-parse on property access | `Value::Json(String)`, ADR-0004 | Dominates for `:obj.a.b` chains |
+| JSON re-parse on property access | `Value::Json(String)`, ADR-0004 (superseded by ADR-0030: `Value::Object` in 0.8) | Dominates for `:obj.a.b` chains |
 | Builtin dispatch by name | `runtime/function_dispatch.rs` | One table since #58, still one `HashMap` lookup per call |
-| Re-parse per server request | servers, ADR-0002 | AST cache could help (BL-012) |
+| Re-parse per server request | servers, ADR-0021 | Per-worker parse cache since BL-012 (#80); measured in `benches/BASELINE.md` |
 | CLI start-up (~2 ms above process start) | `sk` before `main` | Not QuickJS: it starts only when an expression calls a hook (BL-040). CoreFoundation before `main`: removed by BL-055 (ADR-0020), ~1.2 ms |
 
 ## First task

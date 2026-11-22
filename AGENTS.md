@@ -41,17 +41,18 @@ Toolchain: develop and CI on Rust `1.89.0`; minimum supported version (MSRV) `1.
 ([ADR-0032](docs/adr/0032-edition-2024.md)). Plugins feature is default;
 `--no-default-features` builds without QuickJS.
 
-## 4. Codebase map (verified 2026-11)
+## 4. Codebase map (verified 2026-11-22)
 
 | Path | Role | Notes |
 |---|---|---|
 | `src/lib.rs` | Public API (`parse`, `evaluate*`, registry fns) | Calls `runtime::evaluator` |
 | `src/lexer.rs`, `src/parser.rs`, `src/ast.rs` | Front end | Recursive descent, `Rc<Expr>` AST |
-| `src/types.rs`, `src/error.rs` | `Value` enum, `Error {message, position}` | |
+| `src/types.rs`, `src/error.rs` | `Value` enum, `Error {message, position}` | `Value` is `#[non_exhaustive]`; `Json` and `Currency` deprecated (ADR-0030, ADR-0033) |
+| `src/limits.rs`, `src/json_keys.rs` | Evaluation budget, deadline and nesting depth (ADR-0011); JSON key sanitizer | |
 | `src/runtime/evaluator.rs` | The single evaluator (public API, methods, lambdas) | ~1100 lines; split into modules later |
-| `src/runtime/function_dispatch.rs`, `builtin_functions.rs` | `UPPERCASE()` builtins by category | |
+| `src/runtime/builtin_table.rs`, `function_dispatch.rs` | `UPPERCASE()` builtins: one table (names, arity, docs) and dispatch | `docs/reference/functions.md` is generated from the table |
 | `src/runtime/method_calls/` | `.method()` dispatch | |
-| `src/runtime/{arithmetic,string,array,datetime,financial,statistical,logical,json,jsonpath}.rs` | Builtin implementations | |
+| `src/runtime/{arithmetic,string,text,array,criteria,datetime,financial,statistical,logical,json,jsonpath}.rs` | Builtin implementations | `criteria.rs` = Excel criteria for `COUNTIF`/`SUMIF`/`AVERAGEIF` |
 | `src/custom.rs`, `src/js_plugin.rs` | `CustomFunction` trait, JS plugins | |
 | `src/bin/http_server/` | HTTP server modules | std::net + threadpool, no async |
 | `tests/*.rs` | Integration tests, one file per feature area | `prd_*.rs` = PRD-001 acceptance; `evaluator_parity.rs` = BL-001, pins every result in `tests/golden/` (BL-087) |
