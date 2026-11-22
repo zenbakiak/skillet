@@ -297,11 +297,11 @@ pub fn exec_string(name: &str, args: &[Value]) -> Result<Value, Error> {
             Ok(Value::String(out))
         }
         "UPPER" => match args.first() {
-            Some(Value::String(s)) => Ok(Value::String(s.to_uppercase())),
+            Some(Value::String(s)) => Ok(Value::String(limits::case_mapped(s, true)?)),
             _ => Err(Error::new("UPPER expects string", None)),
         },
         "LOWER" => match args.first() {
-            Some(Value::String(s)) => Ok(Value::String(s.to_lowercase())),
+            Some(Value::String(s)) => Ok(Value::String(limits::case_mapped(s, false)?)),
             _ => Err(Error::new("LOWER expects string", None)),
         },
         // Excel TRIM: drop leading and trailing spaces and collapse inner runs of spaces to one.

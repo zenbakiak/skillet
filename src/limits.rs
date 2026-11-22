@@ -338,6 +338,44 @@ pub(crate) fn tick() -> Result<(), Error> {
     charge(0)
 }
 
+/// `s` upper- or lower-cased (`UPPER`, `LOWER`, `.upper()`, `.lower()`). Case mapping can make
+/// non-ASCII text up to [`CASE_GROWTH`]x longer (`ΐ` is 2 bytes, `Ϊ́` 6), so the output must fit
+/// what is left of the budget before it is built. When even the worst case fits (the usual case)
+/// nothing is counted; otherwise the exact output size is counted, without allocating, so the
+/// pass/fail boundary does not move. Nothing is charged here: the result site charges the string.
+pub(crate) fn case_mapped(s: &str, upper: bool) -> Result<String, Error> {
+    let worst = (s.len() as u64).saturating_mul(CASE_GROWTH);
+    if !s.is_ascii() && !has_room(STRING_COST.saturating_add(worst)) {
+        let len: usize = if upper {
+            s.chars()
+                .flat_map(char::to_uppercase)
+                .map(char::len_utf8)
+                .sum()
+        } else {
+            s.chars()
+                .flat_map(char::to_lowercase)
+                .map(char::len_utf8)
+                .sum()
+        };
+        if !has_room(STRING_COST.saturating_add(len as u64)) {
+            return Err(BUDGET.with(|b| b.trip(Trip::Budget)));
+        }
+    }
+    Ok(if upper {
+        s.to_uppercase()
+    } else {
+        s.to_lowercase()
+    })
+}
+
+/// Largest growth in UTF-8 bytes of one character under `to_uppercase`/`to_lowercase` (U+0390).
+const CASE_GROWTH: u64 = 3;
+
+/// True when charging `bytes` now would stay within the budget.
+fn has_room(bytes: u64) -> bool {
+    BUDGET.with(|b| b.used.get().saturating_add(bytes) <= b.max.get())
+}
+
 /// Pre-charge a `MERGE` result: the cost of every argument, before the merged array is built.
 pub(crate) fn charge_merge(args: &[Value]) -> Result<(), Error> {
     args.iter().try_for_each(charge_value)
@@ -892,6 +930,31 @@ mod tests {
         }
         assert_eq!(count_node_bytes(&every_byte), slow(&every_byte));
         assert_eq!(count_node_bytes(&[b'{'; 16 * 600 + 9]), 16 * 600 + 9);
+    }
+
+    #[test]
+    fn case_growth_bounds_every_char() {
+        for c in (0..=0x10_FFFF).filter_map(char::from_u32) {
+            let grown = |it: &mut dyn Iterator<Item = char>| it.map(char::len_utf8).sum::<usize>();
+            let max = c.len_utf8() as u64 * CASE_GROWTH;
+            assert!(grown(&mut c.to_uppercase()) as u64 <= max, "{c:?}");
+            assert!(grown(&mut c.to_lowercase()) as u64 <= max, "{c:?}");
+        }
+    }
+
+    #[test]
+    fn case_mapping_checks_room_exactly() {
+        // "ΐ" upper-cases to 6 bytes: 48 + 6 fits a 54-byte budget, not a 53-byte one.
+        with_limits(limited(54), || assert!(case_mapped("ΐ", true).is_ok()));
+        with_limits(limited(53), || {
+            let err = case_mapped("ΐ", true).expect_err("no room");
+            assert_eq!(err.message, "Evaluation budget exceeded (max 53 bytes)");
+        });
+        // Nothing is charged: the result site does that.
+        with_limits(limited(54), || {
+            case_mapped("ΐ", true).unwrap();
+            assert!(charge(54).is_ok());
+        });
     }
 
     #[test]

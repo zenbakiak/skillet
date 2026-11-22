@@ -1037,3 +1037,53 @@ fn bl035_tiny_strings_are_charged_what_they_really_cost() {
         "real {real:.1} B per 1-char string, charged {charged}"
     );
 }
+
+/// Case mapping can grow non-ASCII text 3x (`ΐ`, 2 bytes, upper-cases to `Ϊ́`, 6). The output
+/// must fit the budget before it is built; ASCII and text that fits are unchanged.
+#[test]
+fn bl035_case_mapping_fails_before_growing() {
+    let budget = 4 * MIB;
+    // 3.6 MB of "ΐ" fits the budget; its 10.8 MB upper-case does not. U+0130 lower-cases to 3
+    // bytes (1.5x). Before BL-035 the output was built first: peak 24 MB and 13.7 MB.
+    let vars = HashMap::from([
+        ("s".to_string(), Value::String("ΐ".repeat(1_800_000))),
+        ("t".to_string(), Value::String("İ".repeat(1_800_000))),
+    ]);
+    let cases = [
+        "UPPER(:s)",
+        ":s.upper()",
+        ":s.upcase()",
+        "LOWER(:t)",
+        ":t.downcase()",
+    ];
+    let mut failures = Vec::new();
+    for src in cases {
+        let (r, peak) =
+            heap::peak_during(|| with_limits(limits(budget), || evaluate_with_custom(src, &vars)));
+        let ok = matches!(&r, Err(e) if e.message.starts_with("Evaluation budget exceeded"));
+        if !ok || peak as u64 > 2 * budget + MIB {
+            failures.push(format!(
+                "{src}: peak {:.1} MB, result {:?}",
+                peak as f64 / MIB as f64,
+                r.map(|v| short(&v)).map_err(|e| e.message)
+            ));
+        }
+    }
+    assert!(failures.is_empty(), "\n{}", failures.join("\n"));
+    // Same values as before, and the exact boundary: 48 + 6 bytes for one upper-cased "ΐ".
+    assert_eq!(
+        evaluate("UPPER(\"ΐé\")"),
+        Ok(Value::String("\u{399}\u{308}\u{301}É".into()))
+    );
+    assert_eq!(evaluate("\"ΣΑΣ\".lower()"), Ok(Value::String("σας".into())));
+    assert_eq!(
+        with_limits(limits(54), || evaluate("\"ΐ\".upper()")),
+        Ok(Value::String("\u{399}\u{308}\u{301}".into()))
+    );
+    assert_eq!(
+        with_limits(limits(53), || evaluate("\"ΐ\".upper()"))
+            .unwrap_err()
+            .message,
+        "Evaluation budget exceeded (max 53 bytes)"
+    );
+}

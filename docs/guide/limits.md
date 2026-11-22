@@ -118,6 +118,11 @@ exact size or an upper bound: `SUBSTITUTE`, `SUBSTITUTEM`, `.replace`, `JOIN`, `
 `::String` on arrays, object literals (their exact JSON size), and every parse of a JSON object
 (property access, `DIG`, `.keys()`, `.values()`, `.dig()`, `JQ` input).
 
+`UPPER`, `LOWER`, `.upper()` and `.lower()` (and `.upcase()`, `.downcase()`) can make text up to
+3 times longer (`UPPER("ΐ")` is 6 bytes from 2). They check that the result fits what is left of the
+budget before they build it, and fail with the budget error if it does not. The result is charged
+as usual, so the limit is the same as before, only the failure comes before the memory is used.
+
 Normal formulas use a small part of the budget. A 10,000-item `map` is fine:
 
 ```console
