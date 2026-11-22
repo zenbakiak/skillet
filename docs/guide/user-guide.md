@@ -1188,7 +1188,7 @@ and booleans convert, as in Excel: `ABS("-3")` is `3`, `ABS(TRUE)` is `1`.
 - `NPV(rate, value1, ...)` - Net present value of periodic cash flows (Excel)
 
 ### Type Conversion Methods (Available on All Types)
-- `to_s()`, `to_string()` - Convert to string
+- `to_s()`, `to_string()` - Convert to string (the same text as `::String`, see "Values as text")
 - `to_i()`, `to_int()` - Convert to integer
 - `to_f()`, `to_float()` - Convert to float
 - `to_a()`, `to_array()` - Convert to array
@@ -1392,6 +1392,7 @@ sk "\"hello\".to_s()"         # "hello" - same string
 # Number to other types
 sk "123.to_s()"               # "123" - formatted as string
 sk "123.45.to_s()"            # "123.45" - with decimals
+sk "(0.1 + 0.2).to_s()"       # "0.3" - 15 significant digits, as Excel
 sk "123.45.to_i()"            # 123 - truncates to integer
 sk "123.45.to_f()"            # 123.45 - same float
 sk "42.to_a()"                # [42] - single-element array
@@ -1403,8 +1404,8 @@ sk "123.to_bool()"            # true - non-zero is true
 
 ```bash
 # Boolean to other types
-sk "true.to_s()"              # "true" - string representation
-sk "false.to_s()"             # "false"
+sk "true.to_s()"              # "TRUE" - as ::String, CONCAT and JOIN write it
+sk "false.to_s()"             # "FALSE"
 sk "true.to_i()"              # 1 - true becomes 1
 sk "false.to_i()"             # 0 - false becomes 0
 sk "true.to_f()"              # 1.0 - true becomes 1.0
@@ -1417,7 +1418,8 @@ sk "true.to_bool()"           # true - identity
 
 ```bash
 # Array to other types
-sk "[1, 2, 3].to_s()"         # "[1, 2, 3]" - formatted string
+sk "[1, 2, 3].to_s()"         # "[1,2,3]" - JSON text
+sk "[\"a\", TRUE, NULL].to_s()" # "[\"a\",true,null]"
 sk "[1, 2, 3].to_i()"         # 3 - array length
 sk "[].to_i()"                # 0 - empty array length
 sk "[1, 2, 3].to_f()"         # 3.0 - array length as float
@@ -1657,12 +1659,33 @@ sk "=([]).blank()"        # true
 sk "=([1,2,3]).present()" # true
 ```
 
+### Values as text
+
+Every place that turns a value into text (`::String`, `.to_s()`, `CONCAT`, `&`, `JOIN`, `.join()`,
+`TEXTJOIN`, `LEN`) writes the same text for the same value (ADR-0034):
+
+- a number with up to 15 significant digits, as Excel shows it: `"Total: " & 3 * 0.1` is
+  `"Total: 0.3"`. Whole numbers below 2^53 are written exactly; very large and very small
+  numbers use `E` notation (`1E+21`, `1.5E-08`). Round first for a fixed number of decimals:
+  `ROUND(:price, 2) & " EUR"`;
+- `TRUE` / `FALSE`; `NULL` as empty text; a date as ISO 8601 UTC (`2026-01-01T00:00:00Z`);
+- an array or JSON object as its JSON text: `[1, "a", TRUE]::String` is `"[1,\"a\",true]"`.
+  Inside it numbers keep every digit.
+
+```bash
+sk "=\"Total: \" & 3 * 0.1"         # "Total: 0.3"
+sk "=[TRUE, 2.5, NULL].join(\"|\")"  # "TRUE|2.5|"
+sk "=\"héllo\".length()"            # 5 (characters, as LEN)
+```
+
 ### Type Casting
 
 ```bash
 # Explicit casting
 sk "=\"42\"::Number"      # 42.0
 sk "=42::String"         # "42"
+sk "=(0.1 + 0.2)::String"  # "0.3" (15 significant digits)
+sk "=1e21::String"       # "1E+21"
 sk "=1::Boolean"         # true
 sk "=0::Boolean"         # false
 sk "=DATE(2026,1,1)::String::DateTime"   # casts chain left to right
