@@ -205,6 +205,26 @@ pub(crate) static BUILTINS: &[Builtin] = &[
     f("JQ", Json, 2, n(2), "json, jsonpath", "JSONPath query (`$…`) over a JSON value or array.", "JQ(:obj, '$.user.name')").evaluator(),
 ];
 
+/// Call names the parser produces for operators and constants; the evaluator runs them before
+/// any custom function lookup.
+const INTERNAL_NAMES: [&str; 4] = [
+    "__TERNARY__",
+    crate::parser::CONCAT_OP,
+    "__CONST_TRUE__",
+    "__CONST_FALSE__",
+];
+
+/// True when `name` (any case) is a builtin name or alias, including the ones the evaluator
+/// runs itself (`IF`, `FILTER`, `JQ`, ...), or an internal operator name. JS hooks may not use
+/// these names (ADR-0024); Rust `CustomFunction`s registered by the embedder still may.
+#[cfg_attr(not(feature = "plugins"), allow(dead_code))]
+pub(crate) fn is_reserved_function_name(name: &str) -> bool {
+    // `to_uppercase` like the custom registry, so every spelling that reaches a builtin counts.
+    let upper = name.trim().to_uppercase();
+    INTERNAL_NAMES.contains(&upper.as_str())
+        || BUILTINS.iter().flat_map(Builtin::names).any(|n| n == upper)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -238,6 +258,40 @@ mod tests {
                 assert_eq!(name, name.to_uppercase(), "{name} must be upper-case");
             }
             assert!(b.max_args.unwrap_or(usize::MAX) >= b.min_args, "{}", b.name);
+        }
+    }
+
+    #[test]
+    fn every_table_name_is_reserved_in_any_case() {
+        for name in BUILTINS.iter().flat_map(Builtin::names) {
+            assert!(is_reserved_function_name(name), "{name}");
+            assert!(is_reserved_function_name(&name.to_lowercase()), "{name}");
+        }
+        // The names `eval_function_call` matches itself, before or after custom lookup.
+        for name in [
+            "IF",
+            "IFS",
+            "FILTER",
+            "FIND",
+            "MAP",
+            "REDUCE",
+            "SUMIF",
+            "AVERAGEIF",
+            "AVGIF",
+            "COUNTIF",
+            "JQ",
+            "MERGE",
+            "CONCAT",
+            "TEXTJOIN",
+        ] {
+            assert!(is_reserved_function_name(name), "{name}");
+        }
+        for name in INTERNAL_NAMES {
+            assert!(is_reserved_function_name(name), "{name}");
+        }
+        assert!(is_reserved_function_name("Stdev.p"));
+        for name in ["MYFN", "SUMX", "SUM_", "", "STDEV P"] {
+            assert!(!is_reserved_function_name(name), "{name}");
         }
     }
 

@@ -243,6 +243,21 @@ plugin call (64 MiB, 10 s per call; see [Limits](limits.md#javascript-plugins-64
 An example that loops answers after 10 s with the timeout in `validation_results.example_error`.
 During `/eval` a plugin is also stopped by the 10 s request deadline.
 
+A hook cannot replace a builtin ([ADR-0024](../adr/0024-hooks-cannot-override-builtins.md)). An
+`@name` that is a builtin name or alias, in any case (`SUM`, `sum`, `STDEV.P`, `IF`, `FILTER`,
+...), gets HTTP **400** from `/upload-js` and `/update-js`, and nothing is written. When the server
+starts or `/reload-hooks` runs, such a file is skipped with one warning on stderr, and the other
+hooks still load:
+
+```console
+POST /upload-js {"filename": "sum.js", "js_code": "// @name: sum\n…"}
+400 {"success":false,"message":"Function name SUM is reserved by a builtin","function_name":null,"validation_results":null,"error":"Reserved function name"}
+
+POST /reload-hooks {}        (hooks/sum.js on disk has @name: SUM)
+200 {"success":true,"message":"Successfully reloaded 0 JavaScript function(s)","functions_loaded":0,"error":null}
+stderr: Warning: Skipping "/srv/hooks/sum.js": Function name SUM is reserved by a builtin
+```
+
 ### JavaScript endpoints in builds without plugins
 
 `sk_http_server` built without the default `plugins` feature

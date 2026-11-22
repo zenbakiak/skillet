@@ -47,6 +47,22 @@ impl JavaScriptFunction {
         Self::parse_js_function_internal(js_code)
     }
 
+    /// Error when the `@name` is a reserved builtin name (any case): JS hooks can add
+    /// functions but not replace builtins (ADR-0024). The hooks loader and the HTTP upload
+    /// endpoints call this; Rust `CustomFunction`s are not checked.
+    pub fn check_name_not_reserved(&self) -> Result<(), Error> {
+        if crate::runtime::builtin_table::is_reserved_function_name(&self.name) {
+            return Err(Error::new(
+                format!(
+                    "Function name {} is reserved by a builtin",
+                    self.name.trim().to_uppercase()
+                ),
+                None,
+            ));
+        }
+        Ok(())
+    }
+
     /// Load a JavaScript function from a file
     pub fn from_file<P: AsRef<Path>>(file_path: P) -> Result<Self, Error> {
         let content = fs::read_to_string(&file_path)
@@ -473,9 +489,10 @@ impl JSPluginLoader {
                 }
             } else if path.extension().and_then(|s| s.to_str()) == Some("js") {
                 match JavaScriptFunction::from_file(&real) {
-                    Ok(js_func) => {
-                        functions.push(Box::new(js_func) as Box<dyn CustomFunction>);
-                    }
+                    Ok(js_func) => match js_func.check_name_not_reserved() {
+                        Ok(()) => functions.push(Box::new(js_func) as Box<dyn CustomFunction>),
+                        Err(e) => eprintln!("Warning: Skipping {:?}: {}", path, e),
+                    },
                     Err(e) => {
                         eprintln!("Warning: Failed to load JS function from {:?}: {}", path, e);
                     }
