@@ -24,12 +24,69 @@ pub(crate) fn type_name(v: &Value) -> &'static str {
     }
 }
 
-/// A numeric argument of a builtin: a number or currency. Anything else, or a missing argument,
-/// is an error (Excel `#VALUE!`), never a silent default.
+/// Text that reads as a number, Excel style (BL-066): decimal or scientific notation after
+/// trimming (`"-3"`, `" 4 "`, `"2.5"`, `"1e3"`). Empty text, other characters (`"inf"`,
+/// `"1,000"`) and values out of range are not numbers.
+pub(crate) fn numeric_text(s: &str) -> Option<f64> {
+    let t = s.trim();
+    let allowed = |b: u8| b.is_ascii_digit() || matches!(b, b'.' | b'e' | b'E' | b'+' | b'-');
+    if t.is_empty() || !t.bytes().all(allowed) {
+        return None;
+    }
+    t.parse::<f64>().ok().filter(|n| n.is_finite())
+}
+
+/// Excel's coercion of text and booleans to a number (BL-066): numeric text, `TRUE` = 1 and
+/// `FALSE` = 0. `Ok(None)` for every other type (the caller decides: NULL is 0 in the operators
+/// and stays an error in builtins). Text that is not a number is `#VALUE!`; `context` prefixes
+/// that message (`"ABS: "`).
+pub(crate) fn coerce_to_number(v: &Value, context: &str) -> Result<Option<f64>, Error> {
+    match v {
+        Value::String(s) => match numeric_text(s) {
+            Some(n) => Ok(Some(n)),
+            None => Err(not_a_number_text(s, context)),
+        },
+        Value::Boolean(b) => Ok(Some(if *b { 1.0 } else { 0.0 })),
+        _ => Ok(None),
+    }
+}
+
+/// `Cannot convert "abc" to a number (#VALUE!)`, with long text cut to 32 characters.
+#[cold]
+fn not_a_number_text(s: &str, context: &str) -> Error {
+    const SHOW: usize = 32;
+    let shown: String = s.chars().take(SHOW).collect();
+    let more = if s.chars().nth(SHOW).is_some() {
+        "…"
+    } else {
+        ""
+    };
+    let verb = if context.is_empty() {
+        "Cannot"
+    } else {
+        "cannot"
+    };
+    Error::new(
+        format!("{context}{verb} convert {shown:?}{more} to a number (#VALUE!)"),
+        None,
+    )
+}
+
+/// A numeric argument of a builtin: a number or currency, or text or a boolean that Excel
+/// converts to one (see `coerce_to_number`). Anything else, or a missing
+/// argument, is an error (Excel `#VALUE!`), never a silent default.
 pub(crate) fn number_arg(name: &str, args: &[Value], i: usize, what: &str) -> Result<f64, Error> {
     match args.get(i) {
         Some(Value::Number(n) | Value::Currency(n)) => Ok(*n),
         Some(other) => {
+            let context = if what == "number" {
+                format!("{name}: ")
+            } else {
+                format!("{name} {what}: ")
+            };
+            if let Some(n) = coerce_to_number(other, &context)? {
+                return Ok(n);
+            }
             let got = type_name(other);
             let message = if what == "number" {
                 format!("{name} expects number, got {got}")

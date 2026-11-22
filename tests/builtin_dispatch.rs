@@ -374,7 +374,7 @@ const CASES: &[(&str, &str)] = &[
     ("INCLUDES('a')", "Err(Error { message: \"INCLUDES expects string, substring\", position: None })"),
     ("TRIM(1)", "Err(Error { message: \"TRIM expects string\", position: None })"),
     ("LOWER(1)", "Err(Error { message: \"LOWER expects string\", position: None })"),
-    ("ROUND('a')", "Err(Error { message: \"ROUND expects number, got string\", position: None })"),
+    ("ROUND('a')", "Err(Error { message: \"ROUND: cannot convert \\\"a\\\" to a number (#VALUE!)\", position: None })"),
     // BL-054 (Excel): missing arguments and averages of nothing are errors; these were
     // "Ok(Number(0.0))". MIN() stays 0, as Excel's MIN of no numbers is 0.
     ("ROUND()", "Err(Error { message: \"ROUND expects (number, [num_digits])\", position: None })"),

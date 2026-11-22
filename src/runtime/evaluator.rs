@@ -8,7 +8,7 @@ use crate::runtime::{
     logical,
     method_calls::exec_method_in,
     type_casting::cast_value,
-    utils::{clamp_index, slice_items, type_name},
+    utils::{clamp_index, coerce_to_number, slice_items, type_name},
 };
 use crate::types::Value;
 use std::borrow::Cow;
@@ -181,6 +181,32 @@ fn date_arithmetic(op: BinaryOp, a: &Value, b: &Value) -> Result<Value, Error> {
     }
 }
 
+/// An arithmetic operator where an operand is not a number (BL-066). A DateTime operand is date
+/// arithmetic (no coercion). Otherwise each operand converts as in Excel: numeric text, `TRUE`/
+/// `FALSE` as 1/0 and NULL (a blank cell) as 0; other text is `#VALUE!`, and other types stay
+/// the arithmetic type error.
+#[cold]
+#[inline(never)]
+fn coerced_arithmetic(op: BinaryOp, a: &Value, b: &Value) -> Result<Value, Error> {
+    if matches!(a, Value::DateTime(_)) || matches!(b, Value::DateTime(_)) {
+        return date_arithmetic(op, a, b);
+    }
+    let operand = |v: &Value| coerced_operand(v, "Arithmetic op on non-number");
+    let (an, bn) = (operand(a)?, operand(b)?);
+    crate::runtime::arithmetic::checked_binary(op, an, bn).map(Value::Number)
+}
+
+/// An operator operand as a number: numbers as they are, NULL as 0 (a blank cell), numeric text
+/// and booleans as `coerce_to_number`; `type_error` for types that do not convert.
+#[cold]
+fn coerced_operand(v: &Value, type_error: &str) -> Result<f64, Error> {
+    match v {
+        Value::Number(n) => Ok(*n),
+        Value::Null => Ok(0.0),
+        _ => coerce_to_number(v, "")?.ok_or_else(|| Error::new(type_error, None)),
+    }
+}
+
 /// Unified evaluator that handles all expression types efficiently
 pub struct Evaluator;
 
@@ -332,16 +358,15 @@ impl Evaluator {
     /// Evaluate unary operations
     fn eval_unary_op(op: UnaryOp, v: &Value) -> Result<Value, Error> {
         match op {
-            UnaryOp::Plus => {
-                Ok(Value::Number(v.as_number().ok_or_else(|| {
-                    Error::new("Unary '+' on non-number", None)
-                })?))
-            }
-            UnaryOp::Minus => {
-                Ok(Value::Number(-v.as_number().ok_or_else(|| {
-                    Error::new("Unary '-' on non-number", None)
-                })?))
-            }
+            UnaryOp::Plus => match v {
+                Value::Number(n) => Ok(Value::Number(*n)),
+                _ => coerced_operand(v, "Unary '+' on non-number").map(Value::Number),
+            },
+            UnaryOp::Minus => match v {
+                Value::Number(n) => Ok(Value::Number(-*n)),
+                // `0.0 - n`, not `-n`: `-NULL` and `-FALSE` are 0, not -0.
+                _ => coerced_operand(v, "Unary '-' on non-number").map(|n| Value::Number(0.0 - n)),
+            },
             UnaryOp::Not => {
                 Ok(Value::Boolean(!v.as_bool().ok_or_else(|| {
                     Error::new("Unary '!' on non-boolean", None)
@@ -360,7 +385,7 @@ impl Evaluator {
             | BinaryOp::Mod
             | BinaryOp::Pow => {
                 let (Some(an), Some(bn)) = (a.as_number(), b.as_number()) else {
-                    return date_arithmetic(op, a, b);
+                    return coerced_arithmetic(op, a, b);
                 };
                 crate::runtime::arithmetic::checked_binary(op, an, bn).map(Value::Number)
             }
