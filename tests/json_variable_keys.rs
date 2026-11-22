@@ -93,12 +93,31 @@ fn library_keys_that_stay_distinct_after_sanitizing_still_work() {
 #[test]
 fn sk_json_rejects_keys_that_map_to_the_same_variable() {
     let json = r#"{"a_b": 1, "a-b": 2}"#;
-    // Library path: an evaluation error, exit code 2.
-    let (out, err, code) = sk_json("=:a_b", json);
-    assert_eq!((out.as_str(), code), ("", 2), "{err}");
-    assert_eq!(err, format!("Error: {KEY_COLLISION}"));
-    // `:=` path: rejected while building the variables, exit code 1 (like invalid JSON there).
-    let (out, err, code) = sk_json("=:v := :a_b; :v", json);
-    assert_eq!((out.as_str(), code), ("", 1), "{err}");
-    assert_eq!(err, format!("Error: {KEY_COLLISION}"));
+    // BL-096: a `--json` error exits 1 on both paths (the plain one used to exit 2).
+    for expr in ["=:a_b", "=:v := :a_b; :v"] {
+        let (out, err, code) = sk_json(expr, json);
+        assert_eq!((out.as_str(), code), ("", 1), "{expr}: {err}");
+        assert_eq!(err, format!("Error: {KEY_COLLISION}"), "{expr}");
+    }
+}
+
+/// BL-096: invalid JSON and a non-object exit 1 with the same message on both paths; an
+/// evaluation error still exits 2.
+#[test]
+fn sk_json_errors_exit_1_on_both_paths() {
+    for expr in ["=1", "=:v := 1; :v"] {
+        let (out, err, code) = sk_json(expr, "{not json");
+        assert_eq!((out.as_str(), code), ("", 1), "{expr}: {err}");
+        assert!(err.starts_with("Error: Invalid JSON: "), "{expr}: {err}");
+        let (out, err, code) = sk_json(expr, "[1, 2]");
+        assert_eq!((out.as_str(), code), ("", 1), "{expr}: {err}");
+        assert_eq!(
+            err, "Error: JSON must be an object with key-value pairs",
+            "{expr}"
+        );
+    }
+    for expr in ["=:missing", "=:v := :missing; :v"] {
+        let (_, err, code) = sk_json(expr, r#"{"x": 1}"#);
+        assert_eq!(code, 2, "{expr}: {err}");
+    }
 }

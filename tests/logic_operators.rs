@@ -214,10 +214,19 @@ fn and_or_operators_evaluate_the_right_side_when_needed() {
 }
 
 #[test]
-fn and_or_operators_still_take_booleans() {
-    err_has("1 AND TRUE", "Logical op on non-boolean");
-    err_has("TRUE AND 1", "Logical op on non-boolean");
-    err_has("'x' OR TRUE", "Logical op on non-boolean");
+fn and_or_operators_take_conditions() {
+    // ADR-0029 amendment 1 (BL-089): both sides use the IF condition rule.
+    is("1 AND TRUE", true);
+    is("TRUE AND 1", true);
+    is("TRUE AND 0", false);
+    err_has(
+        "'x' OR TRUE",
+        "OR condition must be TRUE, FALSE or a number, got string (#VALUE!)",
+    );
+    err_has(
+        "TRUE AND 'x'",
+        "AND condition must be TRUE, FALSE or a number, got string (#VALUE!)",
+    );
 }
 
 // --- AND / OR / XOR builtins ---------------------------------------------------------------

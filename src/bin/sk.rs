@@ -99,47 +99,27 @@ fn main() {
     let start_time = Instant::now();
 
     let result = if let Some(json_str) = json_input {
-        // For JSON input, first check if expression contains assignments/sequences
+        // Bad `--json` input exits 1 on both paths, before evaluating (BL-096).
+        let map = json_object(&json_str).unwrap_or_else(|e| {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        });
         if expr.contains(";") || expr.contains(":=") {
-            // Need to parse JSON and pass to assignment evaluator
-            let json_value: serde_json::Value = match serde_json::from_str(&json_str) {
-                Ok(val) => val,
-                Err(e) => {
-                    eprintln!("Error: Invalid JSON: {}", e);
-                    std::process::exit(1);
-                }
-            };
-            let vars = match json_value {
-                serde_json::Value::Object(map) => {
-                    if let Err(e) = json_keys::check_json_keys(map.keys().map(String::as_str)) {
-                        eprintln!("Error: {}", e);
+            // The assignment evaluator has no JSON entry point: build the variables here.
+            let mut vars = HashMap::with_capacity(map.len() + 1);
+            for (key, value) in map {
+                let skillet_value = match skillet::json_to_value(value) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        eprintln!("Error converting JSON: {}", e);
                         std::process::exit(1);
                     }
-                    let mut result = HashMap::new();
-                    for (key, value) in map {
-                        let skillet_value = match skillet::json_to_value(value) {
-                            Ok(v) => v,
-                            Err(e) => {
-                                eprintln!("Error converting JSON: {}", e);
-                                std::process::exit(1);
-                            }
-                        };
-                        let sanitized_key = json_keys::sanitize_json_key(&key);
-                        result.insert(sanitized_key, skillet_value);
-                    }
-                    // The original JSON for JQ, last so a key named `arguments` cannot
-                    // replace it (BL-077).
-                    result.insert(
-                        "arguments".to_string(),
-                        skillet::Value::Json(json_str.clone()),
-                    );
-                    result
-                }
-                _ => {
-                    eprintln!("Error: JSON must be an object with key-value pairs");
-                    std::process::exit(1);
-                }
-            };
+                };
+                vars.insert(json_keys::sanitize_json_key(&key), skillet_value);
+            }
+            // The original JSON for JQ, last so a key named `arguments` cannot replace it
+            // (BL-077).
+            vars.insert("arguments".to_string(), Value::Json(json_str.clone()));
             evaluate_with_assignments(expr, &vars)
         } else {
             skillet::evaluate_with_json_custom(expr, &json_str)
@@ -165,6 +145,19 @@ fn main() {
             eprintln!("Error: {}", e);
             std::process::exit(2);
         }
+    }
+}
+
+/// The `--json` object, checked like the library checks it: valid JSON, an object, and no two
+/// keys that map to the same variable.
+fn json_object(json_str: &str) -> Result<serde_json::Map<String, serde_json::Value>, String> {
+    match serde_json::from_str(json_str) {
+        Ok(serde_json::Value::Object(map)) => {
+            json_keys::check_json_keys(map.keys().map(String::as_str))?;
+            Ok(map)
+        }
+        Ok(_) => Err("JSON must be an object with key-value pairs".to_string()),
+        Err(e) => Err(format!("Invalid JSON: {}", e)),
     }
 }
 

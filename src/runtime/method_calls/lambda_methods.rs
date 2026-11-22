@@ -8,6 +8,7 @@ use crate::ast::Expr;
 use crate::error::Error;
 use crate::limits::with_meter;
 use crate::runtime::evaluator::{EvaluationContext, Evaluator, Scope};
+use crate::runtime::logical::condition;
 use crate::types::Value;
 
 fn recv_items<'v>(recv: &'v Value, method: &str) -> Result<&'v [Value], Error> {
@@ -47,7 +48,7 @@ pub fn exec_filter(
         for item in items {
             meter.charge_value(item)?;
             scope.set(&param, item.clone());
-            if let Value::Boolean(true) = Evaluator::eval(lambda_expr, &scope)? {
+            if condition("filter", &Evaluator::eval(lambda_expr, &scope)?)? {
                 filtered.push(item.clone());
             }
         }
@@ -96,7 +97,7 @@ pub fn exec_find(
         for item in items {
             meter.charge_value(item)?;
             scope.set(&param, item.clone());
-            if let Value::Boolean(true) = Evaluator::eval(lambda_expr, &scope)? {
+            if condition("find", &Evaluator::eval(lambda_expr, &scope)?)? {
                 return Ok(item.clone());
             }
         }
