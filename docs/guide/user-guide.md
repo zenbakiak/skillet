@@ -317,6 +317,26 @@ function execute(args) {
 }
 ```
 
+#### Names: hooks add functions, they cannot replace builtins
+
+`@name` must not be a builtin name or alias, in any case: `SUM`, `sum`, `STDEV.P`, `IF`,
+`FILTER`, `JQ` and every other name in the [function reference](../reference/functions.md) are
+reserved ([ADR-0024](../adr/0024-hooks-cannot-override-builtins.md)). A hooks file with a
+reserved name is skipped with one warning on stderr, and the other hooks still load:
+
+```console
+$ ls hooks
+myfn.js  sum.js
+$ sk "=SUM(1, 2) + MYFN()"
+Warning: Skipping "/work/hooks/sum.js": Function name SUM is reserved by a builtin
+Loaded 1 custom JavaScript function(s)
+Number(45.0)
+```
+
+The server endpoints `/upload-js` and `/update-js` answer HTTP 400 with the same message
+([Servers](servers.md#javascript-hook-files-sk_http_server)). Rust functions registered with
+`register_function` are embedder code and may still shadow a builtin (see below).
+
 #### JavaScript Function Examples
 
 **Mathematical Functions:**
@@ -344,12 +364,12 @@ function execute(args) {
 
 **String Manipulation:**
 ```javascript
-// hooks/reverse.js
-// @name: REVERSE
+// hooks/str_reverse.js
+// @name: STR_REVERSE
 // @min_args: 1
 // @max_args: 1
 // @description: Reverse a string
-// @example: REVERSE("hello") returns "olleh"
+// @example: STR_REVERSE("hello") returns "olleh"
 
 function execute(args) {
     const str = args[0].toString();
@@ -518,7 +538,7 @@ Once you have JavaScript files in the `hooks` directory, they're automatically l
 # Basic usage
 sk "DOUBLE(5)"
 sk "FIBONACCI(10)"
-sk "REVERSE(\"hello world\")"
+sk "STR_REVERSE(\"hello world\")"
 
 # Array manipulation
 sk "ARRAY_SORT([3, 1, 4, 1, 5])"                    # [1, 1, 3, 4, 5]
@@ -754,7 +774,8 @@ fn manage_functions() -> Result<(), Error> {
         println!("DOUBLE function is available");
     }
 
-    // Override built-in functions (custom functions take priority)
+    // Override built-in functions (custom functions take priority). Only Rust functions can
+    // do this; JS hooks with a builtin's name are skipped (ADR-0024).
     struct CustomSum;
     impl CustomFunction for CustomSum {
         fn name(&self) -> &str { "SUM" }

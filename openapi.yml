@@ -352,20 +352,32 @@ paths:
                   example_result: "Expected: 8, Got: 8 ✓"
         '400':
           description: |
-            Invalid filename, invalid function, or validation failed. A name that does not end
-            in `.js` gets `"message": "Filename must end with .js extension"` and
-            `"error": "Invalid file extension"`; any other name outside the pattern (a dot or
-            `/` in the stem, an empty stem) gets the example below.
+            Invalid filename, invalid function, reserved function name, or validation failed.
+            A name that does not end in `.js` gets `"message": "Filename must end with .js
+            extension"` and `"error": "Invalid file extension"`; any other name outside the
+            pattern (a dot or `/` in the stem, an empty stem) gets the `invalidFilename`
+            example. An `@name` that is a builtin name or alias in any case (`SUM`, `sum`,
+            `STDEV.P`) gets the `reservedName` example, with the name upper-cased; hooks cannot
+            replace builtins (ADR-0024). Nothing is written in either case.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/UploadJSResponse'
-              example:
-                success: false
-                message: "Filename must be a plain name of letters, digits, '_' or '-' ending in .js (no directories)"
-                function_name: null
-                validation_results: null
-                error: "Invalid filename"
+              examples:
+                invalidFilename:
+                  value:
+                    success: false
+                    message: "Filename must be a plain name of letters, digits, '_' or '-' ending in .js (no directories)"
+                    function_name: null
+                    validation_results: null
+                    error: "Invalid filename"
+                reservedName:
+                  value:
+                    success: false
+                    message: "Function name SUM is reserved by a builtin"
+                    function_name: null
+                    validation_results: null
+                    error: "Reserved function name"
         '401':
           description: Admin authentication required
           content:
@@ -427,17 +439,29 @@ paths:
               schema:
                 $ref: '#/components/schemas/UpdateJSResponse'
         '400':
-          description: Invalid filename (same messages as `/upload-js`), invalid function, or validation failed
+          description: |
+            Invalid filename, invalid function, reserved function name, or validation failed;
+            same messages as `/upload-js`. A reserved `@name` (any case) leaves the existing file
+            unchanged (ADR-0024).
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/UpdateJSResponse'
-              example:
-                success: false
-                message: "Filename must be a plain name of letters, digits, '_' or '-' ending in .js (no directories)"
-                function_name: null
-                validation_results: null
-                error: "Invalid filename"
+              examples:
+                invalidFilename:
+                  value:
+                    success: false
+                    message: "Filename must be a plain name of letters, digits, '_' or '-' ending in .js (no directories)"
+                    function_name: null
+                    validation_results: null
+                    error: "Invalid filename"
+                reservedName:
+                  value:
+                    success: false
+                    message: "Function name SUM is reserved by a builtin"
+                    function_name: null
+                    validation_results: null
+                    error: "Reserved function name"
         '404':
           description: |
             Function file not found, or JavaScript plugins are not enabled in this build
@@ -561,6 +585,8 @@ paths:
       description: |
         Reload all JavaScript functions from the hooks directory.
         This refreshes the function registry without restarting the server.
+        A file whose `@name` is a builtin name (any case) is skipped with a warning on the
+        server's stderr and is not counted in `functions_loaded` (ADR-0024).
       security:
         - adminToken: []
       requestBody:
