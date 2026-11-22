@@ -120,7 +120,8 @@ The methods keep Ruby semantics and do not change: `"  a   b  ".trim()` is still
 ### Logical functions and operators (ADR-0018 D-8, ADR-0029)
 Every condition follows one rule, the `IF` rule (ADR-0029 Amendment 1): `TRUE`/`FALSE` as they
 are, a number (or Currency) is true when it is not 0, `NULL` is false, and text, a date, an array
-or a JSON object is an error (`#VALUE!`). The rule applies to `IF`, `IFS`, `? :`, the `AND`, `OR`,
+or a JSON object is an error (`#VALUE!`), and NaN from a host variable is an error (`#NUM!`; it
+was TRUE in `IF`). The rule applies to `IF`, `IFS`, `? :`, the `AND`, `OR`,
 `&&`, `||`, `NOT` and `!` operators, the `filter`/`find`/`FILTER`/`FIND` lambdas and lambda
 criteria in `COUNTIF`/`SUMIF`/`AVERAGEIF`. `IF` and `IFS` evaluate only the branch they pick, and
 the operators stop as soon as the left side decides the result.

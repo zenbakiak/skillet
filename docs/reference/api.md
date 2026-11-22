@@ -226,11 +226,13 @@ criteria of `COUNTIF`/`SUMIF`/`AVERAGEIF`.
 |---|---|
 | `TRUE`, `FALSE` | itself |
 | a number or Currency | `FALSE` when 0, otherwise `TRUE` |
+| NaN (only from a host variable or a custom function) | error: `<name> condition is not a number (#NUM!)` |
 | `NULL` (for example a missing key read with `&.`) | `FALSE` |
 | text (also `""`), a date, an array, a JSON object | error: `<name> condition must be TRUE, FALSE or a number, got string (#VALUE!)` |
 
 The `AND()`, `OR()` and `XOR()` functions are the exception: they skip a `NULL` argument, as
-Excel skips an empty cell (see [Logical Functions](#logical-functions)).
+Excel skips an empty cell (see [Logical Functions](#logical-functions)), and they count NaN as
+`TRUE`.
 
 ### Unary Operators
 - `+` - Positive (unary plus)

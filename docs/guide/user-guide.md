@@ -885,7 +885,8 @@ sk "=IF(AND(:score >= 90, :attendance > 0.8), \"A\", IF(:score >= 80, \"B\", \"C
 ```
 
 Every condition (`IF`, `? :`, `AND`/`OR`/`NOT`/`!`, `filter`/`find`) reads `TRUE`/`FALSE` as they
-are, a number as TRUE when it is not 0, and `NULL` as FALSE; text or a date is an error.
+are, a number as TRUE when it is not 0, and `NULL` as FALSE; text or a date is an error, and so
+is NaN passed in from a host variable (`#NUM!`).
 
 > **Warning.** The `AND(...)`, `OR(...)` and `XOR(...)` functions skip `NULL`, as Excel skips an
 > empty cell. So `AND(:u&.is_admin, :on)` is `true` when `is_admin` is missing. For flags that

@@ -10,7 +10,7 @@
 > **Amendment 1 (maintainer, 2026-11-22, BL-089):** every condition uses the `IF` rule (§4):
 > `? :`, the `AND`/`OR`/`&&`/`||` operators, `!`, the `filter`/`find`/`FILTER`/`FIND` lambdas and
 > lambda criteria in `COUNTIF`/`SUMIF`/`AVERAGEIF`. The `AND()`/`OR()`/`XOR()` builtins keep
-> ignoring `NULL`. `IF` with more than 3 arguments is an error. This replaces "Both sides must be
+> ignoring `NULL`. A NaN condition is a `#NUM!` error. `IF` with more than 3 arguments is an error. This replaces "Both sides must be
 > booleans" in §1, "When the left side is not a boolean, the right side is still evaluated" in §2,
 > and "`!` ... takes booleans only" in §3. Full text and the before/after table:
 > [Amendment 1](#amendment-1-maintainer-2026-11-22-bl-089) below.
@@ -172,13 +172,22 @@ read with the rule of §4 (`logical::condition`), unchanged:
 |---|---|
 | `TRUE`, `FALSE` | itself |
 | a Number or a Currency | `FALSE` when it is 0, `TRUE` otherwise (`2.5`, `-1`, `2::Currency`) |
+| NaN (a Number or Currency that is not a number) | error, Excel `#NUM!` |
 | `NULL` | `FALSE` (a blank cell, ADR-0006) |
 | text (also `""` and `"TRUE"`), a DateTime, an array (also `[]`), a JSON object | error, Excel `#VALUE!` |
 
 The error message is `<NAME> condition must be TRUE, FALSE or a number, got <type> (#VALUE!)`,
 with `<type>` from `type_name` (`string`, `datetime`, `array`, `json`). Currency counts as a number
 and a DateTime is an error, as §4 and "Where the Excel documentation was not clear" already say for
-`IF`.
+`IF`. Currency is listed separately only until BL-097 makes it a plain Number; the rule for it
+does not change then.
+
+**NaN** (maintainer, 2026-11-22): `<NAME> condition is not a number (#NUM!)`, worded like
+`ROUND num_digits is not a number (#NUM!)`. This is a change to `logical::condition` itself, so it
+also changes `IF`, `IFS` and `NOT` (they gave TRUE, TRUE and FALSE for NaN, because NaN is not 0).
+Expressions cannot make NaN (`0/0` is `#DIV/0!`, overflow is `#NUM!`); it reaches a condition only
+from a host variable or a custom function (`Value::Number(f64::NAN)`). For `NOT` and `!` the
+message is `NOT condition is not a number (#NUM!)`.
 
 #### A2. Where the rule applies
 | Form | `<NAME>` in the error | Notes |
@@ -220,6 +229,11 @@ that is `NULL` does not count as `FALSE`. The reference warns that `AND(:flag, �
 `:flag` is missing, and points to `IF`, the operators or an explicit comparison:
 `:u&.is_admin AND :on` is `FALSE`, `AND(:u&.is_admin == TRUE, :on)` is `FALSE`.
 
+NaN: the builtins read numbers through their own path (`logical_values`,
+`src/runtime/logical.rs:37` and `:47`, `*n != 0.0`), not through `logical::condition`. So the NaN
+decision does not reach them, and `AND(:n)`, `OR(:n, FALSE)` and `XOR(:n)` stay `TRUE` for a NaN
+`:n`. Making them `#NUM!` too would be a separate decision.
+
 #### A5. Precedence and positions do not change
 - The grammar does not change. `!` stays a tight unary and `NOT` stays the loose keyword (§3), so
   they now differ only in precedence: `!0 == FALSE` is `(!0) == FALSE`, that is
@@ -258,9 +272,10 @@ with `[10]` 10 or 0, `AVERAGEIF` with `[10]` 10 or `Error: AVERAGEIF: no matchin
 (#DIV/0!)`). `E` is the old type error: `Ternary condition must be boolean`, `Logical op on
 non-boolean`, `Unary '!' on non-boolean` or `<NAME> criteria expression must return TRUE or
 FALSE, got <type>`. `#V` is the condition error of A1 (or `NOT`'s and `AND`'s `#VALUE!`).
-**Bold** cells change.
+**Bold** cells change. The Currency columns hold until BL-097 makes Currency a plain Number; after
+it they are the `2` and `0` cases.
 
-| Form | `TRUE` | `FALSE` | `NULL` | `0` | `1` | `2.5` | `"a"` | `""` | `2::Currency` | `0::Currency` | `DATE(2026,1,1)` | `[1]` |
+| Form | `TRUE` | `FALSE` | `NULL` | `0` | `1` | `2.5` | `"a"` | `""` | `2::Currency` (until BL-097) | `0::Currency` (until BL-097) | `DATE(2026,1,1)` | `[1]` |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 | `IF(c, "T", "F")`, `IFS(c, "T", TRUE, "F")` | T | F | F | F | T | T | #V | #V | T | F | #V | #V |
 | `NOT c`, `NOT(c)` | F | T | T | T | F | F | #V | #V | F | T | #V | #V |
@@ -282,6 +297,20 @@ FALSE, got <type>`. `#V` is the condition error of A1 (or `NOT`'s and `AND`'s `#
 After the change every row above the builtins reads its column the same way, the A1 rule:
 `T F F F T T #V #V T F #V #V` (negated for `NOT` and `!`, and fixed by the left side for
 `FALSE AND c` and `TRUE OR c`).
+
+NaN column. `sk` cannot make NaN, so this was run through the library (`evaluate_with`) with
+`:n` = `Value::Number(f64::NAN)`; `Value::Currency(f64::NAN)` gives the same results. `#N` is
+`<NAME> condition is not a number (#NUM!)`.
+
+| Form | `:n` = NaN |
+|---|---|
+| `IF(:n, "T", "F")`, `IFS(:n, "T", TRUE, "F")` | **T → #N** |
+| `NOT :n`, `NOT(:n)` | **F → #N** |
+| `:n ? "T" : "F"`, `:n AND TRUE`, `TRUE AND :n`, `:n AND FALSE`, `:n OR FALSE`, `!(:n)` | **E → #N** |
+| `FALSE AND :n`, `TRUE OR :n` | F, T (right side not evaluated) |
+| `[:n].filter(:x)`, `FILTER([:n], :x)`, `[:n].find(:x)`, `FIND([:n], :x)` | **F → #N** |
+| `COUNTIF([:n], :x)`, `SUMIF([:n], :x, [10])`, `AVERAGEIF([:n], :x, [10])` | **E → #N** |
+| `AND(:n, TRUE)`, `OR(:n, FALSE)`, `XOR(:n)` (builtins, A4) | T (unchanged) |
 
 Other changed results:
 
