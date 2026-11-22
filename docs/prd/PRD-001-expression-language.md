@@ -37,6 +37,7 @@ spreadsheet cell references (`A1`).
 | FR-10 | Comments and free whitespace | `tests/comments_and_whitespace_tests.rs` |
 | FR-11 | Errors carry a message and, when known, a source position | `src/error.rs` |
 | FR-12 | Custom functions: the entry point decides. `evaluate_with_custom`, `evaluate_with_json_custom` and the assignment entry points see registered functions in every sub-expression; `evaluate` and `evaluate_with` see none (ADR-0016) | `tests/custom_functions.rs` |
+| FR-13 | Text form of values (ADR-0034): one form per type wherever a value becomes text (`::String`, `.to_s()`, `CONCAT`, `&`, `JOIN`, `.join()`, `TEXTJOIN`, `LEN`, `FIND`). Numbers with 15 significant digits (`0.1 + 0.2` is `0.3`; integers below 2^53 exact; `1E+21` outside 1e-7..1e15), `TRUE`/`FALSE`, `NULL` as empty text, dates as ISO 8601 UTC, an array or object as its JSON text. `&` is `BinaryOp::Concat`. String `.length()` counts characters | `tests/text_forms.rs` (BL-091) |
 
 ## Non-functional requirements
 | ID | Requirement |

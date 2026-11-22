@@ -1,5 +1,9 @@
 # 0030. Structured and shared values: `Value::Object`, and `Arc`-shared strings, arrays and objects
 
+> **Amended by [ADR-0034](0034-text-form-of-values.md) (2026-11-22):** the text of a single
+> Number (decision d, last paragraph) is ADR-0034 §2; `CONCAT` of an object is its JSON text (E5);
+> an array's text is its JSON text (E15). Decisions b and d's JSON number rule stand.
+
 - Status: Accepted (2026-11-21, with decisions a–d)
 - Date: 2026-11-21
 - Deciders: Maintainer (accepts), Language Designer and Performance Engineer (authors), Rust Engineer

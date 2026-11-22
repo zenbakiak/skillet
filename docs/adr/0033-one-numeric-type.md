@@ -1,5 +1,8 @@
 # 0033. One numeric type; `::Currency` is a conversion
 
+> **Amended by [ADR-0034](0034-text-form-of-values.md) (2026-11-22):** the text form of a
+> number is 15 significant digits (ADR-0034 §2), not Rust's shortest round-trip text.
+
 - Status: Accepted
 - Date: 2026-11-22
 - Deciders: Maintainer

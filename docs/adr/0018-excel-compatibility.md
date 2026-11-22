@@ -1,5 +1,10 @@
 # 0018. Excel compatibility: Excel is the contract for builtins and operators
 
+> **Amended by [ADR-0034](0034-text-form-of-values.md) (2026-11-22):** numbers become text with
+> 15 significant digits, as in Excel; the "Number to text" difference (X-7) is now only the
+> switch to scientific notation and exact integers below 2^53. Lowercase methods keep Ruby
+> semantics except the text form of values (`TRUE.to_s()` is `"TRUE"`).
+
 - Status: Accepted; amended by ADR-0023 (`%` percent vs modulo, number coercion in arithmetic)
 - Date: 2026-11-21
 - Deciders: Maintainer
