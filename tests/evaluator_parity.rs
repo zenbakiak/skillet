@@ -361,6 +361,11 @@ const LITERALS_AND_OPERATORS: &[&str] = &[
     "[1, 2, 3, 4, 5][:2]",
     "[1, 2, 3, 4, 5][2:]",
     "SUM(...[1, 2, 3])",
+    // Spread in array literals (ADR-0005 amendment 1, BL-106)
+    "[0, ...[1, 2, 3], 4]",
+    "[...[]]",
+    "[...[1, [2, 3]]]",
+    "[...[1], ...['a', NULL]].length()",
     // ObjectLiteral / PropertyAccess / SafePropertyAccess
     "{\"a\": 1, \"b\": \"x\"}",
     "{}",
@@ -525,6 +530,10 @@ const WITH_VARIABLES: &[&str] = &[
     // Spread of variable
     "SUM(...:arr)",
     "MAX(...:arr, 100)",
+    "[0, ...:arr, 6]",
+    "[...:empty, ...:words]",
+    "[...:arr.map(:x * 2)].sum()",
+    "[...:nil.to_a(), 1]",
     // Methods on variables
     ":s.upper()",
     ":s.lower().length()",
@@ -652,6 +661,8 @@ const CUSTOM_FUNCTIONS: &[&str] = &[
     "TRIPLE(1, 2)",
     "TRIPLE(TRIPLE(2))",
     "UPPER(GREET('x'))",
+    "[...[TRIPLE(1)], TRIPLE(2)]",
+    "TRIPLE(...[4])",
 ];
 
 #[test]
@@ -675,6 +686,9 @@ const ERRORS: &[&str] = &[
     "FILTER(5, :x > 1)",
     "MAP('str', :x)",
     "{\"a\": 1}.missing",
+    "[...NULL]",
+    "[...5]",
+    "[...'ab']",
 ];
 
 #[test]

@@ -35,6 +35,8 @@ Check these first. They change results without an error:
 15. **`SUBSTITUTE` with an instance number**, **`SORT(…, -1)`** and **`DB`** now follow Excel:
    `SUBSTITUTE("a-a-a", "-", "_", 2)` replaces only the second match, `SORT([2, 1], -1)` sorts
    descending, and `DB` rounds the rate to 3 decimals.
+16. **`::Array` on a string** splits it into characters, as `.to_a()` (BL-105): `"ab"::Array` is
+   `["a","b"]` (was `["ab"]`). Write `[:s]` for a one-item array.
 
 ## Expressions
 
@@ -281,6 +283,7 @@ builds.
 | `"x" & {"a": 1}`, `CONCAT("x", {"a": 1})` | `"x"` | `"x{\"a\":1.0}"` |
 | `[{"a": 1}].join()`, `TEXTJOIN(",", TRUE, {"a": 1})` | `Error` | `"{\"a\":1.0}"` |
 | `"héllo".length()`, `"héllo".len()` | `6` (bytes) | `5` (characters, as `LEN`) |
+| `"hello"::Array`, `""::Array` (BL-105) | `["hello"]`, `[""]` | `["h","e","l","l","o"]`, `[]` (characters, as `.to_a()`); keep the old result with `["hello"]` or `[:s]` |
 | `__CONCAT__("a", 1)` | `"a1"` (internal name of `&`) | `Error: Unknown function: __CONCAT__` |
 
 `(0.1 + 0.2)::String::Float` is now `0.3`, not `0.1 + 0.2`; `"1E+21"::Integer` is `1` (use
@@ -374,6 +377,12 @@ comparisons (ADR-0027, ADR-0031); they are replaced by this one and do not ship.
 These used to fail with `Unknown function` or a parse error: `STDEV.P`, `STDEV.S`, `STDEV`,
 `VAR.P`, `VAR.S`, `VAR`, `MODE.SNGL`, `MODE`, `PERCENTILE.INC`, `PERCENTILE`, `QUARTILE.INC`,
 `QUARTILE`, `COUNTA`, `LEN`, `TODAY`, `PPMT`, `PV`, `NPV`, `TEXTJOIN`, `AVERAGEIF`, `DATEDIF`.
+
+### Spread in array literals (additive, ADR-0005 amendment 1)
+`[0, ...:xs]` used to be a parse error; it now builds an array, with the same rules as spread in
+argument lists: `[0, ...[1, 2], 3]` is `[0, 1, 2, 3]`, and a non-array operand is
+`Spread expects array` (use `.to_a()` for `NULL` or a string). Rust code that walks
+`Expr::Array` items may now meet `Expr::Spread` there.
 
 ### Null equality (ADR-0013)
 | Expression | 0.6 | 0.7 |

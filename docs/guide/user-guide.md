@@ -1516,8 +1516,9 @@ Skillet's conversion methods follow Ruby conventions for intuitive behavior:
 2. **Boolean to Number**: `true` → 1, `false` → 0
 3. **Empty Values to Boolean**: Empty strings and arrays become `false`
 4. **Null Safety**: `null` converts to safe defaults for all types
-5. **String Arrays**: `.to_a()` splits a string into characters (`"hi".to_a()` → `["h", "i"]`);
-   the `::Array` cast does not (`"hi"::Array` → `["hi"]`)
+5. **String Arrays**: `.to_a()` and the `::Array` cast split a string into characters
+   (`"hi".to_a()` and `"hi"::Array` → `["h", "i"]`; `""` → `[]`). They differ on `null`:
+   `null.to_a()` is `[]`, `null::Array` is `[null]`
 
 ### Method Name Variants
 
@@ -1700,15 +1701,31 @@ sk "=(0.1 + 0.2)::Currency"    # 0.3
 
 ### Spread Operator
 
+`...expr` spreads an array into a function's argument list or into an array literal. The items
+are added one level deep, in order (no flattening).
+
 ```bash
 # Function calls with spread
 sk "=SUM(...[1, 2, 3, 4, 5])"              # 15
 sk "=MAX(...:scores)" scores=[85,92,78,90]  # 92
 
-# Spread works in argument lists only, not inside an array literal
-sk "=MERGE([0], [1, 2, 3], 4)"             # [0, 1, 2, 3, 4]
-sk "=[0, ...[1, 2, 3], 4]"                 # Error: Unexpected token: Ellipsis at position 5
+# Array literals with spread
+sk "=[0, ...[1, 2, 3], 4]"                 # [0, 1, 2, 3, 4]
+sk "=[0, ...:xs, 4]" xs=[1,2,3]            # [0, 1, 2, 3, 4]
+sk "=[0, ...[], 1]"                        # [0, 1]
 ```
+
+The operand must be an array. `NULL`, numbers, booleans, dates, strings and objects give the
+error `Spread expects array`, in argument lists and array literals alike. Convert explicitly
+with `.to_a()` (`NULL.to_a()` is `[]`, `"ab".to_a()` is `["a", "b"]`):
+
+```bash
+sk "=[...:none.to_a(), 1]" none=null       # [1]
+sk "=[...NULL]"                            # Error: Spread expects array
+```
+
+Spread is allowed only in argument lists and array literals: `{a: ...[1]}`, `1 + ...[1]` and a
+spread on its own are parse errors.
 
 ### Object Literals
 

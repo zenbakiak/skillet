@@ -112,8 +112,8 @@ What is charged:
 - every lambda iteration (`filter`, `map`, `find`, `reduce`, `SUMIF`, `AVGIF`, `COUNTIF`, in method
   and function form), at the cost of the item it binds;
 - **copying variable reads**: a variable used as a function argument, an array or object element,
-  an assignment value, a ternary or `IF` branch, a spread, or a lambda result is copied, so it is
-  charged `cost(value)`.
+  an assignment value, a ternary or `IF` branch, a spread (in an argument list or an array
+  literal), or a lambda result is copied, so it is charged `cost(value)`.
 
 What is free:
 

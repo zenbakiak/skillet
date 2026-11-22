@@ -240,7 +240,7 @@ TRUE ? 1 : 1/0             # 1
 ### Special Operators
 - `&.` - Safe navigation operator
 - `::` - Type casting operator
-- `...` - Spread operator
+- `...` - Spread operator (in argument lists and array literals)
 
 ### Precedence
 Tightest first, as in Excel. Operators on the same row are left-associative.
@@ -1405,7 +1405,8 @@ An unknown type name is `Error: Unknown cast type at position N`, N being where 
 - `Float` - Convert to float
 - `String` - Convert to string
 - `Boolean` - Convert to boolean
-- `Array` - Convert to array
+- `Array` - Convert to array: a string splits into characters, as `.to_a()` (`""` is `[]`); an
+  array stays as it is; any other value, `NULL` included, becomes a one-item array
 - `Currency` - Round to 4 decimals; the result is a Number (ADR-0033)
 - `DateTime` - Convert to datetime
 - `Json` - Convert to JSON
@@ -1416,7 +1417,9 @@ An unknown type name is `Error: Unknown cast type at position N`, N being where 
 42 :: String                 # "42"
 1 :: Boolean                 # true
 0 :: Boolean                 # false
-"hello" :: Array             # ["hello"] (a scalar becomes a one-item array)
+"hello" :: Array             # ["h", "e", "l", "l", "o"] (one item per character, as .to_a())
+"héllo" :: Array             # ["h", "é", "l", "l", "o"] (characters, not bytes)
+5 :: Array                   # [5] (any other scalar becomes a one-item array)
 ```
 
 ### Number conversions
@@ -1523,9 +1526,12 @@ The `::Json` cast and the server responses still write a DateTime as its Unix se
 ```
 
 ### Spread Operator
+Allowed in function argument lists and array literals (ADR-0005 amendment 1). The operand
+must be an array (otherwise `Spread expects array`); its items are added one level deep.
 ```bash
 ...array                     # Spread array elements
 # Example: SUM(...[1,2,3])  # Same as SUM(1,2,3)
+[0, ...[1, 2], 3]            # [0, 1, 2, 3]
 ```
 
 ### Object Literals

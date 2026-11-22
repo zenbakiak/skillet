@@ -419,6 +419,41 @@ fn c1_c4_cost_model_boundaries() {
     );
 }
 
+/// ADR-0005 amendment 1 S5: spread in an array literal adds no charge of its own. The operand
+/// is charged where it is evaluated (the inner literal at its result site, a variable read as a
+/// copy) and the result `32 + 32 per item` at the array literal's result site.
+#[test]
+fn bl106_array_spread_cost_model_boundaries() {
+    let want = Value::Array((0..4).map(|i| Value::Number(i as f64)).collect());
+    // 96 (inner `[1, 2]`) + 160 (result, 4 items) = 256.
+    assert_eq!(
+        with_limits(limits(256), || evaluate("[0, ...[1, 2], 3]")),
+        Ok(want)
+    );
+    assert_eq!(
+        with_limits(limits(255), || evaluate("[0, ...[1, 2], 3]"))
+            .unwrap_err()
+            .message,
+        "Evaluation budget exceeded (max 255 bytes)"
+    );
+    // Same arithmetic as argument-list spread: 96 + 32 = 128.
+    assert!(with_limits(limits(128), || evaluate("SUM(...[1, 2])")).is_ok());
+    assert!(with_limits(limits(127), || evaluate("SUM(...[1, 2])")).is_err());
+    // A host variable (not charged on entry): 128 for the copying read + 128 for the result.
+    let mut vars = HashMap::new();
+    vars.insert(
+        "xs".to_string(),
+        Value::Array((1..=3).map(|i| Value::Number(i as f64)).collect()),
+    );
+    assert!(with_limits(limits(256), || evaluate_with_custom("[...:xs]", &vars)).is_ok());
+    assert_eq!(
+        with_limits(limits(255), || evaluate_with_custom("[...:xs]", &vars))
+            .unwrap_err()
+            .message,
+        "Evaluation budget exceeded (max 255 bytes)"
+    );
+}
+
 #[test]
 fn c5_inner_scope_cannot_raise_outer_budget() {
     let err = with_limits(limits(1000), || {
@@ -831,6 +866,7 @@ fn bl027c_peak_heap_stays_within_twice_the_budget() {
             }),
         ),
         ("to_a on a 1 MB string", format!("{one_mb}.to_a()")),
+        ("::Array on a 1 MB string", format!("{one_mb}::Array")),
         (
             "to_json on 1 MB of \\x01",
             format!("{}.to_json()", big_string("\u{1}", 1000)),
@@ -936,6 +972,10 @@ fn bl027e_reads_that_escape_into_a_result_are_charged() {
         ("ternary branch", format!("{s}[{}]", x8("true ? :s : 0"))),
         ("IF branch", format!("{s}[{}]", x8("IF(true, :s, 0)"))),
         ("spread into CONCAT", format!("{a}CONCAT({})", x8("...:a"))),
+        (
+            "spread into an array literal",
+            format!("{a}[{}]", x8("...:a")),
+        ),
         ("nested assignment", format!("{s}[{}]", x8("(:b := :s)"))),
         ("sequence of assignments", {
             let assigns: Vec<String> = (0..8).map(|i| format!(":v{i} := :s")).collect();
