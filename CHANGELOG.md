@@ -19,6 +19,8 @@ Planned as 0.7.0. It contains breaking changes, marked **BREAKING** below; the
 lists each one with the old and the new result.
 
 ### Added
+- `benches/per_item.rs` (`cargo bench --bench per_item`): per-item cost of `ROUND`/`.round()` and
+  `AND`/`OR`/`XOR` on 100k numbers, with `&&` and `:x * 1` as controls (BL-088, #127).
 - `skillet::is_volatile(&Expr)`: TRUE when the expression reads the clock anywhere inside it
   (`NOW()`, `TODAY()`, `DATE()`/`TIME()` with no arguments) (BL-085, #122).
 - `skillet::charge_variables(&vars)` charges a variable map to the current evaluation budget;
@@ -89,6 +91,57 @@ lists each one with the old and the new result.
 - `sk_http_bench --expr` selects the expression for the sweep (#80).
 
 ### Changed
+- **BREAKING:** one text form per value type (ADR-0034, BL-091, #129; see
+  [values as text](https://github.com/zenbakiak/skillet/blob/develop/docs/guide/migration-0.7.md#values-as-text-adr-0034)).
+  `::String`, `.to_s()`, `CONCAT`, `&`, `JOIN`, `.join()`, `TEXTJOIN`, `LEN`/`FIND` and
+  `.to_json()` write the same text for the same value. Compared with 0.6.3:
+  - A number has 15 significant digits, as Excel shows it: `"Total: " & 3*0.1` is `"Total: 0.3"`
+    (was `"Total: 0.30000000000000004"`) and `LEN(0.1+0.2)` is 3 (was 19). Integers below 2^53
+    are exact; scientific notation below 1e-7 and from 1e15 (`1e21::String` is `"1E+21"`); `-0`
+    is `"0"`.
+  - Booleans are `TRUE`/`FALSE` in `.to_s()` and `.join()` (were `true`/`false`); they stay
+    `true`/`false` inside JSON text.
+  - An array is its JSON text, the same as `.to_json()`: `["a",1,TRUE,NULL]::String` is
+    `"[\"a\",1,true,null]"` (was Rust `Debug` output such as `[String("a"), Number(1.0), …]`).
+    Numbers inside keep full precision.
+  - A JSON object is its JSON text in `CONCAT`, `&`, `TEXTJOIN` and `.join()` (was dropped or an
+    error).
+  - `.to_json()` writes integral numbers without `.0`: `5.to_json()` is `Json("5")` (was
+    `Json("5.0")`).
+  - `.length()`/`.len()` count characters: `"héllo".length()` is 5 (was 6, bytes).
+  - `__CONCAT__(…)` is an unknown function (it was the internal name of `&`).
+- **BREAKING** (Rust API): `&` parses to `Expr::Binary(_, BinaryOp::Concat, _)` (was
+  `Expr::FunctionCall { name: "__CONCAT__", … }`), so an exhaustive `match` on `BinaryOp` needs a
+  `Concat` arm (ADR-0034, BL-091, #129; see
+  [Rust API](https://github.com/zenbakiak/skillet/blob/develop/docs/guide/migration-0.7.md#rust-api)).
+- Date to text is 3.5–11x faster for years 0000–9999 (written directly instead of through
+  chrono): `map(:x::String)` on 100k dates takes 5.3 ms (was 23.4 ms) and `.join(",")` 2.1 ms (was
+  22.8 ms) (BL-091, #129).
+- **BREAKING:** dates in aggregates, sorting and criteria (ADR-0031 amendment 2, BL-090, #128;
+  see [dates in aggregates](https://github.com/zenbakiak/skillet/blob/develop/docs/guide/migration-0.7.md#dates-in-aggregates-sorting-and-criteria-adr-0031-amendment-2-bl-090)).
+  Functions that pick or order values accept dates and compare them by instant; functions that do
+  arithmetic reject them with `#VALUE!`. Compared with 0.6.3:
+  - `MIN`/`MAX` of dates give the earliest or latest DateTime: `MAX(DATE(2026,1,1),
+    DATE(2027,1,1))` is 2027-01-01 (was 0). `SORT`, `.sort()`, `.min()`, `.max()` and `BETWEEN`
+    accept dates (were errors).
+  - `SUM`, `PRODUCT`, `AVERAGE`, `MEDIAN`, `MODE.SNGL`, `STDEV.*`, `VAR.*`, `PERCENTILE.INC`,
+    `QUARTILE.INC` and summed `SUMIF`/`AVERAGEIF` values are `… does not accept dates (#VALUE!)`
+    (dates were skipped silently). Dates mixed with numbers in `MIN`/`MAX`/`SORT` are
+    `cannot compare dates with numbers`.
+  - `COUNTIF`/`SUMIF`/`AVERAGEIF` criteria compare a DateTime or ISO 8601 text by instant, so
+    `COUNTIF(r, ">" & DATE(2026,6,1))` counts the later dates (was 0); ISO text items in the range
+    compare as dates. Integer text stays a number and wildcard text is never a date.
+  - Some error messages change: `SORT expects numbers, dates, text or booleans`, `sort expects an
+    array of numbers or of dates`.
+- **BREAKING:** `.round([digits])` is `ROUND`: half away from zero on the 15-digit decimal form
+  (ADR-0018, BL-088, #127; see
+  [builtins](https://github.com/zenbakiak/skillet/blob/develop/docs/guide/migration-0.7.md#builtins-that-now-match-excel-adr-0018)).
+  `1.005.round(2)` is 1.01 (was 1.0) and `0.285.round(2)` is 0.29 (was 0.28); about 3% of
+  two-decimal halves change. `1e307.round(5)` is 1e307 (was inf), `(2.5).round(NULL)` is 3 (was
+  an error), and `(2.5).round(1, 2)` is an error (the extra argument was ignored).
+- `ROUND` is about 3x faster on large arrays (26.9 to 8.2 ms on 100k numbers) with bit-identical
+  results, and `AND()`/`OR()`/`XOR()` no longer allocate per call (11–14% faster in row filters).
+  `.round()` is 6–7% slower than before because it now rounds like `ROUND` (BL-088, #127).
 - **BREAKING:** one condition rule for every form (ADR-0029 amendment 1, BL-089, #120; see
   [logical functions](https://github.com/zenbakiak/skillet/blob/develop/docs/guide/migration-0.7.md#logical-functions-and-operators-adr-0018-d-8-adr-0029)).
   `IF`, `IFS`, `? :`, the `AND`/`OR`/`&&`/`||` operators, `NOT` and `!`, the
@@ -277,7 +330,8 @@ lists each one with the old and the new result.
   - `MOD` takes the sign of the divisor, `TRIM` collapses inner spaces, `ROUND` accepts negative
     digits, `CEILING`/`FLOOR` round to a significance, `SUBSTITUTE` honours `instance_num`, and
     `SORT(arr, -1)` sorts descending.
-  - Methods (`.trim()`, `.round()`, `.int()`, …) keep Ruby semantics.
+  - Methods (`.trim()`, `.round()`, `.int()`, …) keep Ruby semantics. Since #127 `.round()` is
+    `ROUND` (see above).
 - **BREAKING:** Errors instead of 0, NaN or infinity (ADR-0018 D-1, ADR-0015): `x/0`, `0^0`,
   `SQRT(-1)`, `MOD(n, 0)`, `POWER(0, 0)`, empty `AVERAGE`/`MEDIAN`/…, arguments of the wrong type,
   NaN or out-of-range percentiles, and any non-finite operator result (#83).
