@@ -3,9 +3,10 @@
 //! JSON escaping can make a response up to 6x larger than the value it carries (`\u0001`),
 //! and serializing it happens after the evaluation budget has ended. The servers size the
 //! response first, without allocating, and return the budget error instead of building a
-//! response larger than the budget. Shared by `sk_http_server` and `sk_server`.
+//! response larger than the budget (the server's configured one, ADR-0011 amendment 4). Shared
+//! by `sk_http_server` and `sk_server`.
 
-use skillet::{Value, MAX_EVAL_BYTES};
+use skillet::Value;
 use std::fmt::Write;
 
 /// Upper bound on the bytes `value` takes in a JSON response.
@@ -16,15 +17,22 @@ pub fn json_size(value: &Value, nested_debug: bool) -> u64 {
     size(value, nested_debug, 0)
 }
 
-/// `Err(budget error text)` when a response of `bytes` would exceed the budget.
-pub fn check(bytes: u64) -> Result<(), String> {
-    if bytes > MAX_EVAL_BYTES {
-        Err(format!(
-            "Evaluation budget exceeded (max {} MB)",
-            MAX_EVAL_BYTES / (1024 * 1024)
-        ))
+/// `Err(budget error text)` when a response of `bytes` would exceed the budget `max`.
+pub fn check(bytes: u64, max: u64) -> Result<(), String> {
+    if bytes > max {
+        Err(budget_error(max))
     } else {
         Ok(())
+    }
+}
+
+/// The evaluator's budget error text: `max N MB` for whole MiB, otherwise `max N bytes`.
+fn budget_error(max: u64) -> String {
+    const MIB: u64 = 1024 * 1024;
+    if max >= MIB && max % MIB == 0 {
+        format!("Evaluation budget exceeded (max {} MB)", max / MIB)
+    } else {
+        format!("Evaluation budget exceeded (max {max} bytes)")
     }
 }
 
@@ -105,10 +113,34 @@ mod tests {
 
     #[test]
     fn check_uses_the_budget_text() {
-        assert!(check(MAX_EVAL_BYTES).is_ok());
+        let max = skillet::MAX_EVAL_BYTES;
+        assert!(check(max, max).is_ok());
         assert_eq!(
-            check(MAX_EVAL_BYTES + 1).unwrap_err(),
+            check(max + 1, max).unwrap_err(),
             "Evaluation budget exceeded (max 256 MB)"
         );
+        assert_eq!(
+            check(1 << 31, 1 << 30).unwrap_err(),
+            "Evaluation budget exceeded (max 1024 MB)"
+        );
+        assert_eq!(
+            check(1001, 1000).unwrap_err(),
+            "Evaluation budget exceeded (max 1000 bytes)"
+        );
+    }
+
+    /// Same text as the evaluator's own budget error for the same limit.
+    #[test]
+    fn budget_text_matches_the_evaluator() {
+        for max in [160, 1000, 1024 * 1024, 3 * 1024 * 1024 + 1, 1 << 30] {
+            let mut limits = skillet::EvalLimits::default();
+            limits.max_bytes = max;
+            // Pre-charged 1.6 GB before it allocates (ADR-0011 A7).
+            let (a, b) = ("a".repeat(40_000), "b".repeat(40_000));
+            let src = format!("SUBSTITUTE(\"{a}\", \"a\", \"{b}\")");
+            let err = skillet::with_limits(limits, || skillet::evaluate(&src));
+            let err = err.map(|_| ()).unwrap_err();
+            assert_eq!(err.message, budget_error(max), "{max}");
+        }
     }
 }

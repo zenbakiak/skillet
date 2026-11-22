@@ -14,6 +14,7 @@ use http_server::cache::return_pooled_buffer;
 use http_server::conn_limit::{self, Admission, ConnLimiter};
 use http_server::daemon::{setup_signal_handlers, wake_address};
 use http_server::eval::{handle_cache_clear, handle_eval_get, handle_eval_post, handle_health};
+use http_server::eval_limits;
 #[cfg(feature = "plugins")]
 use http_server::js_management::{
     handle_delete_js, handle_list_js, handle_reload_hooks, handle_update_js, handle_upload_js,
@@ -196,7 +197,9 @@ fn main() {
         bind_host,
         thread_count,
         max_conns_per_ip,
+        eval_limits: limits,
     } = parse_args(&args[2..]);
+    eval_limits::install(limits);
 
     // Apply intelligent token logic
     let token_config = TokenConfig::new(auth_token, admin_token);
@@ -316,6 +319,21 @@ fn too_many_connections(max: usize) -> String {
     )
 }
 
+/// Start-up lines for the configured evaluation limits and the worst-case memory they allow.
+fn print_eval_limits(thread_count: usize) {
+    let limits = eval_limits::server_limits();
+    eprintln!(
+        "⏱️  Eval timeout: {} (--eval-timeout or SKILLET_EVAL_TIMEOUT)",
+        eval_limits::describe_timeout(&limits)
+    );
+    eprintln!(
+        "💾 Eval budget: {} per evaluation, up to about {} with {} threads (--max-eval-bytes or SKILLET_MAX_EVAL_BYTES)",
+        eval_limits::describe_bytes(limits.max_bytes),
+        eval_limits::describe_bytes(limits.max_bytes.saturating_mul(thread_count as u64)),
+        thread_count
+    );
+}
+
 fn print_usage() {
     eprintln!("Usage: sk_http_server <port> [options]");
     eprintln!();
@@ -336,6 +354,17 @@ fn print_usage() {
     eprintln!("                       Open connections allowed from one IP address; more get");
     eprintln!("                       429 (or set SKILLET_MAX_CONNECTIONS_PER_IP; the flag wins).");
     eprintln!("                       Default: no limit");
+    eprintln!(
+        "  --eval-timeout <s>   Wall-clock limit for one evaluation, in whole seconds (or set"
+    );
+    eprintln!("                       SKILLET_EVAL_TIMEOUT; the flag wins). Default: 60");
+    eprintln!("  --max-eval-bytes <n> Budget of values one evaluation may create, in bytes; K, M,");
+    eprintln!(
+        "                       G mean KiB, MiB, GiB (or set SKILLET_MAX_EVAL_BYTES; the flag"
+    );
+    eprintln!(
+        "                       wins). Default: 1G. Worst-case memory is about threads x this"
+    );
     eprintln!();
     eprintln!("Requests with a body must send Content-Type: application/json (415 otherwise);");
     eprintln!("/upload-js and /update-js also accept multipart/form-data.");
@@ -366,6 +395,7 @@ struct ServerArgs {
     bind_host: String,
     thread_count: usize,
     max_conns_per_ip: Option<usize>,
+    eval_limits: skillet::EvalLimits,
 }
 
 fn exit_with(message: &str) -> ! {
@@ -392,8 +422,11 @@ fn parse_args(args: &[String]) -> ServerArgs {
         bind_host: "127.0.0.1".to_string(),
         thread_count: num_cpus::get(),
         max_conns_per_ip: None,
+        eval_limits: eval_limits::defaults(),
     };
     let mut max_conns_flag: Option<String> = None;
+    let mut timeout_flag: Option<String> = None;
+    let mut bytes_flag: Option<String> = None;
     let mut i = 0;
 
     while i < args.len() {
@@ -416,6 +449,10 @@ fn parse_args(args: &[String]) -> ServerArgs {
             "--admin-token" => parsed.admin_token = Some(flag_value(args, &mut i, "a value")),
             "--cors-origin" => parsed.cors_origin = Some(flag_value(args, &mut i, "an origin")),
             conn_limit::FLAG => max_conns_flag = Some(flag_value(args, &mut i, "a number")),
+            eval_limits::TIMEOUT_FLAG => {
+                timeout_flag = Some(flag_value(args, &mut i, "a number of seconds"))
+            }
+            eval_limits::BYTES_FLAG => bytes_flag = Some(flag_value(args, &mut i, "a size")),
             other => exit_with(&format!("Unknown argument: {other}")),
         }
         i += 1;
@@ -445,6 +482,9 @@ fn parse_args(args: &[String]) -> ServerArgs {
     }
     parsed.max_conns_per_ip =
         conn_limit::resolve(max_conns_flag.as_deref()).unwrap_or_else(|e| exit_with(&e));
+    // Same rules: the flag wins; 0, empty or invalid stops start-up (ADR-0011 amendment 4).
+    parsed.eval_limits = eval_limits::resolve(timeout_flag.as_deref(), bytes_flag.as_deref())
+        .unwrap_or_else(|e| exit_with(&e));
     parsed
 }
 
@@ -484,6 +524,7 @@ fn handle_daemon_mode(
     if token_config.admin_token.is_some() {
         eprintln!("Admin token auth: enabled");
     }
+    print_eval_limits(thread_count);
 
     // Print warnings before daemonizing
     token_config.print_warnings();
@@ -565,6 +606,8 @@ fn print_startup_messages(
             Some(origin) => eprintln!("🌍 CORS: Access-Control-Allow-Origin: {}", origin),
             None => eprintln!("🌍 CORS: off (no token, no --cors-origin)"),
         }
+
+        print_eval_limits(thread_count);
 
         // Print security warnings
         token_config.print_warnings();

@@ -4,6 +4,7 @@ pub mod conn_limit;
 pub mod cors;
 pub mod daemon;
 pub mod eval;
+pub mod eval_limits;
 #[cfg(feature = "plugins")]
 pub mod js_management;
 #[cfg(feature = "plugins")]

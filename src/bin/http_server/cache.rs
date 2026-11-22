@@ -6,24 +6,14 @@ use std::sync::{Arc, Mutex};
 
 use skillet::{
     evaluate_parsed_with_assignments, evaluate_parsed_with_assignments_and_context,
-    evaluate_parsed_with_custom, with_limits, EvalLimits, Value,
+    evaluate_parsed_with_custom, with_limits, Value,
 };
 
+use super::eval_limits::server_limits;
 use super::parse_cache::parsed;
-
-/// Wall-clock limit for one evaluation (ADR-0011): 6x the slowest realistic workload measured
-/// and well below the 30 s socket read timeout. No flag or env var on purpose.
-pub const SERVER_EVAL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Largest entry the cache stores: key + result + variable context, by the budget cost model.
 const MAX_CACHE_ENTRY_BYTES: u64 = 64 * 1024;
-
-/// Limits for every server evaluation: default budget plus [`SERVER_EVAL_TIMEOUT`].
-pub fn server_limits() -> EvalLimits {
-    let mut limits = EvalLimits::default();
-    limits.timeout = Some(SERVER_EVAL_TIMEOUT);
-    limits
-}
 
 /// Same cost model as the evaluation budget (32 per value + string bytes, arrays sum items).
 fn approx_size(value: &Value) -> u64 {
