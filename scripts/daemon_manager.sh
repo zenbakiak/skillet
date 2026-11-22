@@ -36,6 +36,8 @@ detect_platform() {
 
 PLATFORM=$(detect_platform)
 SERVICE_NAME="skillet-server"
+# Compose service name in docker-compose.yml (BL-063).
+DOCKER_SERVICE="skillet-http"
 
 # Command functions for different platforms
 systemd_start() {
@@ -102,23 +104,23 @@ launchd_disable() {
 }
 
 docker_start() {
-    docker-compose up -d skillet-server
+    docker-compose up -d $DOCKER_SERVICE
 }
 
 docker_stop() {
-    docker-compose stop skillet-server
+    docker-compose stop $DOCKER_SERVICE
 }
 
 docker_restart() {
-    docker-compose restart skillet-server
+    docker-compose restart $DOCKER_SERVICE
 }
 
 docker_status() {
-    docker-compose ps skillet-server
+    docker-compose ps $DOCKER_SERVICE
 }
 
 docker_logs() {
-    docker-compose logs -f skillet-server
+    docker-compose logs -f $DOCKER_SERVICE
 }
 
 docker_enable() {
@@ -127,7 +129,7 @@ docker_enable() {
 }
 
 docker_disable() {
-    docker-compose stop skillet-server
+    docker-compose stop $DOCKER_SERVICE
     print_success "Docker service stopped and won't auto-restart"
 }
 
@@ -254,7 +256,7 @@ install_daemon() {
             ;;
         docker)
             print_status "Building and starting Docker container..."
-            docker-compose up -d --build skillet-server
+            docker-compose up -d --build $DOCKER_SERVICE
             print_success "Docker container deployed"
             ;;
         pm2)
@@ -336,8 +338,8 @@ case "${1:-help}" in
                 ;;
             docker)
                 echo "Management commands:"
-                echo "  docker-compose up/down/restart skillet-server"
-                echo "  docker-compose logs -f skillet-server"
+                echo "  docker-compose up/down/restart $DOCKER_SERVICE"
+                echo "  docker-compose logs -f $DOCKER_SERVICE"
                 ;;
             pm2)
                 echo "Management commands:"
