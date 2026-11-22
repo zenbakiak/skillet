@@ -724,6 +724,30 @@ docker run -p 127.0.0.1:8080:8080 -e SKILLET_AUTH_TOKEN skillet-server
 echo '{"expression": "=2+3*4", "variables": null}' | nc 127.0.0.1 8080
 ```
 
+## Result cache (`sk_http_server`)
+
+`sk_http_server` keeps up to 1,000 results, least recently used evicted first, shared by all
+workers. A request with the same key gets the stored result without evaluating again.
+
+- **Key**: the expression text, every variable (name and value), and whether `include_variables`
+  is set. With `include_variables` the entry also holds the assigned variables; without it, it
+  does not, so the two requests use different entries. `output_json` and the list of selected
+  variable names are applied to the stored entry, so they are not in the key.
+- **Not cached**: errors (including budget and deadline errors), entries over 64 KiB
+  ([limits](limits.md#result-cache)), and every expression that reads the clock: `NOW()`,
+  `TODAY()`, and `DATE()` or `TIME()` with no arguments, anywhere in the expression, including
+  inside `IF`, other calls and method lambdas (BL-085). `=NOW()` is evaluated on every request.
+- **Custom functions**: results that call JavaScript hooks are cached like any other.
+  `/reload-hooks` clears the cache ([hook files](#javascript-hook-files-sk_http_server)), so an
+  updated hook is used at once after a reload. A hook that returns a different value each time
+  (it reads `Date.now()` or `Math.random()`) is still cached; send `DELETE /cache` or avoid
+  such hooks.
+- **Limits**: the evaluation limits are set at start-up and the cache lives in the same process,
+  so every stored result was computed under the limits in force. They are not in the key.
+
+`GET /health` reports the cache as `cache_stats` (hits, misses, entries, evictions).
+`DELETE /cache` clears it.
+
 ## Parse cache
 
 `sk_server` and `sk_http_server` parse an expression once per worker thread and reuse the parsed
