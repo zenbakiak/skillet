@@ -79,8 +79,8 @@ TRUE + 1       # 2
 "a" + "b"      # Error: Cannot convert "a" to a number (#VALUE!)   (use & to join text)
 ```
 
-`+` never joins text; `&` does. A DateTime operand keeps the date rules below and is not coerced
-(`DATE(2026, 1, 1) + "1"` and `DATE(2026, 1, 1) + NULL` are errors).
+`+` never joins text; `&` does. With a DateTime or Currency operand, the other operand converts
+the same way (ADR-0027); the date and currency rules are below.
 
 The scalar math builtins convert numeric text and booleans the same way: `ABS`, `SQRT`, `INT`,
 `MOD`, `POWER`, `ROUND`, `CEILING`, `FLOOR`, the arguments of the financial functions (`PMT`,
@@ -100,9 +100,38 @@ DATE(2026, 3, 1) - 1                   # DateTime for 2026-02-28
 DATE(2026, 1, 1) + 0.5                 # DateTime for 2026-01-01 12:00 (rounded to the second)
 DATE(2026, 1, 1) + TIME(12, 0, 0)      # DateTime for 2026-01-01 12:00 (TIME is a day fraction)
 DATE(2026, 3, 1) - DATE(2026, 2, 1)    # 28 (days; fractional when times differ)
+DATE(2026, 1, 1) + NULL                # DateTime for 2026-01-01 (NULL is 0 days)
+DATE(2026, 1, 1) + "1"                 # DateTime for 2026-01-02 (numeric text and booleans convert)
+DATE(2026, 1, 1) + "x"                 # Error: Cannot convert "x" to a number (#VALUE!)
 ```
 
-Other operators on a DateTime (`*`, `/`, `DateTime + DateTime`, `Number - DateTime`) are an error.
+Other operators on a DateTime (`*`, `/`, `%`, `^`, `DateTime + DateTime`, `x - DateTime`) are an
+error, and so is a Currency operand (`DATE(2026, 1, 1) + 1::Currency`): money is not a number of
+days.
+
+Currency works in the arithmetic operators (ADR-0027). The other operand converts as for a
+number (numeric text, booleans, `NULL` as 0):
+
+| Operation | Result |
+|---|---|
+| `+`, `-`, `*` with a Currency operand | Currency |
+| `/` with one Currency operand | Currency |
+| `Currency / Currency` | Number (a ratio) |
+| `^` or `%` (modulo) with a Currency operand | Number |
+| unary `-` on Currency, percent suffix on Currency | Currency |
+
+```bash
+10::Currency + 2               # Currency(12)
+3 * 10::Currency               # Currency(30)
+10::Currency / 4::Currency     # 2.5
+2::Currency ^ 2                # 4
+-(5::Currency)                 # Currency(-5)
+10::Currency + "2"             # Currency(12)
+1::Currency / 3                # Currency(0.333…): not rounded; use ROUND(x, 2)
+```
+
+Currency is a tagged `f64` (ADR-0003): the operators do not round to cents. Comparisons do not
+change: `1 == 1::Currency` is `FALSE`. Unary `+` on Currency is still an error.
 
 The arithmetic operators never produce NaN or infinity (BL-054, ADR-0018). Division or `%` by 0
 and `0 ^` a negative number are `Error: Division by zero (#DIV/0!)`; `0 ^ 0` and any result that
