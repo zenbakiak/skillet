@@ -186,6 +186,11 @@ pub fn exec_logical(name: &str, args: &[Value]) -> Result<Value, Error> {
                     None,
                 ));
             }
+            // Three dates compare by instant (ADR-0031 amendment 2, B6); any other mix keeps
+            // the number rule.
+            if let [Value::DateTime(min), Value::DateTime(max), Value::DateTime(value)] = args {
+                return Ok(Value::Boolean(value >= min && value <= max));
+            }
             let min = args[0]
                 .as_number()
                 .ok_or_else(|| Error::new("BETWEEN min must be a number", None))?;
