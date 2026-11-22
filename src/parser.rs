@@ -304,8 +304,10 @@ impl<'a> Parser<'a> {
         Ok((node, depth))
     }
 
-    /// Zero or more postfix `%` after an operand. A `%` followed by something that starts an
-    /// operand stays the binary modulo operator (`10 % 3`, `:a % :b`), as before D-10.
+    /// Zero or more postfix `%` after an operand. A `%` directly followed by something that
+    /// starts an operand stays the binary modulo operator (`10 % 3`, `:a % :b`, `10 % (3)`);
+    /// before anything else, including `+` and `-`, it is the percent suffix (`10%-3` is -2.9,
+    /// BL-066).
     fn parse_percent_suffix(&mut self, (mut node, mut depth): (Expr, usize)) -> Parsed {
         while matches!(self.lookahead, Token::Percent) && !self.percent_is_modulo() {
             self.bump()?;
@@ -336,8 +338,6 @@ impl<'a> Parser<'a> {
                     | Token::LParen
                     | Token::LBracket
                     | Token::LBrace
-                    | Token::Minus
-                    | Token::Plus
                     | Token::Bang
             ),
             Err(_) => false,
