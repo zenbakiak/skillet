@@ -124,10 +124,10 @@ fn exec_number_method(
         "floor" => Ok(Value::Number(num.floor())),
         // The same function as `ROUND` (BL-088): half away from zero on the 15-digit form.
         "round" => {
-            let round = crate::runtime::arithmetic::round;
+            let round = crate::runtime::arithmetic::round_to;
             match args_expr {
-                [] => round("round", &[Value::Number(num)]),
-                [digits] => round("round", &[Value::Number(num), eval_arg(digits, ctx)?]),
+                [] => round("round", num, None),
+                [digits] => round("round", num, Some(&eval_arg(digits, ctx)?)),
                 _ => Err(Error::new("round expects ([num_digits])", None)),
             }
         }
