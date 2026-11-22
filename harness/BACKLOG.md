@@ -1311,6 +1311,12 @@ Settings for the maintainer (GitHub → Settings → Rules → Rulesets, and Set
   `DATEDIF`, as the maintainer decided.
 - PERF-6: refresh `benches/BASELINE.md`; record that the +10-18% parse cost from #82 is accepted.
 - REL-10: AGENTS.md, README and role-file drift.
+- ADR-0024 still lists `__CONCAT__` among the reserved internal operator names; since #129 (ADR-0034)
+  `&` is `BinaryOp::Concat` and `__CONCAT__` is an unknown function.
+- Candidate from ADR-0034 (out of scope there): `impl Display for Value` with the ADR-0034 text
+  form, for embedders. Additive; needs a short note or ADR amendment, not a breaking change.
+- CHANGELOG: add a "Testing" heading for #125 (BL-087: golden values, no-plugins run, slow-test
+  CI, env-clean servers), which has no entry today. Maintainer: do it in the release-notes pass.
 
 ### BL-085 · Result cache serves stale results · P2 · `done` (PR #122; new `skillet::is_volatile`) · rust-engineer
 SEC-2. The HTTP result cache returns old values for volatile builtins (`NOW()`, `TODAY()`, `RAND`)
@@ -1333,7 +1339,7 @@ Migration-guide row (some large requests now fail with the budget error).
   env vars for test servers.
 - QA-7, QA-8: `--fast` skips the 10 s JS test; loosen tight wall-clock bounds.
 
-### BL-088 · Per-item costs on big arrays · P2 · `in-progress` (lane perf88) · performance-engineer → rust-engineer
+### BL-088 · Per-item costs on big arrays · P2 · `done` (PR #127; `benches/per_item.rs`; follow-up BL-101) · performance-engineer → rust-engineer
 - PERF-1: `ROUND()` is 3.6x slower (formats and re-parses every number) and disagrees with
   `.round()` (`ROUND(1.005,2)` = 1.01, `1.005.round(2)` = 1.0). Fast path with a tie-only fallback.
   Decision (maintainer): `.round()` follows `ROUND`.
@@ -1355,13 +1361,13 @@ is, 0 false, other numbers true, NULL false, text `#VALUE!`. It applies to `IF`,
 than 3 arguments is an error.
 NaN as a condition is a `#NUM!` error (maintainer, 2026-11-22).
 
-### BL-090 · Dates in aggregates, sort and criteria · P2 · `in-progress` (lane dates90) · language-designer → rust-engineer
+### BL-090 · Dates in aggregates, sort and criteria · P2 · `done` (PR #128, ADR-0031 amendment 2) · language-designer → rust-engineer
 LANG-5, LANG-6. `MAX`/`MIN`/`SUM` of dates return 0 silently; no sort accepts dates; ISO date text is
 read only by `::DateTime`, so `COUNTIF(r, ">" & DATE(...))` matches nothing.
 Decision (maintainer): `MAX`/`MIN`/sort accept dates, `SUM` of dates is an error, criteria parse
 ISO date text.
 
-### BL-091 · One text form per value type · P2 · `in-progress` (lane text91; ADR-0034 being written) · language-designer → rust-engineer
+### BL-091 · One text form per value type · P2 · `done` (PR #129, ADR-0034 Accepted; follow-up BL-103) · language-designer → rust-engineer
 LANG-7, LANG-8, REL-8, LANG-12. Currency has four text forms and `&`/`CONCAT` print float noise
 (`0.30000000000000004`); `[DATE(..)]::String` prints Rust Debug output; `&` is an internal
 `__CONCAT__` call that formulas can call and that shows in the public AST; `"héllo".length()`
@@ -1371,7 +1377,7 @@ node. The Currency text form is moot: BL-097 removes the Currency type.
 Also PERF-4 from BL-088: date to text is 2x slower (chrono re-parses the pattern; `.to_s()`/`CONCAT`
 format twice).
 
-### BL-092 · API changes that are cheap only in 0.7.0 · P2 · `ready` · rust-engineer
+### BL-092 · API changes that are cheap only in 0.7.0 · P2 · `in-progress` (lane api92) · rust-engineer
 REL-4. Decision (maintainer): deprecate `Value::Json` (ADR-0030 step 2) and `Value::Currency`
 (BL-097) in 0.7.0, not 0.7.x, and add `#[non_exhaustive]` to `Value`, `Token`, `Expr` and `BinaryOp`.
 `Value::Currency` is deprecated since #119; the rest is open.
@@ -1429,3 +1435,20 @@ growth on Linux (macOS keeps freed memory counted, so the BL-086 numbers may ove
 New public functions from #122 (`skillet::is_volatile`) and #124 (`skillet::charge_variables`).
 Add a short note to ADR-0021 (parsed-expression API) or to the Rust API section of the migration
 guide.
+
+### BL-101 · Builtin dispatch cost per call · P2 · `todo` · performance-engineer → rust-engineer
+From BL-088: every builtin call uppercases its name (an allocation), does a SipHash lookup and a
+memcmp, and builds an argument `Vec`; every method call lowercases its name. On 100k numbers
+`ROUND()` takes 8.2 ms against 5.5 ms for `.round()`, and `AND()` 9.5 ms against 3.7 ms for `&&`.
+Resolve names at parse time, or use a static perfect hash with a case-insensitive compare.
+Measure with `benches/per_item.rs`.
+
+### BL-102 · CEILING/FLOOR snap within 1e-9 · P3 · `todo` · language-designer
+`CEILING(1.0000000001)` is 1, `.ceil()` is 2, and Excel gives 2 (its 15-digit rule). Decide
+whether `CEILING`/`FLOOR` keep the 1e-9 snap, follow Excel's 15 significant digits, or match the
+methods; record the decision in ADR-0018 and the excel-compat page.
+
+### BL-103 · Nested arrays in CLI and server output use Rust Debug · P2 · `todo` · language-designer → rust-engineer
+Wire format, needs a decision. `sk.rs`, `sk_server.rs` and `http_server/response_size.rs` print a
+nested array in JSON output with `Debug` (ADR-0034 "Out of scope"). Recommendation: the ADR-0034
+JSON text form. Migration-guide row under Servers if it changes.
