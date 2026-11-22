@@ -12,7 +12,7 @@ release workflow; see [installation](../guide/installation.md).
 | File | Purpose |
 |---|---|
 | `Dockerfile.alpine-builder` | Multi-stage build: `builder` (Debian `rust:latest` + `musl-tools`), `binaries` (scratch image with `/binaries/sk*`), `runtime-test` (`ruby:3.4.8-alpine` with the binaries) |
-| `scripts/build_alpine_binaries.sh` | Builds the `binaries` stage and copies the binaries to `dist/alpine/` |
+| `scripts/build_alpine_binaries.sh` | Builds the `binaries` stage for aarch64 and x86_64 and copies the binaries to `dist/alpine/<arch>/` |
 | `.dockerignore.alpine` | Docker context used by the script (swapped in for `.dockerignore` during the build) |
 | `examples/Dockerfile.ruby-alpine-example` | Full Rails + Skillet example |
 
@@ -24,20 +24,22 @@ release workflow; see [installation](../guide/installation.md).
 bash scripts/build_alpine_binaries.sh
 ```
 
-This creates static binaries in `dist/alpine/`: `sk` (CLI), `sk_server` (TCP server), `sk_client`
-(TCP client), `sk_http_server` (HTTP API) and `sk_http_bench` (benchmark tool).
+This creates static binaries in `dist/alpine/aarch64/` and `dist/alpine/x86_64/`: `sk` (CLI),
+`sk_server` (TCP server), `sk_client` (TCP client), `sk_http_server` (HTTP API) and
+`sk_http_bench` (benchmark tool).
 
-Note: `Dockerfile.alpine-builder` currently builds for `aarch64-unknown-linux-musl` only, and the
-script tests the result with `--platform linux/arm64`. For x86_64 use the release-workflow
-artifact `skillet-linux-x86_64`, or change the target in the Dockerfile.
+`Dockerfile.alpine-builder` picks the musl target from the build platform
+(`docker build --platform linux/amd64` or `linux/arm64`), and the script builds and tests each one
+on its own platform. The arch that is not your host's runs under emulation, which is slow; build
+one arch only with `ALPINE_ARCHES=x86_64 bash scripts/build_alpine_binaries.sh` (or `aarch64`).
 
 ### 2. Test binaries
 
 ```bash
-docker run --rm -v $(pwd)/dist/alpine:/test ruby:3.4.8-alpine /test/sk "SUM(1,2,3,4,5)"
+docker run --rm -v $(pwd)/dist/alpine/x86_64:/test ruby:3.4.8-alpine /test/sk "SUM(1,2,3,4,5)"
 # Number(15.0)
 
-file dist/alpine/sk
+file dist/alpine/x86_64/sk
 # should report a statically linked ELF executable
 ```
 
@@ -344,7 +346,7 @@ Store binaries in your CI/CD artifacts or S3:
 
 ```bash
 # Create tarball
-tar -czf skillet-alpine-binaries.tar.gz -C dist/alpine .
+tar -czf skillet-alpine-binaries.tar.gz -C dist/alpine/x86_64 .
 
 # Upload to S3 (example)
 aws s3 cp skillet-alpine-binaries.tar.gz s3://your-bucket/skillet/
@@ -368,17 +370,17 @@ Test that binaries work correctly:
 
 ```bash
 # Basic evaluation
-docker run --rm -v $(pwd)/dist/alpine:/test ruby:3.4.8-alpine \
+docker run --rm -v $(pwd)/dist/alpine/x86_64:/test ruby:3.4.8-alpine \
   /test/sk "SUM(1, 2, 3, 4, 5)"
 # Number(15.0)
 
 # Array operations
-docker run --rm -v $(pwd)/dist/alpine:/test ruby:3.4.8-alpine \
+docker run --rm -v $(pwd)/dist/alpine/x86_64:/test ruby:3.4.8-alpine \
   /test/sk "[10,20,30].filter(:x > 15).sum()"
 # Number(50.0)
 
 # HTTP server
-docker run --rm -p 5074:5074 -v $(pwd)/dist/alpine:/test ruby:3.4.8-alpine \
+docker run --rm -p 5074:5074 -v $(pwd)/dist/alpine/x86_64:/test ruby:3.4.8-alpine \
   /test/sk_http_server 5074 --host 0.0.0.0
 
 # Test from another terminal
@@ -413,9 +415,9 @@ RUN apk add --no-cache \
 
 ### Architecture Mismatch
 
-`Dockerfile.alpine-builder` builds for `aarch64-unknown-linux-musl` (see the note under Quick
-start). Check what you have with `file dist/alpine/sk`; an x86_64 host needs the
-`skillet-linux-x86_64` release artifact or a changed `--target`.
+Use the `dist/alpine/<arch>/` directory that matches the image's platform. Check with
+`file dist/alpine/x86_64/sk`. A `docker build` of `Dockerfile.alpine-builder` without
+`--platform` builds for the host's arch.
 
 ### Build fails
 

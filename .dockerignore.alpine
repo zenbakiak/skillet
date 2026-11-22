@@ -22,5 +22,5 @@ logs/
 Thumbs.db
 
 # Large test/bench files (not needed for build)
-benches/
+# benches/ must stay: Cargo.toml declares [[bench]] targets (BL-062).
 performance_results/

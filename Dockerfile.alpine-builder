@@ -5,34 +5,43 @@
 # Using latest stable Rust (1.85+ required for edition2024)
 FROM rust:latest AS builder
 
-# Install musl cross-compilation tools for both x86_64 and aarch64
+# Install the musl toolchain (musl-gcc is native only, so each arch builds on its own platform)
 RUN apt-get update && apt-get install -y \
     musl-tools \
     musl-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Add musl target for native architecture
-RUN rustup target add aarch64-unknown-linux-musl
+# Arch comes from `docker build --platform linux/amd64|linux/arm64` (BuildKit sets TARGETARCH);
+# without BuildKit it falls back to the builder's own arch.
+ARG TARGETARCH
+RUN arch="${TARGETARCH:-$(dpkg --print-architecture)}" && \
+    case "$arch" in \
+        amd64) echo x86_64-unknown-linux-musl ;; \
+        arm64) echo aarch64-unknown-linux-musl ;; \
+        *) echo "unsupported arch: $arch" >&2; exit 1 ;; \
+    esac > /rust-target && \
+    rustup target add "$(cat /rust-target)"
 
 WORKDIR /build
 
-# Copy project files
+# Copy project files. benches/ is needed: Cargo.toml declares [[bench]] targets.
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
+COPY benches ./benches
 COPY openapi.yml ./openapi.yml
 
 # Build for musl with static linking
 # This allows binaries to run on Alpine Linux
 ENV RUSTFLAGS="-C target-feature=+crt-static"
 
-# Build for ARM64 musl
-RUN cargo build --release --target aarch64-unknown-linux-musl --bins && \
+RUN TARGET="$(cat /rust-target)" && \
+    cargo build --locked --release --target "$TARGET" --bins && \
     mkdir -p /build/target/release && \
-    echo "Copying ARM64 binaries..." && \
-    ls -lh /build/target/aarch64-unknown-linux-musl/release/ && \
+    echo "Copying $TARGET binaries..." && \
+    ls -lh "/build/target/$TARGET/release/" && \
     for binary in sk sk_server sk_client sk_http_server sk_http_bench; do \
-        if [ -f "/build/target/aarch64-unknown-linux-musl/release/$binary" ]; then \
-            cp "/build/target/aarch64-unknown-linux-musl/release/$binary" /build/target/release/; \
+        if [ -f "/build/target/$TARGET/release/$binary" ]; then \
+            cp "/build/target/$TARGET/release/$binary" /build/target/release/; \
             echo "✓ Copied $binary"; \
         else \
             echo "✗ Binary $binary not found"; \
