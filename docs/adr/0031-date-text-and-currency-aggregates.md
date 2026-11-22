@@ -96,7 +96,7 @@
 > This replaces "`SUMIF`/`AVERAGEIF` … are not part of this decision" in decision 3; the
 > statistical builtins (`MEDIAN`, `STDEV.*`, …) and the methods are still not part of it.
 
-> **Amendment 2 (Proposed, 2026-11-22, BL-090; audit LANG-5, LANG-6):** dates in the
+> **Amendment 2 (maintainer, 2026-11-22, BL-090; audit LANG-5, LANG-6):** dates in the
 > aggregates, in sorting and in criteria. The maintainer decided the direction on 2026-11-22:
 > `MAX`/`MIN` and every sort accept dates, `SUM` of dates is an error, and criteria read ISO date
 > text and compare dates by instant. The details below (mixes, the other aggregates, messages,
