@@ -140,7 +140,11 @@ fn main() {
                     std::process::exit(1);
                 }
             };
-            evaluate_with_assignments(expr, &vars)
+            // Charged like `evaluate_with_json_custom` does (ADR-0011 amendment 5).
+            skillet::with_limits(skillet::EvalLimits::default(), || {
+                skillet::charge_variables(&vars)?;
+                evaluate_with_assignments(expr, &vars)
+            })
         } else {
             skillet::evaluate_with_json_custom(expr, &json_str)
         }
