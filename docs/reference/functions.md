@@ -34,12 +34,12 @@ Methods (`:arr.sum()`), operators and the rest of the language: [api.md](api.md)
 
 | Function | Signature | Arity | Summary | Example | Result |
 |---|---|---|---|---|---|
-| `AND` | `AND(values…)` | 0+ | TRUE when every argument is truthy (TRUE or a non-zero number). | `AND(TRUE, 1)` | `TRUE` |
-| `OR` | `OR(values…)` | 0+ | TRUE when any argument is truthy. | `OR(FALSE, 1)` | `TRUE` |
-| `NOT` | `NOT(value)` | 1 | Negation of the argument's truthiness. | `NOT(0)` | `TRUE` |
-| `XOR` | `XOR(a, b)` | 2 | TRUE when exactly one argument is truthy. | `XOR(TRUE, FALSE)` | `TRUE` |
-| `IF` | `IF(condition, then, [else])` | 2-3 | `then` when `condition` is truthy, otherwise `else` (default FALSE). Only the chosen branch is evaluated. | `IF(1 > 0, 'yes', 'no')` | `"yes"` |
-| `IFS` | `IFS(condition, value, …)` | 2+ | Value of the first truthy condition; FALSE when none matches. Conditions are evaluated in order up to the first truthy one, and only its value is evaluated. | `IFS(FALSE, 'a', TRUE, 'b')` | `"b"` |
+| `AND` | `AND(logical…)` | 1+ | Excel `AND`: TRUE when every logical value is TRUE (numbers: non-zero). Text and NULL inside arrays are ignored; direct text, or no logical value at all, is an error. Every argument is evaluated. | `AND(TRUE, 1)` | `TRUE` |
+| `OR` | `OR(logical…)` | 1+ | Excel `OR`: TRUE when any logical value is TRUE. Same argument rules as `AND`; every argument is evaluated. | `OR(FALSE, 1)` | `TRUE` |
+| `NOT` | `NOT(logical)` | 1 | Excel `NOT`: FALSE for TRUE or a non-zero number, TRUE for FALSE, 0 or NULL; text is an error. Also a prefix keyword that binds looser than comparisons: `NOT :x > 1`. | `NOT(0)` | `TRUE` |
+| `XOR` | `XOR(logical…)` | 1+ | Excel `XOR`: TRUE when an odd number of the logical values are TRUE. Same argument rules as `AND`. | `XOR(TRUE, TRUE, TRUE)` | `TRUE` |
+| `IF` | `IF(condition, then, [else])` | 2-3 | `then` when `condition` is TRUE or a non-zero number, otherwise `else` (default FALSE). NULL is FALSE; a text condition is an error. Only the chosen branch is evaluated. | `IF(1 > 0, 'yes', 'no')` | `"yes"` |
+| `IFS` | `IFS(condition, value, …)` | 2+ | Value of the first TRUE condition (conditions as in `IF`); an error (`#N/A`) when none is TRUE. Conditions are evaluated in order up to the first TRUE one, and only its value is evaluated. | `IFS(FALSE, 'a', TRUE, 'b')` | `"b"` |
 | `BETWEEN` | `BETWEEN(min, max, value)` | 3 | TRUE when `min <= value <= max` (both bounds inclusive). All three arguments must be numbers. | `BETWEEN(10, 20, 15)` | `TRUE` |
 
 ## String
