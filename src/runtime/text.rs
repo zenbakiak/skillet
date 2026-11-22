@@ -261,6 +261,14 @@ pub(crate) fn to_text(v: &Value) -> Result<String, Error> {
     }
 }
 
+/// A string split into one string per character (Unicode scalar, ADR-0034 §5), for `.to_a()`
+/// and `::Array` (BL-105). `""` gives `[]`. Each item (48 + its bytes) is charged before building.
+pub(crate) fn string_chars(s: &str) -> Result<Vec<Value>, Error> {
+    let chars = s.chars().count() as u64;
+    limits::charge(32 + limits::STRING_COST * chars + s.len() as u64)?;
+    Ok(s.chars().map(|c| Value::String(c.to_string())).collect())
+}
+
 /// `CONCAT` of `args` (and `a & b`): each value's text, arrays flattened item by item, NULL
 /// adding nothing (ADR-0034 §3). Counted, charged, then built.
 pub(crate) fn concat<'a>(args: impl Iterator<Item = &'a Value> + Clone) -> Result<String, Error> {
