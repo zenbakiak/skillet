@@ -68,7 +68,7 @@ mod response_size;
 
 #[path = "http_server/request_limits.rs"]
 mod request_limits;
-use request_limits::{DeadlineReader, DeadlineWriter, MAX_REQUEST_SIZE};
+use request_limits::{close_after_reject, DeadlineReader, DeadlineWriter, MAX_REQUEST_SIZE};
 
 #[path = "http_server/token_eq.rs"]
 mod token_eq;
@@ -232,15 +232,6 @@ fn answer(line: &str, request_id: u64, server_token: &Option<String>) -> (EvalRe
         }
     }
     (process_request(req, request_id), Outcome::Work)
-}
-
-/// After rejecting a request, close so the client still receives the error: closing a socket
-/// with unread input sends a reset, which can discard the response before the client reads it.
-/// Send FIN, then discard input until the client closes or the request deadline passes.
-fn close_after_reject(stream: &TcpStream, reader: &mut DeadlineReader<'_>) {
-    let _ = stream.shutdown(std::net::Shutdown::Write);
-    let mut sink = [0u8; 8192];
-    while matches!(reader.read(&mut sink), Ok(n) if n > 0) {}
 }
 
 fn process_request(req: EvalRequest, request_id: u64) -> EvalResponse {

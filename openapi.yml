@@ -51,9 +51,11 @@ info:
 
     ## Request limits
     - A request (headers + body) may be at most 1 MB (1,048,576 bytes). A larger request, or a
-      `Content-Length` over 1 MB, gets HTTP 400 with `"error": "413 Payload Too Large"`.
+      `Content-Length` over 1 MB, gets HTTP 413 on any path.
     - The whole request must arrive within 30 s of the first read. Otherwise the server answers
-      HTTP 400 with `"error": "408 Request Timeout"`.
+      HTTP 408 on any path.
+    - After a 413 or 408 the server reads and discards the rest of the request until the client
+      closes or the 30 s pass, then closes, so the client receives the error.
     - Writing one response may take at most 10 s in total. If the client reads more slowly, the
       server stops writing and closes the connection: the client gets a body shorter than
       `Content-Length` and no error message. Reading the largest results (up to the 256 MiB
@@ -215,9 +217,6 @@ paths:
             `Expression nested too deeply (max 128)`, `Evaluation budget exceeded (max 256 MB)`
             (also returned when the serialized result would exceed the budget), or
             `Evaluation timed out (max 10 s)`. See docs/guide/limits.md.
-
-            Request limits also answer 400 (not 413 or 408): `413 Payload Too Large` when the
-            request is over 1 MB, `408 Request Timeout` when it takes more than 30 s to arrive.
           content:
             application/json:
               schema:
@@ -228,6 +227,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '408':
+          $ref: '#/components/responses/RequestTimeout'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
         '415':
           $ref: '#/components/responses/UnsupportedMediaType'
         '429':
@@ -287,12 +290,16 @@ paths:
                 example: "14"
         '400':
           description: |
-            Missing or invalid expression, an evaluation limit was hit, or a request limit was
-            hit (same texts as POST /eval). See docs/guide/limits.md.
+            Missing or invalid expression, or an evaluation limit was hit (same texts as
+            POST /eval). See docs/guide/limits.md.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '408':
+          $ref: '#/components/responses/RequestTimeout'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
         '429':
           $ref: '#/components/responses/TooManyConnections'
 
@@ -687,6 +694,28 @@ components:
           example:
             success: false
             error: "Too many connections from this address (max 2)"
+    PayloadTooLarge:
+      description: |
+        The request (headers + body) is over 1 MB, or its `Content-Length` is. Any path.
+        See "Request limits".
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error: "Request body too large (max 1MB)"
+    RequestTimeout:
+      description: |
+        The whole request did not arrive within 30 s of the first read. Any path.
+        See "Request limits".
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error: "Request read timed out (max 30 s)"
     UnsupportedMediaType:
       description: |
         The request has a body but its `Content-Type` is not `application/json` (or, on

@@ -19,7 +19,7 @@ documented in [limits](../guide/limits.md).
 Server request limits: both `sk_server` and `sk_http_server` reject a request over 1 MB, give a
 client 30 s in total to send one request, and give themselves 10 s in total to write one response
 (a client that reads more slowly gets a truncated response). `sk_http_server` answers the first two
-with HTTP 400 and `"error": "413 Payload Too Large"` or `"error": "408 Request Timeout"`. Both
+with HTTP 413 and HTTP 408 (400 before 0.7.0), then reads the rest of the request before closing. Both
 servers refuse to start with an empty token. `/upload-js`, `/update-js` and `/delete-js` accept
 only plain file names matching `[A-Za-z0-9_-]+.js` (HTTP 400 otherwise). In a build without the
 `plugins` feature, the JavaScript endpoints (`/upload-js`, `/update-js`, `/delete-js`, `/list-js`,

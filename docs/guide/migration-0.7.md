@@ -190,6 +190,7 @@ Each evaluation has a budget of 256 MB of created values, and the servers stop a
 | `sk_server` wrong or missing token | can retry on the same connection | `Unauthorized: invalid token`, then the connection closes |
 | `/upload-js`, `/update-js`, `/delete-js` file names | any path | only `[A-Za-z0-9_-]+.js`, otherwise 400 |
 | Writing one response | 10 s per socket write | 10 s in total; a slower reader gets a truncated response |
+| `sk_http_server` request over 1 MB / slower than 30 s | HTTP 400 with `"error": "413 Payload Too Large"` / `"408 Request Timeout"` | HTTP 413 / 408 with `"error"` set to the limit message, e.g. `Request body too large (max 1MB)`, `Request read timed out (max 30 s)` (BL-049) |
 
 Update clients first: send `Content-Type: application/json` on every `POST` and `PUT`, and set
 tokens on every deployment.

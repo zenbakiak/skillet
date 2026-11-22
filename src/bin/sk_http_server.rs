@@ -18,10 +18,11 @@ use http_server::js_management::{
     handle_delete_js, handle_list_js, handle_reload_hooks, handle_update_js, handle_upload_js,
 };
 use http_server::pid_file::write_pid_file;
+use http_server::request_limits::{close_after_reject, DeadlineReader};
 use http_server::stats::ServerStats;
 use http_server::utils::{
-    handle_cors_preflight, load_html_file, read_complete_http_request, send_http_error,
-    send_http_response,
+    handle_cors_preflight, load_html_file, read_complete_http_request, read_error_status,
+    send_http_error, send_http_response,
 };
 
 #[cfg(unix)]
@@ -36,25 +37,15 @@ fn handle_http_request(
     server_token: Arc<Option<String>>,
     server_admin_token: Arc<Option<String>>,
 ) {
-    // Read the complete HTTP request properly
-    let request = match read_complete_http_request(&mut stream) {
+    let mut reader = DeadlineReader::new(&stream);
+    let request = match read_complete_http_request(&mut reader) {
         Ok(req) => req,
         Err(e) => {
-            // Log error for debugging but don't panic
             eprintln!("HTTP request read error: {}", e);
-            // Send proper HTTP error response
-            let error_msg = match e.kind() {
-                std::io::ErrorKind::InvalidData => {
-                    if e.to_string().contains("too large") {
-                        "413 Payload Too Large"
-                    } else {
-                        "400 Bad Request"
-                    }
-                }
-                std::io::ErrorKind::TimedOut => "408 Request Timeout",
-                _ => "500 Internal Server Error",
-            };
-            send_http_error(&mut stream, 400, error_msg);
+            let (status, message) = read_error_status(&e);
+            send_http_error(&stream, status, &message);
+            // Unread input left at close would reset the connection and can drop the error.
+            close_after_reject(&stream, &mut reader);
             return;
         }
     };
@@ -68,7 +59,7 @@ fn handle_http_request(
     let request_line = lines[0];
     let parts: Vec<&str> = request_line.split_whitespace().collect();
     if parts.len() < 3 {
-        send_http_error(&mut stream, 400, "Bad Request");
+        send_http_error(&stream, 400, "Bad Request");
         return;
     }
 
@@ -83,11 +74,11 @@ fn handle_http_request(
     if let Err(message) =
         http_server::cors::check_browser_admin(path_only, &request, server_admin_token.is_some())
     {
-        send_http_error(&mut stream, 403, message);
+        send_http_error(&stream, 403, message);
         return;
     }
     if let Err(message) = http_server::cors::check_content_type(method, path_only, &request) {
-        send_http_error(&mut stream, 415, message);
+        send_http_error(&stream, 415, message);
         return;
     }
 
@@ -118,7 +109,7 @@ fn handle_http_request(
         }
         ("DELETE", "/cache") => handle_cache_clear(&mut stream, &request, server_admin_token),
         ("OPTIONS", _) => handle_cors_preflight(&mut stream),
-        _ => send_http_error(&mut stream, 404, "Not Found"),
+        _ => send_http_error(&stream, 404, "Not Found"),
     }
 }
 

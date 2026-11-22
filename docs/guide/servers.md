@@ -92,9 +92,11 @@ large result more slowly than that gets a truncated response with no error messa
 Details and measurements: [limits](limits.md#response-write-deadline-10-s).
 
 `sk_http_server` answers an oversized request (headers + body over 1 MB, or a `Content-Length`
-over 1 MB) and a request that takes more than 30 s to arrive with HTTP status **400** and
-`{"error":"413 Payload Too Large","success":false}` or
-`{"error":"408 Request Timeout","success":false}`. Evaluation limits (depth, budget, the 10 s
+over 1 MB) with HTTP status **413** and a request that takes more than 30 s to arrive with
+**408**, for example `{"error":"Request body too large (max 1MB)","success":false}` or
+`{"error":"Request read timed out (max 30 s)","success":false}` (both were 400 before 0.7.0).
+It reads the rest of the rejected request before closing, so the client gets the error rather
+than a connection reset. Evaluation limits (depth, budget, the 10 s
 evaluation deadline) are separate; see [limits](limits.md#server-request-limits-1-mb-30-s-10-s)
 for both, with captured output.
 
