@@ -5,8 +5,14 @@
 //! connect probe succeeds against whatever holds the port, often another test's server that
 //! is killed mid-request when that test ends (an empty response or a reset). So readiness is
 //! the server's own start-up line, printed after it has bound, never a connect probe.
+//!
+//! A server started here never inherits a `SKILLET_*` variable from the shell running the
+//! tests (BL-087, QA-4): an operator who exported `SKILLET_MAX_CONNECTIONS_PER_IP=1` or
+//! `SKILLET_MAX_EVAL_BYTES=1M` must not get red tests. A test that wants one sets it on the
+//! command with `.env(...)`.
 #![allow(dead_code)] // each test binary uses part of this module
 
+use std::ffi::OsString;
 use std::io::{BufRead, BufReader};
 use std::net::TcpStream;
 use std::process::{Child, Command, Stdio};
@@ -29,6 +35,26 @@ pub fn free_port() -> u16 {
         .port()
 }
 
+/// Removes every `SKILLET_*` variable the test process has from `command`'s environment,
+/// except those the command sets (or removes) itself.
+pub fn clear_inherited_skillet_env(command: &mut Command) -> &mut Command {
+    let own: Vec<OsString> = command.get_envs().map(|(k, _)| k.to_os_string()).collect();
+    for (key, _) in std::env::vars_os() {
+        if key.to_string_lossy().starts_with("SKILLET_") && !own.contains(&key) {
+            command.env_remove(&key);
+        }
+    }
+    command
+}
+
+/// `Command::new(bin)` without any inherited `SKILLET_*` variable, for a binary run outside
+/// [`ServerProcess`] (a daemon, `sk`).
+pub fn command_without_skillet_env(bin: &str) -> Command {
+    let mut command = Command::new(bin);
+    clear_inherited_skillet_env(&mut command);
+    command
+}
+
 /// A started server on its own port, killed on drop.
 pub struct ServerProcess {
     pub child: Child,
@@ -40,10 +66,12 @@ pub struct ServerProcess {
 impl ServerProcess {
     /// Runs `command(port)` on free ports until the server prints its start-up line. A server
     /// that exits first lost its port to another process; it is retried on a new one.
+    /// Inherited `SKILLET_*` variables are cleared (see the module docs).
     pub fn start(mut command: impl FnMut(u16) -> Command) -> ServerProcess {
         for _ in 0..5 {
             let port = free_port();
-            let mut child = command(port)
+            let mut command = command(port);
+            let mut child = clear_inherited_skillet_env(&mut command)
                 .stderr(Stdio::piped())
                 .spawn()
                 .expect("spawn server");

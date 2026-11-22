@@ -4,6 +4,9 @@
 //! A = must fail with the budget error, C = cost-model boundaries via `with_limits`,
 //! T = timeout. Attacks fail early by design, so every test here is cheap.
 
+mod common;
+
+use common::{ServerProcess, SLOW};
 use skillet::{
     evaluate, evaluate_with_assignments, evaluate_with_custom, evaluate_with_json_custom,
     with_limits, EvalLimits, Value, MAX_EVAL_BYTES,
@@ -461,38 +464,20 @@ fn defaults_and_scope_reset() {
 /// Server flags for the limits the server tests below were written for.
 const LIBRARY_LIMITS: [&str; 4] = ["--eval-timeout", "10", "--max-eval-bytes", "256M"];
 
-/// A server binary on a free 127.0.0.1 port, killed on drop.
-struct Server {
-    child: std::process::Child,
-    port: u16,
-}
+/// A server binary on its own 127.0.0.1 port, killed on drop (tests/common, BL-061).
+struct Server(ServerProcess);
 
 impl Server {
     fn spawn(bin: &str, args: impl Fn(u16) -> Vec<String>) -> Server {
-        let port = std::net::TcpListener::bind("127.0.0.1:0")
-            .unwrap()
-            .local_addr()
-            .unwrap()
-            .port();
         let hooks = std::env::temp_dir().join("skillet-eval-budget-no-hooks");
-        let child = std::process::Command::new(bin)
-            .args(args(port))
-            .env("SKILLET_HOOKS_DIR", hooks)
-            .env("SKILLET_BIND_HOST", "127.0.0.1")
-            .env_remove("SKILLET_AUTH_TOKEN")
-            .env_remove("SKILLET_ADMIN_TOKEN")
-            .env_remove("SKILLET_CORS_ORIGIN")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .expect("spawn server");
-        for _ in 0..200 {
-            if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(50));
-        }
-        Server { child, port }
+        Server(ServerProcess::start(|port| {
+            let mut cmd = std::process::Command::new(bin);
+            cmd.args(args(port))
+                .env("SKILLET_HOOKS_DIR", &hooks)
+                .env("SKILLET_BIND_HOST", "127.0.0.1")
+                .stdout(std::process::Stdio::null());
+            cmd
+        }))
     }
 
     /// `sk_http_server` with one worker, a 10 s deadline and the library's 256 MiB budget
@@ -519,8 +504,7 @@ impl Server {
     fn post(&self, body: &str) -> (String, Duration) {
         use std::io::{Read, Write};
         let start = std::time::Instant::now();
-        let mut s = std::net::TcpStream::connect(("127.0.0.1", self.port)).expect("connect");
-        s.set_read_timeout(Some(Duration::from_secs(60))).unwrap();
+        let mut s = self.0.connect();
         let req = format!(
             "POST /eval HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
             body.len(),
@@ -535,19 +519,11 @@ impl Server {
     /// Send one newline-delimited request to `sk_server`; returns the response line.
     fn send_line(&self, body: &str) -> String {
         use std::io::{BufRead, BufReader, Write};
-        let mut s = std::net::TcpStream::connect(("127.0.0.1", self.port)).expect("connect");
-        s.set_read_timeout(Some(Duration::from_secs(60))).unwrap();
+        let mut s = self.0.connect();
         s.write_all(format!("{body}\n").as_bytes()).unwrap();
         let mut line = String::new();
         let _ = BufReader::new(s).read_line(&mut line);
         line
-    }
-}
-
-impl Drop for Server {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
     }
 }
 
@@ -582,10 +558,9 @@ fn t1_server_times_out_and_frees_the_worker() {
         "{}",
         head(&resp)
     );
-    assert!(
-        took >= Duration::from_secs(10) && took < Duration::from_secs(20),
-        "{took:?}"
-    );
+    // The message proves the deadline fired, the lower bound that it did not fire early. The
+    // upper bound only guards against a hang (BL-087 QA-8; it was 20 s).
+    assert!(took >= Duration::from_secs(10) && took < SLOW, "{took:?}");
     // The single worker is free again.
     assert!(quick.0.starts_with("HTTP/1.1 200"), "{}", quick.0);
     assert!(quick.0.contains('5'), "{}", quick.0);
@@ -785,7 +760,11 @@ fn bl027c_lambda_over_uncharged_reads_meets_the_deadline() {
         r.map_err(|e| e.message),
         Err("Evaluation timed out (max 1 ms)".to_string())
     );
-    assert!(took < Duration::from_secs(2), "{took:?}");
+    // The error is the proof: with no clock read inside the loop, the evaluation would finish
+    // and return Ok. The time bound cannot tell the two apart since the comparisons borrow
+    // (BL-027d): the whole loop without a deadline takes ~0.4 s in debug, under the old 2 s
+    // bound. So the bound is now only a hang guard (BL-087 QA-8).
+    assert!(took < SLOW, "{took:?}");
 }
 
 /// The deadline is 1 ms, far below the work done (thousands of 1 MB comparisons), so the
@@ -808,7 +787,10 @@ fn bl027c_flat_uncharged_reads_meet_the_deadline() {
         r.map_err(|e| e.message),
         Err("Evaluation timed out (max 1 ms)".to_string())
     );
-    assert!(took < Duration::from_millis(500), "{took:?}");
+    // As above, the error is the proof (before F1 this returned `success: true`). The whole
+    // list without a deadline takes ~60 ms in debug, under the old 500 ms bound, so the bound
+    // could not catch F1 coming back and only added flake risk under load (BL-087 QA-8).
+    assert!(took < SLOW, "{took:?}");
 }
 
 /// F2 (fixed in BL-027d): heap allocated before the budget check must stay within ~2× the

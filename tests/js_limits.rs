@@ -4,11 +4,13 @@
 //! these cover the public library path, `sk`, and `sk_http_server`.
 #![cfg(feature = "plugins")]
 
+mod common;
+
+use common::{ServerProcess, SLOW};
 use skillet::js_plugin::JavaScriptFunction;
 use skillet::{CustomFunction, EvalLimits, Value};
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::net::TcpStream;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -54,8 +56,11 @@ fn deadline_stops_js_and_a_swallowed_error_still_times_out() {
         result.unwrap_err().message,
         "Evaluation timed out (max 200 ms)"
     );
+    // If the deadline did not reach into the hook, the 10 s per-call cap would stop it and the
+    // swallowed error would still end as this timeout, only later. So the bound sits just
+    // under the cap (it was 5 s; BL-087 QA-8): any time below it proves the deadline won.
     assert!(
-        started.elapsed() < Duration::from_secs(5),
+        started.elapsed() < Duration::from_secs(9),
         "{:?}",
         started.elapsed()
     );
@@ -94,11 +99,8 @@ fn sk_survives_deep_and_cyclic_hook_results() {
 
 const ADMIN: &str = "js-limits-admin";
 
-/// `sk_http_server` with one worker on a free 127.0.0.1 port, killed on drop.
-struct Server {
-    child: std::process::Child,
-    port: u16,
-}
+/// `sk_http_server` with one worker on its own 127.0.0.1 port, killed on drop (tests/common).
+struct Server(ServerProcess);
 
 impl Server {
     fn start(hooks: &Path) -> Server {
@@ -106,35 +108,20 @@ impl Server {
     }
 
     fn start_with(hooks: &Path, extra: &[&str]) -> Server {
-        let port = std::net::TcpListener::bind("127.0.0.1:0")
-            .unwrap()
-            .local_addr()
-            .unwrap()
-            .port();
-        let child = std::process::Command::new(env!("CARGO_BIN_EXE_sk_http_server"))
-            .args([&port.to_string(), "--threads", "1", "--admin-token", ADMIN])
-            .args(extra)
-            .env_remove("SKILLET_EVAL_TIMEOUT")
-            .env("SKILLET_HOOKS_DIR", hooks)
-            .env("SKILLET_BIND_HOST", "127.0.0.1")
-            .env_remove("SKILLET_AUTH_TOKEN")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .expect("spawn server");
-        for _ in 0..200 {
-            if TcpStream::connect(("127.0.0.1", port)).is_ok() {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(50));
-        }
-        Server { child, port }
+        Server(ServerProcess::start(|port| {
+            let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_sk_http_server"));
+            cmd.args([&port.to_string(), "--threads", "1", "--admin-token", ADMIN])
+                .args(extra)
+                .env("SKILLET_HOOKS_DIR", hooks)
+                .env("SKILLET_BIND_HOST", "127.0.0.1")
+                .stdout(std::process::Stdio::null());
+            cmd
+        }))
     }
 
     fn request(&self, method: &str, path: &str, body: &str) -> (String, Duration) {
         let started = Instant::now();
-        let mut s = TcpStream::connect(("127.0.0.1", self.port)).expect("connect");
-        s.set_read_timeout(Some(Duration::from_secs(60))).unwrap();
+        let mut s = self.0.connect();
         let req = format!(
             "{method} {path} HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {ADMIN}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
             body.len()
@@ -151,13 +138,6 @@ impl Server {
     }
 }
 
-impl Drop for Server {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
-
 fn status(resp: &str) -> &str {
     resp.split_whitespace().nth(1).unwrap_or("")
 }
@@ -171,10 +151,9 @@ fn server_deadline_stops_a_looping_hook_and_frees_the_worker() {
     let (resp, took) = server.eval("=JSLIMITSLOOP()");
     assert_eq!(status(&resp), "400", "{resp}");
     assert!(resp.contains("Evaluation timed out (max 2 s)"), "{resp}");
-    assert!(
-        took >= Duration::from_secs(2) && took < Duration::from_secs(20),
-        "{took:?}"
-    );
+    // The message proves the deadline, not the 10 s cap, stopped the hook; the lower bound
+    // that it did not fire early. The upper bound only guards against a hang (BL-087 QA-8).
+    assert!(took >= Duration::from_secs(2) && took < SLOW, "{took:?}");
     // The single worker is free again, and hostile results did not abort the process.
     for expr in ["=JSLIMITSDEEP()", "=JSLIMITSCYCLE()"] {
         let (resp, _) = server.eval(expr);
@@ -200,10 +179,9 @@ fn per_call_cap_stops_a_looping_hook_before_the_default_deadline() {
         resp.contains("JS function JSLIMITSLOOP timed out (max 10 s)"),
         "{resp}"
     );
-    assert!(
-        took >= Duration::from_secs(9) && took < Duration::from_secs(40),
-        "{took:?}"
-    );
+    // The message proves the cap, not the 20 s deadline, stopped the hook; the lower bound
+    // that it did not fire early. The upper bound only guards against a hang (BL-087 QA-8).
+    assert!(took >= Duration::from_secs(9) && took < SLOW, "{took:?}");
     let (resp, _) = server.eval("=2 + 3");
     assert_eq!(status(&resp), "200", "{resp}");
 }
@@ -222,5 +200,7 @@ fn upload_with_a_looping_example_answers() {
         resp.contains("JS function JSLIMITSUPLOAD timed out (max 10 s)"),
         "{resp}"
     );
-    assert!(took < Duration::from_secs(20), "{took:?}");
+    // Without the cap the example loops forever; the message proves the cap stopped it, so the
+    // bound only guards against a hang (BL-087 QA-8). The lower bound shows it was not skipped.
+    assert!(took >= Duration::from_secs(9) && took < SLOW, "{took:?}");
 }

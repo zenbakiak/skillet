@@ -15,7 +15,14 @@
 //! so the second side is now the public API. The `divergence_*` tests at the bottom keep the
 //! cases (D1-D5) where the old duplicate disagreed, as regression tests.
 //!
-//! To extend the corpus, add a string to the relevant table.
+//! Since BL-087 (QA-1) the public layer's outcome for every (expression, mode) pair is also
+//! pinned in `tests/golden/evaluator_parity.txt` (see `golden_values_for_the_whole_corpus`).
+//! The parity comparison stays: it is cheap, and it still guards the `src/lib.rs` wrappers
+//! (parse, limits, the global vs an explicit registry in custom mode) against drifting from
+//! the runtime entry points. The golden file is what catches a change in meaning.
+//!
+//! To extend the corpus, add a string to the relevant table, then run
+//! `UPDATE_GOLDEN=1 cargo test --test evaluator_parity golden` and commit the new lines.
 
 use skillet::runtime::evaluator;
 use skillet::{parse, CustomFunction, Error, FunctionRegistry, Value};
@@ -195,39 +202,7 @@ fn diverges(src: &str, mode: Mode) -> Option<String> {
         Ok(e) => e,
         Err(e) => panic!("corpus expression does not parse: {:?}: {}", src, e.message),
     };
-    let vars = fixture_vars();
-    let reg = local_registry();
-    ensure_global_registry();
-    let (runtime, public) = match mode {
-        Mode::Eval => (
-            run(|| evaluator::eval(&expr).map(|v| format!("{:?}", v))),
-            run(|| skillet::evaluate(src).map(|v| format!("{:?}", v))),
-        ),
-        Mode::Vars => (
-            run(|| evaluator::eval_with_vars(&expr, &vars).map(|v| format!("{:?}", v))),
-            run(|| skillet::evaluate_with(src, &vars).map(|v| format!("{:?}", v))),
-        ),
-        Mode::Custom => (
-            run(|| {
-                evaluator::eval_with_vars_and_custom(&expr, &vars, &reg).map(|v| format!("{:?}", v))
-            }),
-            run(|| skillet::evaluate_with_custom(src, &vars).map(|v| format!("{:?}", v))),
-        ),
-        Mode::Assign => (
-            run(|| evaluator::eval_with_assignments(&expr, &vars).map(|v| format!("{:?}", v))),
-            run(|| skillet::evaluate_with_assignments(src, &vars).map(|v| format!("{:?}", v))),
-        ),
-        Mode::Context => (
-            run(|| {
-                evaluator::eval_with_assignments_and_context(&expr, &vars)
-                    .map(|(v, ctx)| format!("{:?} | {}", v, sorted_vars(&ctx)))
-            }),
-            run(|| {
-                skillet::evaluate_with_assignments_and_context(src, &vars)
-                    .map(|(v, ctx)| format!("{:?} | {}", v, sorted_vars(&ctx)))
-            }),
-        ),
-    };
+    let (runtime, public) = layers(src, &expr, mode);
     if let (Outcome::Err(a), Outcome::Err(b)) = (&runtime, &public) {
         if a != b {
             eprintln!("[parity] {:?} {:?}: same outcome, different error messages: runtime={:?} public={:?}", mode, src, a, b);
@@ -240,6 +215,43 @@ fn diverges(src: &str, mode: Mode) -> Option<String> {
             "{:?} {:?}\n    runtime::evaluator : {:?}\n    public API         : {:?}",
             mode, src, runtime, public
         ))
+    }
+}
+
+/// The outcome of `src` through the runtime layer and through the public layer.
+fn layers(src: &str, expr: &skillet::Expr, mode: Mode) -> (Outcome, Outcome) {
+    let vars = fixture_vars();
+    let reg = local_registry();
+    ensure_global_registry();
+    match mode {
+        Mode::Eval => (
+            run(|| evaluator::eval(expr).map(|v| format!("{:?}", v))),
+            run(|| skillet::evaluate(src).map(|v| format!("{:?}", v))),
+        ),
+        Mode::Vars => (
+            run(|| evaluator::eval_with_vars(expr, &vars).map(|v| format!("{:?}", v))),
+            run(|| skillet::evaluate_with(src, &vars).map(|v| format!("{:?}", v))),
+        ),
+        Mode::Custom => (
+            run(|| {
+                evaluator::eval_with_vars_and_custom(expr, &vars, &reg).map(|v| format!("{:?}", v))
+            }),
+            run(|| skillet::evaluate_with_custom(src, &vars).map(|v| format!("{:?}", v))),
+        ),
+        Mode::Assign => (
+            run(|| evaluator::eval_with_assignments(expr, &vars).map(|v| format!("{:?}", v))),
+            run(|| skillet::evaluate_with_assignments(src, &vars).map(|v| format!("{:?}", v))),
+        ),
+        Mode::Context => (
+            run(|| {
+                evaluator::eval_with_assignments_and_context(expr, &vars)
+                    .map(|(v, ctx)| format!("{:?} | {}", v, sorted_vars(&ctx)))
+            }),
+            run(|| {
+                skillet::evaluate_with_assignments_and_context(src, &vars)
+                    .map(|(v, ctx)| format!("{:?} | {}", v, sorted_vars(&ctx)))
+            }),
+        ),
     }
 }
 
@@ -834,4 +846,126 @@ fn divergence_reduce_default_acc_param() {
 #[test]
 fn divergence_higher_order_custom_param_names() {
     assert_parity_each(DIV_HOF_CUSTOM_PARAM_NAMES);
+}
+
+// ---------------------------------------------------------------------------
+// Golden values (BL-087, QA-1). The parity tests above compare two layers that now share one
+// evaluator, so a change in what an expression means passes them. This test pins the public
+// layer's outcome (value, or error message) for every (expression, mode) pair of the corpus in
+// `tests/golden/evaluator_parity.txt`. A change in meaning fails here and shows up as a diff
+// line in review. When the change is intended, rewrite the file and commit it with the change:
+//
+//     UPDATE_GOLDEN=1 cargo test --test evaluator_parity golden
+// ---------------------------------------------------------------------------
+
+const GOLDEN_PATH: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/golden/evaluator_parity.txt"
+);
+
+/// Every (expression, mode) pair the parity tests evaluate, in a stable order, without repeats.
+fn golden_corpus() -> Vec<(&'static str, Mode)> {
+    let tables: &[(&[&str], &[Mode])] = &[
+        (LITERALS_AND_OPERATORS, ALL_MODES),
+        (BUILTINS, ALL_MODES),
+        (WITH_VARIABLES, ALL_VAR_MODES),
+        (ASSIGNMENTS, &[Mode::Assign, Mode::Context]),
+        (CUSTOM_FUNCTIONS, &[Mode::Custom]),
+        (ERRORS, ALL_MODES),
+    ];
+    let divergences: &[&[(&str, Mode)]] = &[
+        DIV_JQ_DIG,
+        DIV_HOF_WITHOUT_VARS,
+        DIV_REDUCE_DEFAULT_ACC,
+        DIV_HOF_CUSTOM_PARAM_NAMES,
+        DIV_EVAL_NO_VARS,
+    ];
+    let mut out: Vec<(&'static str, Mode)> = Vec::new();
+    let pairs = tables
+        .iter()
+        .flat_map(|(t, modes)| {
+            t.iter()
+                .flat_map(move |s| modes.iter().map(move |m| (*s, *m)))
+        })
+        .chain(divergences.iter().flat_map(|t| t.iter().copied()));
+    for (src, mode) in pairs {
+        if !out.iter().any(|(s, m)| *s == src && m.tag() == mode.tag()) {
+            out.push((src, mode));
+        }
+    }
+    out
+}
+
+impl Mode {
+    fn tag(self) -> &'static str {
+        match self {
+            Mode::Eval => "eval",
+            Mode::Vars => "vars",
+            Mode::Custom => "custom",
+            Mode::Assign => "assign",
+            Mode::Context => "context",
+        }
+    }
+}
+
+/// One line per pair: `<mode> <expression as a Rust string literal> => <outcome>`.
+fn golden_line(src: &str, mode: Mode) -> String {
+    let expr = parse(src).unwrap_or_else(|e| panic!("does not parse: {src:?}: {}", e.message));
+    let (_, public) = layers(src, &expr, mode);
+    let outcome = match public {
+        Outcome::Ok(v) => format!("Ok {v}"),
+        Outcome::Err(m) => format!("Err {m:?}"),
+        Outcome::Panic => "Panic".to_string(),
+    };
+    format!("{} {:?} => {}", mode.tag(), src, outcome)
+}
+
+#[test]
+fn golden_values_for_the_whole_corpus() {
+    let corpus = golden_corpus();
+    let mut actual = String::from(
+        "# Golden values for tests/evaluator_parity.rs (BL-087). Generated; do not edit by hand.\n\
+         # Rewrite: UPDATE_GOLDEN=1 cargo test --test evaluator_parity golden\n",
+    );
+    for (src, mode) in &corpus {
+        actual.push_str(&golden_line(src, *mode));
+        actual.push('\n');
+    }
+    if std::env::var_os("UPDATE_GOLDEN").is_some() {
+        std::fs::create_dir_all(std::path::Path::new(GOLDEN_PATH).parent().unwrap()).unwrap();
+        std::fs::write(GOLDEN_PATH, &actual).unwrap();
+        return;
+    }
+    let expected = std::fs::read_to_string(GOLDEN_PATH).unwrap_or_default();
+    let want: Vec<&str> = expected.lines().collect();
+    let got: Vec<&str> = actual.lines().collect();
+    let changed: Vec<String> = got
+        .iter()
+        .filter(|l| !want.contains(l))
+        .map(|l| format!("  now:  {l}"))
+        .chain(
+            want.iter()
+                .filter(|l| !got.contains(l))
+                .map(|l| format!("  was:  {l}")),
+        )
+        .collect();
+    assert!(
+        changed.is_empty(),
+        "{} golden line(s) differ from {GOLDEN_PATH}.\n\
+         If the change in meaning is intended, run\n  \
+         UPDATE_GOLDEN=1 cargo test --test evaluator_parity golden\n\
+         and commit the file with a note on the decision.\n{}",
+        changed.len(),
+        changed.join("\n")
+    );
+    assert_eq!(got.len(), want.len(), "line count differs");
+}
+
+/// The golden file covers the corpus: it cannot pass because it is empty or stale.
+#[test]
+fn golden_file_covers_every_pair() {
+    let expected = std::fs::read_to_string(GOLDEN_PATH).expect("tests/golden/evaluator_parity.txt");
+    let lines = expected.lines().filter(|l| !l.starts_with('#')).count();
+    assert_eq!(lines, golden_corpus().len());
+    assert!(lines > 500, "{lines}");
 }
