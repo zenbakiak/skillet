@@ -18,6 +18,12 @@ Planned as 0.7.0. It contains breaking changes, marked **BREAKING** below; the
 [migration guide](docs/guide/migration-0.7.md) lists each one with the old and the new result.
 
 ### Added
+- `sk_http_server` and `sk_server`: `--eval-timeout <seconds>` / `SKILLET_EVAL_TIMEOUT` (1–86400)
+  and `--max-eval-bytes <bytes>` (accepts `K`/`M`/`G`) / `SKILLET_MAX_EVAL_BYTES`; the flag wins,
+  and `0` or an invalid value stops start-up. The banner shows both and the worst-case memory
+  (ADR-0011 amendment 4, BL-075, #106; see [evaluation limits](docs/guide/migration-0.7.md#evaluation-limits-adr-0011)).
+- `::DateTime` reads the ISO 8601 text that dates now print as (`2026-01-01T00:00:00Z`), so a date
+  round-trips through text; integer text still works (ADR-0031, BL-076, #108).
 - `DATEDIF(start, end, unit)` with Excel's worksheet codes `y m d md ym yd`; `#NUM!` when start is
   after end or the unit is unknown (BL-074, #103).
 - `NOT` prefix keyword, any case, with the same result as `NOT(x)` (ADR-0029, #102).
@@ -73,6 +79,16 @@ Planned as 0.7.0. It contains breaking changes, marked **BREAKING** below; the
 - `sk_http_bench --expr` selects the expression for the sweep (#80).
 
 ### Changed
+- **BREAKING:** dates as text are ISO 8601 UTC: `DATE(2026,1,1)::String` is
+  `"2026-01-01T00:00:00Z"` (was `"1767225600"`), in `::String`, `.to_s()`, `CONCAT`, `&`, `JOIN`
+  and `.to_json()`; `.join()` and `TEXTJOIN` accept dates. Server wire formats are unchanged
+  (ADR-0031, BL-076, #108; see [dates as text](docs/guide/migration-0.7.md#dates-as-text-adr-0031)).
+- **BREAKING:** `SUM`, `PRODUCT`, `AVERAGE`, `MIN` and `MAX` return Currency when any counted value
+  is Currency: `SUM(10::Currency, 5)` is `Currency(15)`. Methods such as `.sum()` are unchanged
+  (ADR-0031, B-13, #108; see [currency in the aggregates](docs/guide/migration-0.7.md#currency-in-the-aggregates-adr-0031-b-13)).
+- Servers: the evaluation timeout default is 20 s (was a fixed 10 s), the budget stays 256 MiB but
+  is configurable, and the response-size cap follows it. The Docker image runs 4 threads (was 2)
+  (ADR-0011 amendment 4, BL-075, #106).
 - **BREAKING:** parsing requires the end of the input. Tokens after the expression are an error,
   `Unexpected token after end of expression`, at the first extra token (`=1 2`,
   `=42 as string`); before, they were dropped silently. One trailing `;` is still allowed. Error
@@ -156,8 +172,8 @@ Planned as 0.7.0. It contains breaking changes, marked **BREAKING** below; the
     data. Compute the value once instead: `:t := SUM(:rows); :rows.map(:t)`.
   - Quadratic builds hit the budget: `reduce(MERGE(:acc, [:x]), [])` fails above about 2,800 items.
 - Servers (#46):
-  - `sk_server` and `sk_http_server` run each evaluation with a 10 s deadline and return
-    `Evaluation timed out (max 10 s)` when it passes.
+  - `sk_server` and `sk_http_server` run each evaluation with a deadline (20 s by default since
+    #106) and return `Evaluation timed out (max N s)` when it passes.
   - Results that would exceed the budget once serialized are rejected before the response is built.
   - The HTTP result cache only stores entries up to 64 KiB and never stores errors.
   - `sk_server` streams nested arrays as JSON instead of building the full text first (wire

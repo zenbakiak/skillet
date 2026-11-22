@@ -268,7 +268,7 @@ Servers re-parse identical expressions per request; `Rc<Expr>` blocks sharing ac
 Gate `libc` daemon code behind `#[cfg(unix)]` (`src/bin/http_server/daemon.rs`, `sk_server.rs`).
 Re-add Windows target to `release.yml`.
 
-### BL-014 · Toolchain modernization · P3 · `ready` (MSRV decided: ADR-0012, PR #50; edition 2024 and `LazyLock` planned after the current lanes) · release-engineer (needs ADR)
+### BL-014 · Toolchain modernization · P3 · `in-progress` (MSRV decided: ADR-0012, PR #50; edition 2024 and `LazyLock` in lane "toolchain", ADR-0032) · release-engineer (needs ADR)
 Rust 1.81 → current stable, edition 2024, `lazy_static`/`once_cell` → `std::sync::LazyLock`,
 `cargo update` + `cargo outdated` review.
 
@@ -1198,15 +1198,24 @@ D-8 (B-18); the `AND`/`OR`/`NOT`/`XOR` builtins follow Excel.
 `DATEADD`/`DATEDIFF` use VBA's unit codes (`"m"` is months, `"n"` minutes); new `DATEDIF`;
 `DATEADD` clamps to the end of the month and gives `#NUM!` for huge amounts.
 
-### BL-075 · Configurable server evaluation limits · P2 · `in-progress` · rust-engineer
-Let operators set the servers' evaluation deadline and budget. Defaults: 60 s and 1 GiB.
+### BL-075 · Configurable server evaluation limits · P2 · `done` (PR #106, ADR-0011 amendment 4) · rust-engineer
+Let operators set the servers' evaluation deadline and budget. Defaults (revised by the maintainer):
+20 s and 256 MiB; Docker runs 4 threads.
 
-### BL-076 · ISO 8601 date text and `SUM` with Currency · P2 · `in-progress` · rust-engineer
+### BL-076 · ISO 8601 date text and `SUM` with Currency · P2 · `done` (PR #108, ADR-0031; follow-ups in BL-078) · rust-engineer
 Read ISO 8601 date text where a date is expected, and let `SUM` take Currency (B-13).
 
-### BL-077 · `arguments` key collision and `/reload-hooks` leftovers · P3 · `todo` · rust-engineer
+### BL-077 · `arguments` key collision and `/reload-hooks` leftovers · P3 · `in-progress` · rust-engineer
 No decision needed. From the threat model:
 - 2.2: a JSON key named `arguments` overwrites the reserved `:arguments` variable that
   `sk_http_server` builds for `JQ` (`http_server/eval.rs`). Keep the reserved variable.
 - 2.5: `/reload-hooks` adds and replaces functions but never removes those whose file was
   deleted from disk. Drop them on reload.
+
+### BL-078 · Follow-ups from ADR-0031 (#108) · P3 · `todo` (maintainer decisions pending) · language-designer → rust-engineer
+Recommendations, waiting for the maintainer:
+1. Allow chained casts: `DATE(...)::String::DateTime` (today a parse error; needs parentheses).
+2. `.to_json()` on a date stays the ISO text (the `::Json` cast still gives a number).
+3. `.join()` accepts Currency and NULL like `JOIN`.
+4. `LEN` and `FIND` on a date stay errors.
+5. `SUMIF` and `AVERAGEIF` return Currency when a summed value is Currency, like `SUM`.
