@@ -309,7 +309,7 @@ impl<'a> Parser<'a> {
         ))
     }
 
-    /// `atom postfix* (:: type)?`: the postfix chain, then an optional cast.
+    /// `atom link* cast*`: the postfix chain, then zero or more casts (ADR-0031 A1).
     fn parse_postfix(&mut self) -> Parsed {
         let atom = self.parse_atom()?;
         match self.lookahead {
@@ -329,7 +329,7 @@ impl<'a> Parser<'a> {
         ) {
             parsed = self.parse_postfix_chain(parsed)?;
         }
-        if let Token::DoubleColon = self.lookahead {
+        while let Token::DoubleColon = self.lookahead {
             parsed = self.parse_cast_tail(parsed)?;
         }
         Ok(parsed)
@@ -617,10 +617,11 @@ impl<'a> Parser<'a> {
         Ok((Expr::ObjectLiteral(pairs), depth))
     }
 
-    /// `:: type` after an already parsed operand.
+    /// `:: type` after an already parsed operand. Both errors point at the token after `::`.
     #[inline(never)]
     fn parse_cast_tail(&mut self, (node, d): (Expr, usize)) -> Parsed {
         self.bump()?; // '::'
+        let name_pos = self.look_pos;
         let tname = match self.lookahead.clone() {
             Token::Identifier(s) => {
                 self.bump()?;
@@ -633,10 +634,10 @@ impl<'a> Parser<'a> {
                     "currency" => TypeName::Currency,
                     "datetime" | "date" => TypeName::DateTime,
                     "json" => TypeName::Json,
-                    _ => return Err(Error::new("Unknown cast type", None)),
+                    _ => return Err(Error::new("Unknown cast type", Some(name_pos))),
                 }
             }
-            _ => return Err(Error::new("Expected type name after '::'", None)),
+            _ => return self.err_here("Expected type name after '::'"),
         };
         let depth = self.node_depth(Some(d))?;
         Ok((

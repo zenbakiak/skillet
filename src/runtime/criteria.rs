@@ -236,14 +236,15 @@ pub(crate) fn range_items(v: Value) -> Vec<Value> {
 }
 
 /// `COUNTIF`/`SUMIF`/`AVERAGEIF` over `range`. `values` is the optional sum or average range,
-/// paired with `range` by position. Only numbers and currency are summed or averaged.
+/// paired with `range` by position. Only numbers and currency are summed or averaged; the
+/// result is Currency when any summed value is (ADR-0031 A5), else a Number. `COUNTIF` is a Number.
 pub(crate) fn aggregate(
     kind: Aggregate,
     range: &[Value],
     values: Option<&[Value]>,
     mut meets: impl FnMut(&Value) -> Result<bool, Error>,
 ) -> Result<Value, Error> {
-    let (mut count, mut sum, mut numbers) = (0usize, 0.0, 0usize);
+    let (mut count, mut sum, mut numbers, mut currency) = (0usize, 0.0, 0usize, false);
     for (i, item) in range.iter().enumerate() {
         if !meets(item)? {
             continue;
@@ -253,18 +254,30 @@ pub(crate) fn aggregate(
             Some(vals) => vals.get(i),
             None => Some(item),
         };
-        if let Some(Value::Number(n) | Value::Currency(n)) = target {
-            sum += n;
-            numbers += 1;
+        match target {
+            Some(Value::Number(n)) => sum += n,
+            Some(Value::Currency(n)) => {
+                sum += n;
+                currency = true;
+            }
+            _ => continue,
         }
+        numbers += 1;
     }
+    let num = |n| {
+        if currency {
+            Value::Currency(n)
+        } else {
+            Value::Number(n)
+        }
+    };
     match kind {
         Aggregate::Count => Ok(Value::Number(count as f64)),
-        Aggregate::Sum => Ok(Value::Number(sum)),
+        Aggregate::Sum => Ok(num(sum)),
         Aggregate::Average if numbers == 0 => {
             Err(Error::new("AVERAGEIF: no matching numbers (#DIV/0!)", None))
         }
-        Aggregate::Average => Ok(Value::Number(sum / numbers as f64)),
+        Aggregate::Average => Ok(num(sum / numbers as f64)),
     }
 }
 

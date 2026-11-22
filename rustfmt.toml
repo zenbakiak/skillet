@@ -1,0 +1,2 @@
+# Edition 2024 code, 2021 formatting style until the separate fmt-only switch (ADR-0032).
+style_edition = "2021"
