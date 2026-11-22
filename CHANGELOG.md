@@ -76,7 +76,7 @@ Planned as 0.7.0. It contains breaking changes, marked **BREAKING** below; the
 - **BREAKING:** parsing requires the end of the input. Tokens after the expression are an error,
   `Unexpected token after end of expression`, at the first extra token (`=1 2`,
   `=42 as string`); before, they were dropped silently. One trailing `;` is still allowed. Error
-  positions count from the start of the caller's input, including a leading `=` (BL-069, #93).
+  positions count from the start of the caller's input, including a leading `=` (BL-069, #93; [parsing](docs/guide/migration-0.7.md#parsing-requires-the-end-of-input-bl-069-93)).
 - **BREAKING:** the `AND` and `OR` operators work. They were never lexed, so everything from
   `AND` on was dropped: `TRUE AND FALSE` was TRUE and is now FALSE. `AND(...)`/`OR(...)` before an
   operand are still the builtins (BL-069, #93). `^` followed by unary minus already matched Excel
@@ -101,7 +101,7 @@ Planned as 0.7.0. It contains breaking changes, marked **BREAKING** below; the
   - `+ - * /` and unary minus keep Currency; `Currency / Currency`, `^` and `%` give a Number.
     Results are not rounded. Some error messages change to `#VALUE!`.
   - Methods are unchanged: `[1,"2"].sum()` still errors.
-- **BREAKING:** text builtins follow Excel (ADR-0018, #96): `LEFT`, `RIGHT`, `MID` and `REPLACE`
+- **BREAKING:** text builtins follow Excel (ADR-0018, #96; [builtins](docs/guide/migration-0.7.md#builtins-that-now-match-excel-adr-0018)): `LEFT`, `RIGHT`, `MID` and `REPLACE`
   give `#VALUE!` for a negative length or a start below 1 instead of clamping (`LEFT(x,-1)`,
   `MID(x,0,n)`). `SORT` sorts text case-insensitively, orders mixed values numbers < text <
   booleans, and is stable; sorting text used to be an error.

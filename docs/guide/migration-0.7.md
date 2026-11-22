@@ -31,6 +31,17 @@ left-associative.
 | `2^3^2` | `512` | `64` | `2^(3^2)` |
 | `0-2^2`, `1-2^2`, `2^-2` | `-4`, `-3`, `0.25` | unchanged | |
 
+### Parsing requires the end of input (BL-069, #93)
+Text after a complete expression used to be dropped silently; it is now an error at the first
+extra token. This also exposed `AND`/`OR`, which were never parsed as operators before.
+
+| Expression | 0.6 | 0.7 | Fix |
+|---|---|---|---|
+| `=1 2` | `1` | `Error: Unexpected token after end of expression at position 3` | remove the extra text |
+| `=42 as string` | `42` | `Error: … at position 4` (there is no `as`) | `42::String` |
+| `TRUE AND FALSE` | `TRUE` (`AND FALSE` dropped) | `FALSE` | |
+| A parse error after a leading `=` | position counted without the `=` | position in the text as written | |
+
 ### Numbers and coercion (BL-066, BL-058)
 Like Excel, the arithmetic operators and the scalar math builtins now convert numeric text and
 booleans to numbers, and the operators read `NULL` as `0`. Text that is not a number is a
@@ -91,6 +102,10 @@ To keep a default, test first: `IF(:n == 0, 0, :total / :n)` (now lazy, see belo
 | `TIME(14, 30, 0)` | current time (0.6.3) | `0.6041666666666666` (fraction of a day) |
 | `IPMT(0.1, 1, 3, 1000)`, `IPMT(0.1, 2, 3, 1000)` | `100`, `49.79…` | `-100`, `-69.79…` |
 | `FIND("b", "abc")` | `Error` | `2` (text search) |
+| `LEFT("hello", -1)`, `RIGHT("hello", -1)` (#96) | `""` | `Error: LEFT num_chars must not be negative (#VALUE!)` |
+| `MID("hello", 0, 2)`, `REPLACE("abcdef", 0, 1, "X")` (#96) | `"he"`, `"Xbcdef"` | `Error: MID start_num must be at least 1 (#VALUE!)` |
+| `SORT(["b", "a"])` (#96) | `Error` | `["a", "b"]` (text ignores case) |
+| `UNIQUE(["a", "a", 1])`, `REVERSE("abc")` (#96) | `[1]`, `Error` | `["a", 1]`, `"cba"` |
 
 The methods keep Ruby semantics and do not change: `"  a   b  ".trim()` is still `"a   b"`, and
 `(-3.7).int()` is still `-3` (while `INT(-3.7)` is `-4`).
@@ -223,6 +238,7 @@ Each evaluation has a budget of 256 MB of created values, and the servers stop a
 | `reduce(MERGE(:acc, [:x]), [])` over more than about 2,800 items | runs | budget error |
 | A server evaluation that runs longer than 10 s | runs | `Evaluation timed out (max 10 s)` (HTTP 400) |
 | Expressions nested deeper than 128 | stack overflow (crash) | `Expression nested too deeply (max 128)` |
+| `with_limits` budgets near a boundary with many small strings (#105) | 32 + length per string | 48 + length per string (the real heap size), so the same formula reaches a tight budget sooner |
 
 ## JavaScript plugins (ADR-0017)
 | Situation | 0.6 | 0.7 |
