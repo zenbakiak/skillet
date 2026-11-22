@@ -1,0 +1,1 @@
+REPLACE('abc', 1, 0, 'X')

@@ -1,0 +1,2 @@
+=PMT(:annual_rate/12, :years*12, :principal)
+{"annual_rate": 0.05, "years": 30, "principal": 100000}
