@@ -1,6 +1,6 @@
 use crate::ast::Expr;
 use crate::error::Error;
-use crate::runtime::datetime::datetime_text;
+use crate::runtime::array::join_text;
 use crate::runtime::evaluator::{eval_arg, EvaluationContext};
 use crate::types::Value;
 use std::collections::BTreeSet;
@@ -166,15 +166,12 @@ pub fn exec_array_method(
                 .enumerate()
                 .map(|(i, v)| {
                     crate::limits::tick_item(i)?;
+                    // Ruby text for booleans; Currency and NULL as `JOIN` writes them (ADR-0031 A3).
                     match v {
-                        Value::String(s) => Ok(s.clone()),
-                        Value::Number(n) => Ok(n.to_string()),
                         Value::Boolean(b) => Ok(b.to_string()),
-                        Value::DateTime(ts) => Ok(datetime_text(*ts)),
-                        _ => Err(Error::new(
-                            "join method cannot convert value to string",
-                            None,
-                        )),
+                        other => join_text(other).ok_or_else(|| {
+                            Error::new("join method cannot convert value to string", None)
+                        }),
                     }
                 })
                 .collect();

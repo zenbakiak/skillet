@@ -17,8 +17,8 @@ Check these first. They change results without an error:
    (was minutes), `"y"` is days (was years), `"w"` adds days (was weeks). Search for them.
 9. **A date as text** is now ISO 8601 UTC (ADR-0031): `DATE(2026, 1, 1)::String`,
    `CONCAT`, `&`, `JOIN` and `.to_s()` give `"2026-01-01T00:00:00Z"` (was `"1767225600"`).
-10. **`SUM`, `PRODUCT`, `AVERAGE`, `MIN`, `MAX` with a Currency value** now return Currency
-   (was Number), for example `SUM(10::Currency, 5)`.
+10. **`SUM`, `PRODUCT`, `AVERAGE`, `MIN`, `MAX`, `SUMIF`, `AVERAGEIF` with a Currency value**
+   now return Currency (was Number), for example `SUM(10::Currency, 5)`.
 
 ## Expressions
 
@@ -156,8 +156,9 @@ tight precedence (`!:a == :b` is `(!:a) == :b`). To keep a 0.6 `NOT (x) == y`, r
 
 ### Dates as text (ADR-0031)
 Every path that turns a DateTime into text writes ISO 8601 in UTC, with whole seconds.
-`::DateTime` reads that form back, so `(DATE(2026, 1, 1)::String)::DateTime` is
-`DATE(2026, 1, 1)`. Integer text still casts as Unix seconds. To keep the old text, use
+`::DateTime` reads that form back, so `DATE(2026, 1, 1)::String::DateTime` is
+`DATE(2026, 1, 1)` (casts chain left to right since BL-078; before, the second cast needed
+parentheses). Integer text still casts as Unix seconds. To keep the old text, use
 `DATEDIFF(DATE(1970, 1, 1), :d, "seconds")`, or `(:d - DATE(1970, 1, 1)) * 86400`, then turn
 the number into text.
 
@@ -168,6 +169,9 @@ the number into text.
 | `JOIN([DATE(2026, 1, 1)])`, `[DATE(2026, 1, 1)].to_s()` | `"1767225600"`, `"[1767225600]"` | `"2026-01-01T00:00:00Z"`, `"[2026-01-01T00:00:00Z]"` |
 | `DATE(2026, 1, 1).to_json()` | `Json("\"1767225600\"")` | `Json("\"2026-01-01T00:00:00Z\"")` |
 | `[DATE(2026, 1, 1)].join()`, `TEXTJOIN(",", TRUE, DATE(2026, 1, 1))` | `Error` | `"2026-01-01T00:00:00Z"` |
+| `DATE(2026, 1, 1)::String::DateTime` (BL-078) | parse error | `DATE(2026, 1, 1)` |
+| `[2.5::Currency, NULL].join()` (BL-078, as `JOIN`) | `Error` | `"2.5000,"` |
+| `LEN(DATE(2026, 1, 1))`, `FIND("2", DATE(2026, 1, 1))` | `Error` | unchanged; use `LEN(:d::String)` |
 | `"2026-01-01T10:30:00Z"::DateTime` | `Error` | 2026-01-01 10:30 UTC |
 | `DATE(2026, 1, 1)::Json`, server responses, `"1767225600"::DateTime` | Unix seconds | unchanged |
 
@@ -206,14 +210,19 @@ for a number (numeric text, booleans, `NULL` as 0). Results are not rounded (Cur
 
 ### Currency in the aggregates (ADR-0031, B-13)
 `SUM`, `PRODUCT` (`MULTIPLY`), `AVERAGE` (`AVG`), `MIN` and `MAX` return Currency when any value
-they count is Currency, following `Currency + Number` (ADR-0027). Use `::Float` on the result to
-keep a Number. The methods (`.sum()`, `.avg()`, `.min()`, `.max()`) are unchanged.
+they count is Currency, following `Currency + Number` (ADR-0027). `SUMIF` and `AVERAGEIF` do the
+same for the values they sum or average (BL-078, ADR-0031 amendment 1); a Currency that is not
+matched does not count, and `COUNTIF` is unchanged. Use `::Float` on the result to keep a Number.
+The methods (`.sum()`, `.avg()`, `.min()`, `.max()`) are unchanged.
 
 | Expression | 0.6 | 0.7 |
 |---|---|---|
 | `SUM(10::Currency, 5)` | `15` (Number) | `Currency(15)` |
 | `PRODUCT(2::Currency, 3)`, `AVERAGE(10::Currency, 20)` | `6`, `15` (Number) | `Currency(6)`, `Currency(15)` |
 | `MIN(1, 3::Currency)`, `MAX([3::Currency, 9::Currency])` | `1`, `9` (Number) | `Currency(1)`, `Currency(9)` |
+| `SUMIF([1, 2::Currency, 3], ">1")`, `AVERAGEIF([1, 2::Currency, 3], ">1")` (BL-078) | `5`, `2.5` (Number) | `Currency(5)`, `Currency(2.5)` |
+| `SUMIF([1, 2, 3], ">1", [10, 20::Currency, 30])` (BL-078) | `50` (Number) | `Currency(50)` |
+| `SUMIF([1::Currency, 2, 3], ">1")` (the Currency is not matched), `COUNTIF([1::Currency], ">0")` | Number | unchanged |
 | `SUM(1, 2)`, `[1::Currency].sum()` | Number | unchanged |
 
 ### New names (additive)

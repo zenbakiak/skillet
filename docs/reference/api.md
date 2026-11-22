@@ -227,7 +227,7 @@ Tightest first, as in Excel. Operators on the same row are left-associative.
 
 | Level | Operators |
 |---|---|
-| 1 | postfix `.method()`, `.prop`, `&.`, `[i]`, `::type` |
+| 1 | postfix `.method()`, `.prop`, `&.`, `[i]`, then `::type` casts (chained left to right) |
 | 2 | unary `-`, `+`, `!` (`-2^2` is `4`) |
 | 3 | percent suffix `%` |
 | 4 | `^` (`2^3^2` is `64`) |
@@ -793,6 +793,8 @@ Count, sum or average the items that meet `criteria`. `AVGIF` is an alias of `AV
 range is an array, or a single value (treated as a one-item range). With a sum or average range,
 the item at the same position is summed; only numbers and currency are summed or averaged.
 `AVERAGEIF` with no matching number is an error (`#DIV/0!`); `SUMIF` and `COUNTIF` give 0.
+`SUMIF` and `AVERAGEIF` return Currency when any value they sum or average is Currency, like `SUM`
+(ADR-0031 amendment 1); `COUNTIF` always returns a Number.
 
 `criteria` is either an Excel criterion (a string or a number) or a lambda over `:x`:
 
@@ -826,6 +828,8 @@ SUMIF(["apple", "avocado", "kiwi"], "a*", [1, 2, 4])  # 3
 AVERAGEIF([1, 2, 3, 4], ">2")                     # 3.5
 AVGIF([1, 3, 5, -1], :x > 0)                      # 3.0
 AVERAGEIF([1, 2], ">5")                           # Error: AVERAGEIF: no matching numbers (#DIV/0!)
+SUMIF([1, 2, 3], ">1", [10, 20::Currency, 30])    # Currency(50)
+SUMIF([1, 2, 3], ">1", [10::Currency, 20, 30])    # 50 (the Currency is not summed)
 ```
 
 #### `BETWEEN(min, max, value)`
@@ -1023,12 +1027,15 @@ Numeric operations.
 ```
 
 #### `.join([separator])`
-Join to string. Strings, numbers, booleans and DateTimes (as ISO 8601 text) join; other values
+Join to string. Strings, numbers, booleans (`true`/`false`), DateTimes (as ISO 8601 text),
+Currency (4 decimals, as `JOIN`) and `NULL` (as nothing, as `JOIN`) join; arrays and JSON values
 are an error.
 ```bash
 [1,2,3].join("-")            # "1-2-3"
 ["a","b","c"].join()         # "a,b,c" (default: comma)
 [DATE(2026,1,1)].join()      # "2026-01-01T00:00:00Z"
+[1, 2.5::Currency, NULL].join(",")   # "1,2.5000,"
+[TRUE, 1].join()             # "true,1" (JOIN gives "TRUE,1")
 ```
 
 #### `.contains(value)`, `.includes(value)`
@@ -1318,7 +1325,14 @@ Explicit type conversion using the `::` operator.
 ### Casting Syntax
 ```bash
 value :: type_name
+value :: type_name :: type_name     # chained: (value::type_name)::type_name
 ```
+Casts chain left to right (ADR-0031 amendment 1): `DATE(2026, 1, 1)::String::DateTime` is
+`(DATE(2026, 1, 1)::String)::DateTime`. A cast applies to the whole `.method()`/`.prop`/`&.`/`[i]`
+chain before it (`:u&.name::String` is `(:u&.name)::String`), and a prefix `-`, `+` or `!` applies
+to the whole cast chain (`-"2"::String::Integer` is `-2`). A method, property or index after a
+cast needs parentheses: `(1::String).length()` is `1`, while `1::String.length()` is an error.
+An unknown type name is `Error: Unknown cast type at position N`, N being where the name starts.
 
 ### Available Types
 - `Integer` - Convert to integer
@@ -1347,7 +1361,7 @@ outside 0000-9999 gets a sign (`"+10000-01-01T00:00:00Z"`).
 
 `::DateTime` reads that exact form back, and integer text as Unix seconds:
 ```bash
-(DATE(2026, 1, 1)::String)::DateTime == DATE(2026, 1, 1)   # true
+DATE(2026, 1, 1)::String::DateTime == DATE(2026, 1, 1)     # true
 "2026-01-01T10:30:00Z"::DateTime                           # DateTime for 2026-01-01 10:30 UTC
 "1767225600"::DateTime                                     # DateTime for 2026-01-01
 "2026-01-01"::DateTime                                     # Error: Cannot cast String to DateTime

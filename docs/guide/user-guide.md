@@ -1653,6 +1653,7 @@ sk "=\"42\"::Number"      # 42.0
 sk "=42::String"         # "42"
 sk "=1::Boolean"         # true
 sk "=0::Boolean"         # false
+sk "=DATE(2026,1,1)::String::DateTime"   # casts chain left to right
 # There is no `as` keyword: `=42 as string` is a parse error (before BL-069 it returned 42)
 ```
 

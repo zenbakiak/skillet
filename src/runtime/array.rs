@@ -100,20 +100,15 @@ pub fn exec_array(name: &str, args: &[Value]) -> Result<Value, Error> {
                 let mut parts: Vec<String> = Vec::with_capacity(items.len());
                 for it in items {
                     crate::limits::tick_item(parts.len())?;
-                    match it {
-                        Value::String(s) => parts.push(s.clone()),
-                        Value::Number(n) => parts.push(n.to_string()),
-                        Value::Boolean(b) => {
-                            parts.push(if *b { "TRUE".into() } else { "FALSE".into() })
-                        }
-                        Value::Null => parts.push(String::new()),
-                        Value::Currency(n) => parts.push(format!("{:.4}", n)),
-                        Value::DateTime(ts) => parts.push(datetime_text(*ts)),
-                        Value::Json(s) => parts.push(s.clone()),
+                    let part = match it {
+                        Value::Boolean(b) => (if *b { "TRUE" } else { "FALSE" }).to_string(),
+                        Value::Json(s) => s.clone(),
                         Value::Array(_) => {
                             return Err(Error::new("JOIN does not flatten nested arrays", None))
                         }
-                    }
+                        other => join_text(other).unwrap_or_default(),
+                    };
+                    parts.push(part);
                 }
                 crate::limits::charge_join(&parts, sep)?;
                 Ok(Value::String(parts.join(sep)))
@@ -149,6 +144,20 @@ pub fn exec_array(name: &str, args: &[Value]) -> Result<Value, Error> {
 }
 
 /// Count the values in `args` (arrays flattened) for which `keep` holds.
+/// The text `JOIN` and `.join()` both write for an item: strings as is, numbers as `to_string`,
+/// Currency with 4 decimals, `NULL` as nothing, dates as ISO 8601 (ADR-0031). `None` for the
+/// items each writes its own way (booleans, JSON, arrays).
+pub(crate) fn join_text(v: &Value) -> Option<String> {
+    match v {
+        Value::String(s) => Some(s.clone()),
+        Value::Number(n) => Some(n.to_string()),
+        Value::Currency(n) => Some(format!("{:.4}", n)),
+        Value::Null => Some(String::new()),
+        Value::DateTime(ts) => Some(datetime_text(*ts)),
+        Value::Boolean(_) | Value::Json(_) | Value::Array(_) => None,
+    }
+}
+
 fn count_where(args: &[Value], keep: &dyn Fn(&Value) -> bool) -> usize {
     args.iter()
         .map(|a| match a {
