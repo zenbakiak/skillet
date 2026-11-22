@@ -19,7 +19,7 @@ documented in [limits](../guide/limits.md).
 Server request limits: both `sk_server` and `sk_http_server` reject a request over 1 MB, give a
 client 30 s in total to send one request, and give themselves 10 s in total to write one response
 (a client that reads more slowly gets a truncated response). `sk_http_server` answers the first two
-with HTTP 400 and `"error": "413 Payload Too Large"` or `"error": "408 Request Timeout"`. Both
+with HTTP 413 and HTTP 408 (400 before 0.7.0), then reads the rest of the request before closing. Both
 servers refuse to start with an empty token. `/upload-js`, `/update-js` and `/delete-js` accept
 only plain file names matching `[A-Za-z0-9_-]+.js` (HTTP 400 otherwise). In a build without the
 `plugins` feature, the JavaScript endpoints (`/upload-js`, `/update-js`, `/delete-js`, `/list-js`,
@@ -180,6 +180,35 @@ ADR-0023).
 - `OR`, `||` - Logical OR
 - `NOT`, `!` - Logical NOT
 
+The operators short-circuit (ADR-0029): the right side is evaluated only when the left side does
+not decide the result. Both sides must be booleans; `1 AND TRUE` is an error.
+
+```bash
+FALSE AND 1/0              # FALSE (1/0 is not evaluated)
+TRUE OR 1/0                # TRUE
+TRUE AND 1/0               # Error: Division by zero (#DIV/0!)
+:n == 0 OR 10 / :n > 1     # safe when :n is 0
+```
+
+`NOT` (any case) is a prefix keyword that binds looser than the comparisons and tighter than
+`AND`, as in VB and SQL. Its operand runs to the next `AND`, `OR`, `&&` or `||`. It gives the
+same result as the `NOT(...)` builtin, with the builtin's rules (`NOT 0` is `TRUE`, `NOT "x"` is
+an error).
+
+```bash
+NOT :x > 1                 # NOT (:x > 1)
+NOT 1 > 2 AND TRUE         # (NOT (1 > 2)) AND TRUE  ->  TRUE
+NOT :a OR :b               # (NOT :a) OR :b
+:a AND NOT :b == :c        # :a AND NOT (:b == :c)
+NOT (0) == FALSE           # NOT ((0) == FALSE)  ->  TRUE
+1 + NOT TRUE               # Error: NOT binds looser than comparisons here; write (NOT x)
+TRUE == (NOT FALSE)        # TRUE
+```
+
+`NOT` followed directly by `(`, with no space, is the `NOT(...)` call. A call is an atom, so it
+works anywhere: `TRUE == NOT(FALSE)`, `NOT(0) == FALSE` (FALSE). `!` stays a tight unary
+operator that takes booleans only: `!TRUE == FALSE` is `(!TRUE) == FALSE`, and `!0` is an error.
+
 ### Unary Operators
 - `+` - Positive (unary plus)
 - `-` - Negative (unary minus)
@@ -207,9 +236,10 @@ Tightest first, as in Excel. Operators on the same row are left-associative.
 | 7 | `&` |
 | 8 | `>`, `<`, `>=`, `<=` |
 | 9 | `==`, `!=` |
-| 10 | `AND`, `&&` |
-| 11 | `OR`, `\|\|` |
-| 12 | `? :` |
+| 10 | prefix `NOT` keyword (starts an operand of `AND`/`OR` only) |
+| 11 | `AND`, `&&` |
+| 12 | `OR`, `\|\|` |
+| 13 | `? :` |
 
 `-(2^2)` gives `-4`. Before BL-054, `^` was right-associative (`2^3^2` was `512`) and
 unary minus bound looser than `^` (`-2^2` was `-4`).
@@ -435,41 +465,61 @@ QUARTILE_INC([1,2,3,4], -0.5)      # Error: Quartile must be 0-4 (#NUM!)
 
 ### Logical Functions
 
-#### `IF(condition, true_value, false_value)`
-Basic conditional. Only the chosen branch is evaluated, so it can guard an error.
+#### `IF(condition, true_value, [false_value])`
+Basic conditional. Only the chosen branch is evaluated, so it can guard an error. The condition
+must be `TRUE`/`FALSE` or a number (non-zero is true, as in Excel); `NULL` is false, like a blank
+cell. Text or any other value is an error (Excel `#VALUE!`). Without `false_value` the result is
+`FALSE`.
 ```bash
 IF(5 > 3, "Yes", "No")       # "Yes"
 IF(false, 10, 20)            # 20
+IF(2, "a", "b")              # "a"
+IF(NULL, "a", "b")           # "b"
 IF(:a == 0, 0, 1 / :a)       # 0 when :a is 0
+IF("x", 1, 2)                # Error: IF condition must be TRUE, FALSE or a number, got string (#VALUE!)
 ```
 
 #### `IFS(condition1, value1, condition2, value2, ...)`
-Multiple conditions (returns first matching). Conditions are evaluated in order up to the
-first true one, and only its value is evaluated.
+Value of the first true condition. Conditions follow the `IF` rules and are evaluated in order
+up to the first true one, and only its value is evaluated. No true condition is an error
+(Excel `#N/A`); end with `TRUE, default` to have a default.
 ```bash
 IFS(false, "A", true, "B", true, "C")  # "B"
-IFS(score >= 90, "A", score >= 80, "B", true, "C")
+IFS(:score >= 90, "A", :score >= 80, "B", true, "C")
+IFS(FALSE, 1)                          # Error: IFS: no condition is TRUE (#N/A)
 ```
 
-#### `AND(...)`, `OR(...)`
-Logical operations on multiple values.
+#### `AND(logical1, ...)`, `OR(logical1, ...)`, `XOR(logical1, ...)`
+Excel's logical functions. `AND` is TRUE when every value is TRUE, `OR` when at least one is,
+and `XOR` when an odd number are. The values are booleans, and numbers (non-zero is TRUE).
+Arrays are flattened; text and `NULL` inside them are ignored, as Excel ignores text and empty
+cells in a range. A `NULL` argument is ignored too. Text passed directly is an error (`#VALUE!`),
+and so is having no logical value at all (`AND()`, `AND([])`, `AND(NULL)`).
+
+Unlike the `AND`/`OR` operators, these functions evaluate every argument, as Excel does:
+`AND(FALSE, 1/0)` is an error, while `FALSE AND 1/0` is `FALSE`.
 ```bash
 AND(true, true, false)       # false
+AND(TRUE, 1)                 # true
 OR(false, false, true)       # true
+AND([TRUE, "x", NULL])       # true (text and NULL in arrays are ignored)
+AND(TRUE, "x")               # Error: AND expects logical values, got string (#VALUE!)
+OR()                         # Error: OR: no logical values (#VALUE!)
+XOR(true, false)             # true
+XOR(true, true)              # false
+XOR(TRUE, TRUE, TRUE)        # true (three are TRUE)
 ```
 
-#### `NOT(value)`
-Logical negation.
+#### `NOT(logical)`
+Logical negation, as in Excel: `TRUE` or a non-zero number gives `FALSE`; `FALSE`, `0` or `NULL`
+gives `TRUE`. Text or an array is an error (`#VALUE!`). Also written as a prefix keyword:
+`NOT x` (see Logical Operators).
 ```bash
 NOT(true)                    # false
 NOT(false)                   # true
-```
-
-#### `XOR(...)`
-Exclusive OR.
-```bash
-XOR(true, false)             # true
-XOR(true, true)              # false
+NOT(0)                       # true
+NOT TRUE                     # false
+NOT("x")                     # Error: NOT expects a logical value, got string (#VALUE!)
 ```
 
 ### Text Functions

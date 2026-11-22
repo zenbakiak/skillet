@@ -113,10 +113,13 @@ impl ExpressionCache {
         }
     }
 
+    /// Store `entry`; counts an eviction when a full cache drops its least recently used entry.
+    /// Replacing an existing key (two workers missing at once) is not an eviction.
     fn put(&mut self, key: String, entry: CacheEntry) {
-        if self.cache.put(key, entry).is_some() {
+        if self.cache.len() == self.cache.cap().get() && !self.cache.contains(&key) {
             self.stats.evictions += 1;
         }
+        self.cache.put(key, entry);
         self.stats.entries = self.cache.len();
     }
 
@@ -278,6 +281,12 @@ pub fn return_pooled_buffer(buffer: Vec<u8>) {
     HTTP_BUFFER_POOL.with(|pool| pool.borrow_mut().return_buffer(buffer));
 }
 
+/// Buffers waiting in this thread's pool.
+#[cfg(test)]
+pub fn pooled_buffer_count() -> usize {
+    HTTP_BUFFER_POOL.with(|pool| pool.borrow().buffers.len())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -316,6 +325,31 @@ mod tests {
         let mut ctx = HashMap::new();
         ctx.insert("v".to_string(), Value::String("a".repeat(64 * 1024)));
         assert!(!fits_in_cache("k", &Value::Null, Some(&ctx)));
+    }
+
+    fn entry() -> CacheEntry {
+        CacheEntry {
+            result: Value::Null,
+            variable_context: None,
+            execution_time_ms: 0.0,
+            hit_count: 0,
+            last_accessed: std::time::Instant::now(),
+        }
+    }
+
+    #[test]
+    fn evictions_count_dropped_entries_not_replaced_keys() {
+        // A private instance: the global cache is shared with tests running in parallel.
+        let mut cache = ExpressionCache::new(2);
+        cache.put("a".into(), entry());
+        cache.put("b".into(), entry());
+        cache.put("a".into(), entry()); // replaced, cache not over capacity
+        assert_eq!(cache.get_stats().evictions, 0);
+        cache.put("c".into(), entry()); // full: "b" (least recently used) is evicted
+        cache.put("d".into(), entry()); // and then "a"
+        let stats = cache.get_stats();
+        assert_eq!((stats.evictions, stats.entries), (2, 2));
+        assert!(cache.get("b").is_none() && cache.get("a").is_none());
     }
 
     #[test]

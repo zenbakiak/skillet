@@ -353,7 +353,9 @@ const CASES: &[(&str, &str)] = &[
     // BL-054: COUNT is variadic (Excel); was "COUNT expects 1 argument: array".
     ("COUNT()", "Err(Error { message: \"COUNT expects at least 1 argument\", position: None })"),
     ("IN([1])", "Err(Error { message: \"IN expects 2 arguments: array, value\", position: None })"),
-    ("XOR(TRUE)", "Err(Error { message: \"XOR expects 2 arguments\", position: None })"),
+    // ADR-0029: XOR takes 1..n arguments (Excel); was "XOR expects 2 arguments".
+    ("XOR(TRUE)", "Ok(Boolean(true))"),
+    ("XOR()", "Err(Error { message: \"XOR: no logical values (#VALUE!)\", position: None })"),
     ("IF(TRUE)", "Err(Error { message: \"IF expects at least 2 arguments\", position: None })"),
     ("IFS(TRUE)", "Err(Error { message: \"IFS expects pairs of condition,value arguments\", position: None })"),
     ("UPPER(1)", "Err(Error { message: \"UPPER expects string\", position: None })"),
@@ -414,4 +416,24 @@ fn representative_calls_keep_their_results() {
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// BL-057: the old `builtin_functions::exec_builtin` is deprecated, not removed. It still
+/// evaluates builtins, but reports an argument error as an unknown function, unlike the
+/// dispatch the evaluator uses.
+#[test]
+#[allow(deprecated)]
+fn deprecated_exec_builtin_still_works() {
+    use skillet::runtime::builtin_functions::exec_builtin;
+    let nums = [Value::Number(1.0), Value::Number(2.0)];
+    assert_eq!(exec_builtin("SUM", &nums).unwrap(), Value::Number(3.0));
+    assert_eq!(
+        exec_builtin("LENGTH", &[Value::String("abc".into())]).unwrap(),
+        exec_builtin_fast("LENGTH", &[Value::String("abc".into())]).unwrap()
+    );
+
+    let old = exec_builtin("ROUND", &[]).unwrap_err();
+    let new = exec_builtin_fast("ROUND", &[]).unwrap_err();
+    assert_eq!(old.message, "Unknown function: ROUND");
+    assert_ne!(new.message, old.message);
 }

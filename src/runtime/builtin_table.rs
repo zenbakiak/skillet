@@ -126,12 +126,12 @@ pub(crate) static BUILTINS: &[Builtin] = &[
     f("PRODUCT", Arithmetic, 0, ANY, "values…", "Product of numbers and currency (arrays flattened); 1 when there are none.", "PRODUCT(2, 3, 4)").aliases(&["MULTIPLY"]),
     f("SUMIF", Arithmetic, 2, n(3), "range, criteria, [sum_range]", "Sum of items meeting an Excel criteria (`\">2\"`, `5`, `\"a*\"`) or a lambda over `:x`.", "SUMIF([1, -2, 3], \">0\")").evaluator(),
     // Logical
-    f("AND", Logical, 0, ANY, "values…", "TRUE when every argument is truthy (TRUE or a non-zero number).", "AND(TRUE, 1)"),
-    f("OR", Logical, 0, ANY, "values…", "TRUE when any argument is truthy.", "OR(FALSE, 1)"),
-    f("NOT", Logical, 1, n(1), "value", "Negation of the argument's truthiness.", "NOT(0)"),
-    f("XOR", Logical, 2, n(2), "a, b", "TRUE when exactly one argument is truthy.", "XOR(TRUE, FALSE)"),
-    f("IF", Logical, 2, n(3), "condition, then, [else]", "`then` when `condition` is truthy, otherwise `else` (default FALSE). Only the chosen branch is evaluated.", "IF(1 > 0, 'yes', 'no')"),
-    f("IFS", Logical, 2, ANY, "condition, value, …", "Value of the first truthy condition; FALSE when none matches. Conditions are evaluated in order up to the first truthy one, and only its value is evaluated.", "IFS(FALSE, 'a', TRUE, 'b')"),
+    f("AND", Logical, 1, ANY, "logical…", "Excel `AND`: TRUE when every logical value is TRUE (numbers: non-zero). Text and NULL inside arrays are ignored; direct text, or no logical value at all, is an error. Every argument is evaluated.", "AND(TRUE, 1)"),
+    f("OR", Logical, 1, ANY, "logical…", "Excel `OR`: TRUE when any logical value is TRUE. Same argument rules as `AND`; every argument is evaluated.", "OR(FALSE, 1)"),
+    f("NOT", Logical, 1, n(1), "logical", "Excel `NOT`: FALSE for TRUE or a non-zero number, TRUE for FALSE, 0 or NULL; text is an error. Also a prefix keyword that binds looser than comparisons: `NOT :x > 1`.", "NOT(0)"),
+    f("XOR", Logical, 1, ANY, "logical…", "Excel `XOR`: TRUE when an odd number of the logical values are TRUE. Same argument rules as `AND`.", "XOR(TRUE, TRUE, TRUE)"),
+    f("IF", Logical, 2, n(3), "condition, then, [else]", "`then` when `condition` is TRUE or a non-zero number, otherwise `else` (default FALSE). NULL is FALSE; a text condition is an error. Only the chosen branch is evaluated.", "IF(1 > 0, 'yes', 'no')"),
+    f("IFS", Logical, 2, ANY, "condition, value, …", "Value of the first TRUE condition (conditions as in `IF`); an error (`#N/A`) when none is TRUE. Conditions are evaluated in order up to the first TRUE one, and only its value is evaluated.", "IFS(FALSE, 'a', TRUE, 'b')"),
     f("BETWEEN", Logical, 3, n(3), "min, max, value", "TRUE when `min <= value <= max` (both bounds inclusive). All three arguments must be numbers.", "BETWEEN(10, 20, 15)"),
     // String
     f("LENGTH", Category::String, 1, n(1), "text_or_array", "Characters in a string or items in an array; 0 for NULL.", "LENGTH('héllo')"),

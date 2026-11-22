@@ -49,21 +49,36 @@ fn ifs_stops_at_the_first_true_condition() {
         Value::Number(2.0)
     );
     assert_eq!(ok("IFS(TRUE, 1, FALSE, FIRST([]))"), Value::Number(1.0));
-    assert_eq!(ok("IFS(FALSE, 1)"), Value::Boolean(false));
     assert!(evaluate("IFS(FALSE, 1, TRUE, UPPER(1))").is_err());
     assert!(evaluate("IFS(TRUE)").is_err());
+}
+
+fn err(src: &str) -> String {
+    match evaluate(src) {
+        Ok(v) => panic!("{src}: expected an error, got {v:?}"),
+        Err(e) => e.message,
+    }
 }
 
 #[test]
 fn eager_results_are_unchanged() {
     assert_eq!(ok("IF(TRUE, 1, 2)"), Value::Number(1.0));
     assert_eq!(ok("IF(FALSE, 1)"), Value::Boolean(false));
-    assert_eq!(ok("IF('x', 'a', 'b')"), Value::String("b".into()));
     assert_eq!(ok("IF(NULL, 'a', 'b')"), Value::String("b".into()));
     assert_eq!(ok("IFS(FALSE, 1, TRUE, 2)"), Value::Number(2.0));
     // A spread argument takes the eager path, with the same result.
     assert_eq!(ok("IF(...[TRUE, 'y', 'n'])"), Value::String("y".into()));
     assert_eq!(ok("IFS(...[FALSE, 1, 1, 2])"), Value::Number(2.0));
+}
+
+/// B-18 (ADR-0018 D-8): a text condition is `#VALUE!` and `IFS` with no TRUE condition is
+/// `#N/A`; they were `'b'` and FALSE. The eager (spread) path gives the same errors.
+#[test]
+fn text_condition_and_no_match_are_errors() {
+    assert!(err("IF('x', 'a', 'b')").contains("#VALUE!"));
+    assert!(err("IF(...['x', 'a', 'b'])").contains("#VALUE!"));
+    assert!(err("IFS(FALSE, 1)").contains("#N/A"));
+    assert!(err("IFS(...[FALSE, 1])").contains("#N/A"));
 }
 
 #[test]

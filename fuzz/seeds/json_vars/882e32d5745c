@@ -1,0 +1,2 @@
+AVG(JQ(:arguments, "$..value"))
+{"x": {"value": 3}}

@@ -4,51 +4,36 @@
 //! Servers run on 127.0.0.1 with a temporary hooks directory.
 #![cfg(feature = "plugins")]
 
+mod common;
+
+use common::ServerProcess;
 use std::io::{Read, Write};
-use std::net::TcpStream;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 const ADMIN: &str = "hook-files-admin";
 
 const HOOK: &str = "// @name: HOOKFILESOK\n// @min_args: 0\nfunction execute(args) { return 1; }\n";
 
 /// `sk_http_server` on a free 127.0.0.1 port with `hooks` as its hooks dir, killed on drop.
-struct Server {
-    child: std::process::Child,
-    port: u16,
-}
+struct Server(ServerProcess);
 
 impl Server {
     fn start(hooks: &Path) -> Server {
-        let port = std::net::TcpListener::bind("127.0.0.1:0")
-            .unwrap()
-            .local_addr()
-            .unwrap()
-            .port();
-        let child = std::process::Command::new(env!("CARGO_BIN_EXE_sk_http_server"))
-            .args([&port.to_string(), "--threads", "1", "--admin-token", ADMIN])
-            .env("SKILLET_HOOKS_DIR", hooks)
-            .env("SKILLET_BIND_HOST", "127.0.0.1")
-            .env_remove("SKILLET_AUTH_TOKEN")
-            .env_remove("SKILLET_ADMIN_TOKEN")
-            .env_remove("SKILLET_CORS_ORIGIN")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .expect("spawn server");
-        for _ in 0..200 {
-            if TcpStream::connect(("127.0.0.1", port)).is_ok() {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(50));
-        }
-        Server { child, port }
+        Server(ServerProcess::start(|port| {
+            let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_sk_http_server"));
+            cmd.args([&port.to_string(), "--threads", "1", "--admin-token", ADMIN])
+                .env("SKILLET_HOOKS_DIR", hooks)
+                .env("SKILLET_BIND_HOST", "127.0.0.1")
+                .env_remove("SKILLET_AUTH_TOKEN")
+                .env_remove("SKILLET_ADMIN_TOKEN")
+                .env_remove("SKILLET_CORS_ORIGIN")
+                .stdout(std::process::Stdio::null());
+            cmd
+        }))
     }
 
     fn request(&self, method: &str, path: &str, body: &str) -> String {
-        let mut s = TcpStream::connect(("127.0.0.1", self.port)).expect("connect");
-        s.set_read_timeout(Some(Duration::from_secs(30))).unwrap();
+        let mut s = self.0.connect();
         let req = format!(
             "{method} {path} HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {ADMIN}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
             body.len()
@@ -62,13 +47,6 @@ impl Server {
     fn with_filename(&self, method: &str, path: &str, filename: &str) -> String {
         let body = serde_json::json!({ "filename": filename, "js_code": HOOK }).to_string();
         self.request(method, path, &body)
-    }
-}
-
-impl Drop for Server {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
     }
 }
 

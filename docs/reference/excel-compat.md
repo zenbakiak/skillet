@@ -5,7 +5,8 @@
   amended by [ADR-0023](../adr/0023-excel-equality-and-coercion.md): UPPERCASE builtins and
   operators follow Excel, except for the deliberate differences listed below. They are
   implemented in PRs #82, #83, #84, #88 and #89 and ship in 0.7.0. Each row names its PR.
-  Two decided items are not implemented yet (B-18). The old v0.6.3 results are in the
+  The logical functions and operators follow [ADR-0029](../adr/0029-logic-operators.md), which
+  also implements the last two items of D-8 (B-18). The old v0.6.3 results are in the
   [0.7 migration guide](../guide/migration-0.7.md).
 - Scope: every builtin in `src/runtime/builtin_table.rs`, including the functions the evaluator
   handles itself (`IF`, `IFS`, `FILTER`, `FIND`, `MAP`, `REDUCE`, `SUMIF`, `AVERAGEIF`,
@@ -28,17 +29,17 @@
 
 | | Count | Functions |
 |---|---|---|
-| yes | 41 | `SUM`, `AVERAGE`, `MIN`, `MAX`, `ROUND`, `CEILING`, `FLOOR`, `ABS`, `SQRT`, `POWER`, `MOD`, `INT`, `UPPER`, `LOWER`, `TRIM`, `SUBSTITUTE`, `ISNUMBER`, `ISTEXT`, `LEN`, `TEXTJOIN`, `COUNT`, `COUNTA`, `COUNTIF`, `SUMIF`, `AVERAGEIF`, `FIND`, `DATE`, `TIME`, `PMT`, `IPMT`, `PPMT`, `PV`, `NPV`, `MEDIAN`, `MODE.SNGL`, `STDEV.P`, `STDEV.S`, `VAR.P`, `VAR.S`, `PERCENTILE.INC`, `QUARTILE.INC` |
-| edges | 16 | `PRODUCT`, `IF`, `IFS`, `AND`, `OR`, `NOT`, `CONCAT`, `LEFT`, `RIGHT`, `MID`, `REPLACE`, `YEAR`, `MONTH`, `DAY`, `DATEDIF`, `FV` |
-| differs | 10 | `XOR`, `ISBLANK`, `UNIQUE`, `SORT`, `FILTER`, `MAP`, `REDUCE`, `TODAY`, `NOW`, `DB` |
+| yes | 47 | `SUM`, `AVERAGE`, `MIN`, `MAX`, `ROUND`, `CEILING`, `FLOOR`, `ABS`, `SQRT`, `POWER`, `MOD`, `INT`, `UPPER`, `LOWER`, `TRIM`, `SUBSTITUTE`, `ISNUMBER`, `ISTEXT`, `LEN`, `TEXTJOIN`, `COUNT`, `COUNTA`, `COUNTIF`, `SUMIF`, `AVERAGEIF`, `FIND`, `DATE`, `TIME`, `PMT`, `IPMT`, `PPMT`, `PV`, `NPV`, `MEDIAN`, `MODE.SNGL`, `STDEV.P`, `STDEV.S`, `VAR.P`, `VAR.S`, `PERCENTILE.INC`, `QUARTILE.INC`, `IF`, `IFS`, `AND`, `OR`, `NOT`, `XOR` |
+| edges | 11 | `PRODUCT`, `CONCAT`, `LEFT`, `RIGHT`, `MID`, `REPLACE`, `YEAR`, `MONTH`, `DAY`, `DATEDIF`, `FV` |
+| differs | 9 | `ISBLANK`, `UNIQUE`, `SORT`, `FILTER`, `MAP`, `REDUCE`, `TODAY`, `NOW`, `DB` |
 | Skillet-only | 23 (+8 alias spellings) | `AVG`, `CEIL`, `POW`, `MULTIPLY`, `BETWEEN`, `LENGTH`, `SUBSTRING`, `SPLIT`, `SUBSTITUTEM`, `INCLUDES`, `ARRAY`, `FLATTEN`, `FIRST`, `LAST`, `CONTAINS`, `IN`, `JOIN`, `MERGE`, `REVERSE`, `DIG`, `JQ`, `DATEADD`, `DATEDIFF`; spellings `MODESNGL`, `MODE_SNGL`, `STDEV_P`, `VAR_P`, `PERCENTILEINC`, `PERCENTILE_INC`, `QUARTILEINC`, `QUARTILE_INC` |
 
 67 functions share a name with Excel (56 in the v0.6.3 audit, plus the 10 added under D-9 and
-D-3, and `DATEDIF` under B-15). 41 match, 16 match on valid inputs, and 10 give a different
-result for ordinary inputs; 6 of those 10 are deliberate. Legacy and alias names count with their
-function: `STDEVP`, `STDEV` and `VARP`, `VAR` with `STDEV.P`/`STDEV.S` and `VAR.P`/`VAR.S`;
-`MODE`, `PERCENTILE`, `QUARTILE` with the `.SNGL`/`.INC` names; `AVGIF` with `AVERAGEIF`. In
-v0.6.3 the counts were 2 yes, 32 edges and 22 differs.
+D-3, and `DATEDIF` from B-15). 47 match, 11 match on valid inputs, and 9 give a different result for ordinary inputs;
+6 of those 9 are deliberate. Legacy and alias names count with their function: `STDEVP`,
+`STDEV` and `VARP`, `VAR` with `STDEV.P`/`STDEV.S` and `VAR.P`/`VAR.S`; `MODE`, `PERCENTILE`,
+`QUARTILE` with the `.SNGL`/`.INC` names; `AVGIF` with `AVERAGEIF`. In v0.6.3 the counts were
+2 yes, 32 edges and 22 differs.
 
 ## Cross-cutting differences
 
@@ -53,7 +54,7 @@ These patterns repeat across many rows. They are listed once here, and the table
 | X-5 | **Arguments that were silently ignored** | Honored: `CEILING(2.1, 0.5)` → `2.5`, `SUBSTITUTE("a-b-c","-","+",2)` → `"a-b+c"`, `SORT([3,1,2], -1)` → `[3,2,1]`. Errors: `ROUND(2.567, "x")` → `Error: ROUND num_digits: cannot convert "x" to a number (#VALUE!)`, `PMT(0.05,10,1000,"x")` → `Error: PMT fv: cannot convert "x" to a number (#VALUE!)` | Honored, or `#VALUE!` | yes. **Implemented** D-1 (#84) |
 | X-6 | **Operators** | `2 ^ 3 ^ 2` → `64`; `-2 ^ 2` → `4`; `2*-3^2` → `18`; `0-2^2` → `-4`. `50%` → `0.5`; `10%-3` and `10 % -3` → `-2.9` (percent before `+`/`-`). `%` followed directly by an operand is modulo: `10 % 3` → `1`, `-10 % 3` → `-1`. `"a" & 1` → `"a1"`. `"a" == "A"` → `false`. `1 == "1"` and `TRUE == 1` → `false`. `"10" < "9"` → `true`; `1 < "2"` → `Error: Comparison of incompatible types` | `=2^3^2` = 64, `=-2^2` = 4. `%` is only the percent suffix. `&` joins text. `=` ignores case for text, and does not convert (`=1="1"` is FALSE). Mixed types order numbers < text < logical | **Implemented**: Excel precedence D-10 and `&` (#82); `%` suffix (#82) and `%` before `+`/`-` (ADR-0023 §7, #89). **Deliberate**: `==` stays case-sensitive (ADR-0023 §1; use `LOWER(:a) == LOWER(:b)`), text orders by code point and mixed-type ordering is an error so a mistake is reported (ADR-0023 §4), and `%` with an operand after it stays a truncated remainder because changing it would break every existing `%` (ADR-0018). `MOD` is Excel's |
 | X-7 | **Number to text** | `CONCAT(0.1 + 0.2)` and `0.1 + 0.2 & ""` → `"0.30000000000000004"` (Rust's shortest round-trip format) | 15 significant digits, so `"0.3"` | **deliberate** (ADR-0018). Use `ROUND` first |
-| X-8 | **Lazy `IF`** | `IF(TRUE, 1, UPPER(1))` → `1`; `IF(FALSE, FIRST([]), 0)` → `0`; `IFS` stops at the first true condition | Only the chosen branch is evaluated | yes. **Implemented** D-8 (#82). Open: the text-condition and no-match errors of D-8 (B-18) |
+| X-8 | **Lazy `IF`** | `IF(TRUE, 1, UPPER(1))` → `1`; `IF(FALSE, FIRST([]), 0)` → `0`; `IFS` stops at the first true condition | Only the chosen branch is evaluated | yes. **Implemented** D-8 (#82); the text-condition and no-match errors (B-18) in ADR-0029 |
 | X-9 | **Strict argument types where Excel converts** | Builtins refuse `NULL`: `ABS(NULL)` → `Error: ABS expects number, got null`, `ROUND(NULL)`, `SQRT(NULL)` likewise. Text builtins refuse numbers: `UPPER(1)` → `Error: UPPER expects string`, `LEFT(12345, 2)`, `TRIM(1)`, `SUBSTITUTE(123, "2", "x")` → errors. `LEN`, `CONCAT`, `TEXTJOIN` and `&` do convert numbers and booleans to text | A blank cell is 0 or `""`; numbers convert to text | **deliberate**. ADR-0023 §6 narrowed "errors over silent coercion" (ADR-0018) to this: text and booleans convert to numbers in arithmetic and scalar math, `NULL` is 0 in the operators only, and other conversions stay errors so a type mistake is reported instead of guessed |
 
 ## Arithmetic
@@ -77,12 +78,12 @@ These patterns repeat across many rows. They are listed once here, and the table
 
 | Function | Skillet (expr → output) | Excel | Match? | Status |
 |---|---|---|---|---|
-| `IF` | `IF(TRUE,1,2)` → `1`; `IF(FALSE,1)` → `false`; `IF(1,"a","b")` → `"a"`; `IF("x","a","b")` → `"b"`; `IF(NULL,"a","b")` → `"b"`; `IF(TRUE,1,UPPER(1))` → `1` | A missing false branch returns FALSE (matches). Text in `test` → `#VALUE!`. Only the chosen branch is evaluated | edges | lazy: implemented D-8 (#82). **Open** (B-18): D-8 decided that a text condition is an error, but `IF("x", 1, 2)` → `2`, and `tests/lazy_if.rs` pins that result |
-| `IFS` | `IFS(FALSE,1,TRUE,2)` → `2`; `IFS(FALSE,1)` → `false`; `IFS(TRUE)` → `Error: IFS expects pairs of condition,value arguments` | No true condition → `#N/A` | edges | lazy: implemented D-8 (#82). **Open** (B-18): D-8 decided that no true condition is an error, but `IFS(FALSE, 1)` → `false` |
-| `AND` | `AND(TRUE,1,0)` → `false`; `AND()` → `true`; `AND(TRUE,"x")` → `false`; `AND(FALSE, UPPER(1))` → error | 1 to 255 arguments. Text typed as an argument → `#VALUE!` (**verify in Excel**). Excel also evaluates all arguments | edges | open: text argument and `AND()` should be errors (ADR-0018 D-1 rule); no backlog item yet |
-| `OR` | `OR(FALSE,0)` → `false`; `OR()` → `false`; `OR(FALSE,"TRUE")` → `false` | Same rules as `AND` | edges | open, same as `AND` |
-| `NOT` | `NOT(0)` → `true`; `NOT("x")` → `true`; `NOT()` → `true` | Text → `#VALUE!`. 1 argument required | edges | open: error for text and for no argument |
-| `XOR` | `XOR(TRUE,FALSE)` → `true`; `XOR(TRUE,TRUE,TRUE)` → `Error: XOR expects 2 arguments`; `XOR(TRUE)` → same error | 1 to 254 arguments; TRUE when an odd number are TRUE, so `XOR(TRUE,TRUE,TRUE)` = TRUE | differs | open: accept 1..n arguments with the odd-count rule (backward compatible) |
+| `IF` | `IF(TRUE,1,2)` → `1`; `IF(FALSE,1)` → `false`; `IF(1,"a","b")` → `"a"`; `IF(NULL,"a","b")` → `"b"`; `IF(TRUE,1,UPPER(1))` → `1`; `IF("x","a","b")` → `Error: IF condition must be TRUE, FALSE or a number, got string (#VALUE!)` | A missing false branch returns FALSE. Text in `test` → `#VALUE!`. Only the chosen branch is evaluated | yes | implemented: lazy D-8 (#82); text condition B-18 (ADR-0029) |
+| `IFS` | `IFS(FALSE,1,TRUE,2)` → `2`; `IFS(FALSE,1)` → `Error: IFS: no condition is TRUE (#N/A)`; `IFS(TRUE)` → `Error: IFS expects pairs of condition,value arguments` | No true condition → `#N/A` | yes | implemented: lazy D-8 (#82); `#N/A` B-18 (ADR-0029) |
+| `AND` | `AND(TRUE,1,0)` → `false`; `AND([TRUE,"x",NULL])` → `true`; `AND(TRUE,NULL)` → `true`; `AND(TRUE,"x")` → `#VALUE!` error; `AND()`, `AND([])` → `Error: AND: no logical values (#VALUE!)`; `AND(FALSE, UPPER(1))` → error | 1 to 255 arguments, every one evaluated. Text and empty cells in a range are ignored; no logical values → `#VALUE!`. Text typed as an argument → `#VALUE!` (**verify in Excel**: `"TRUE"` typed directly may convert) | yes | implemented (ADR-0029). A `NULL` argument counts as an empty cell |
+| `OR` | `OR(FALSE,0)` → `false`; `OR([FALSE,"TRUE"])` → `false`; `OR(FALSE,"TRUE")` → `#VALUE!` error; `OR()` → `#VALUE!` error | Same rules as `AND` | yes | implemented (ADR-0029) |
+| `NOT` | `NOT(0)` → `true`; `NOT(NULL)` → `true`; `NOT("x")` → `#VALUE!` error; `NOT()` → `Error: NOT expects 1 argument`. Keyword form: `NOT TRUE` → `false` | Text → `#VALUE!`. 1 argument required | yes | implemented (ADR-0029) |
+| `XOR` | `XOR(TRUE,FALSE)` → `true`; `XOR(TRUE,TRUE,TRUE)` → `true`; `XOR(TRUE)` → `true`; `XOR()` → `#VALUE!` error | 1 to 254 arguments; TRUE when an odd number are TRUE | yes | implemented (ADR-0029) |
 | `BETWEEN` | `BETWEEN(1,10,5)` → `true` (`min, max, value`); `BETWEEN(5,1,10)` → `false` | No Excel function | Skillet-only | fixed (B-10, #68) |
 
 ## Text
@@ -221,7 +222,7 @@ result as the builtin of the same name. The pairs that differ:
 | B-15 | Low | `DATEADD(DATE(2026,1,1), 1, "m")` | +1 minute | fixed (2026-11-21): units follow Excel, `"m"` is months, `"n"` minutes; `DATEDIF` added |
 | B-16 | Low | `SUBSTITUTE("abc", "", "x")` | `"abc"` | fixed (#84) |
 | B-17 | Low | `COUNTIF([1,2,3], :x)` (lambda returns a non-boolean) | `Error: COUNTIF criteria expression must return TRUE or FALSE, got number` | fixed (#84) |
-| B-18 | Medium | `IF("x", 1, 2)`; `IFS(FALSE, 1)` | `2`; `false` | **open**: ADR-0018 D-8 decided `Error` for both, and the changelog and migration guide say so, but the code and `tests/lazy_if.rs` keep the old results |
+| B-18 | Medium | `IF("x", 1, 2)`; `IFS(FALSE, 1)` | `#VALUE!` error; `#N/A` error | fixed (ADR-0029, BL-073); were `2` and `false` |
 
 Doc defects in `docs/reference/api.md` that are still there: `COMPACT(array)` is documented as a
 function but only the `.compact()` method exists (`COMPACT([1,NULL])` → `Unknown function`); the
@@ -246,8 +247,8 @@ All ten are decided in [ADR-0018](../adr/0018-excel-compatibility.md) (2026-11-2
 6. **D-6: The `FIND` name collision.** Dispatch on the first argument's type. **Implemented** in #83.
 7. **D-7: `MOD` sign, `TRIM` inner spaces, `SUMIF` case and wildcards.** Excel for the
    functions, Ruby for the methods. **Implemented** in #84.
-8. **D-8: Lazy `IF`/`IFS`** (X-8). **Implemented** in #82. Not implemented: the errors for a text
-   condition and for `IFS` with no true condition (B-18).
+8. **D-8: Lazy `IF`/`IFS`** (X-8). **Implemented** in #82; the errors for a text condition and
+   for `IFS` with no true condition (B-18) with ADR-0029 (BL-073).
 9. **D-9: Excel names** `LEN`, `AVERAGEIF`, `STDEV.S`/`STDEV`, `VAR.S`/`VAR`, `TODAY`, `PPMT`,
    `PV`, `NPV`, `TEXTJOIN`, `PERCENTILE`, `QUARTILE`, `MODE`. **Implemented**: `STDEV.S` and
    `VAR.S` in #82; `LEN`, `TEXTJOIN`, `TODAY`, `PPMT`, `PV`, `NPV` and the legacy aliases in #83;
