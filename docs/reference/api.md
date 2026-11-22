@@ -479,10 +479,15 @@ FIND("x", "abc")                   # Error: FIND: find_text not found in within_
 ```
 
 #### `CONCAT(...)`
-Concatenate strings.
+Join every value as text, as Excel does. Numbers and currency are written as numbers
+(`1.5::Currency` is `"1.5"`), booleans as `TRUE`/`FALSE`, and a DateTime as its `::String` text,
+the Unix seconds (Excel writes a date's serial number the same way). Arrays are flattened. `NULL`
+and JSON objects add nothing. The `&` operator uses the same rules.
 ```bash
-CONCAT("Hello", " ", "World") # "Hello World"
-CONCAT("Value: ", 42)         # "Value: 42"
+CONCAT("Hello", " ", "World")          # "Hello World"
+CONCAT("Value: ", 42)                  # "Value: 42"
+CONCAT("Total: ", 9.5::Currency)       # "Total: 9.5"
+CONCAT("On ", DATE(2026, 1, 1))        # "On 1767225600"
 ```
 
 #### `SUBSTRING(text, start, length)`
@@ -493,29 +498,40 @@ SUBSTRING("Hello", 1, 3)        # "ell"
 ```
 
 #### `LEFT(text, [num_chars])`, `RIGHT(text, [num_chars])`
-Extract from left/right side.
+Extract from left/right side, as in Excel. `num_chars` defaults to 1 and is truncated; more than the
+text has returns the whole text; a negative `num_chars` is an error (Excel `#VALUE!`).
 ```bash
 LEFT("Hello", 2)             # "He"
 RIGHT("Hello", 3)            # "llo"
 LEFT("Hello")                # "H" (default: 1 char)
+LEFT("Hello", 10)            # "Hello"
+LEFT("Hello", -1)            # Error: LEFT num_chars must not be negative (#VALUE!)
 ```
 
 #### `MID(text, start, [num_chars])`
-Extract substring (1-based indexing, Excel-style).
+Extract substring (1-based indexing, Excel-style). A `start` past the end gives `""`, and a
+`num_chars` past the end stops at the end. A `start` below 1 or a negative `num_chars` is an error
+(Excel `#VALUE!`). Leaving out `num_chars` (rest of the text) is a Skillet extension.
 ```bash
 MID("Hello", 2, 3)           # "ell" (1-based start)
 MID("Hello", 3)              # "llo" (rest of string)
+MID("Hello", 10, 2)          # ""
+MID("Hello", 0, 2)           # Error: MID start_num must be at least 1 (#VALUE!)
+MID("Hello", 2, -1)          # Error: MID num_chars must not be negative (#VALUE!)
 ```
 
 #### `SUBSTITUTE(text, old_text, new_text, [instance_num])`, `SUBSTITUTEM(text, substr, replacement)`
 Replace every occurrence of `old_text` with `new_text`, or, with `instance_num`, only that
 occurrence (1-based, as in Excel). An empty `old_text` returns the text unchanged. Matching is
 case-sensitive. `SUBSTITUTEM` replaces every occurrence and takes no `instance_num`.
+
+`SUBSTITUTEM` is **deprecated since 0.7.0** and will be removed in a later minor release: use
+`SUBSTITUTE`, which gives the same result for three arguments. It still works and gives no warning.
 ```bash
 SUBSTITUTE("foo bar foo", "foo", "baz")   # "baz bar baz"
 SUBSTITUTE("a-a-a", "-", "_")             # "a_a_a"
 SUBSTITUTE("a-b-c", "-", "+", 2)          # "a-b+c"
-SUBSTITUTEM("a-a-a", "-", "_")            # "a_a_a"
+SUBSTITUTEM("a-a-a", "-", "_")            # "a_a_a" (deprecated)
 ```
 
 #### `TRIM(text)`
@@ -528,11 +544,15 @@ TRIM("  a   b  ")            # "a b"
 ```
 
 #### `REPLACE(old_text, start_num, num_chars, new_text)`
-Excel-style positional replace using 1-based `start_num` and character counts.
+Excel-style positional replace using 1-based `start_num` and character counts. A `start_num` past
+the end appends `new_text`; a `num_chars` past the end stops at the end. A `start_num` below 1 or a
+negative `num_chars` is an error (Excel `#VALUE!`).
 ```bash
 REPLACE("abcdef", 3, 2, "XY")             # "abXYef"
 REPLACE("abc", 1, 0, "X")                 # "Xabc" (insert)
 REPLACE("hello", 4, 10, "X")              # "helX" (clamped)
+REPLACE("abc", 10, 1, "X")                # "abcX" (appended)
+REPLACE("abc", 0, 1, "X")                 # Error: REPLACE start_num must be at least 1 (#VALUE!)
 ```
 
 #### `ISNUMBER(value)`, `ISTEXT(value)`
@@ -693,9 +713,31 @@ FLATTEN([1,[2,[3]],4])       # [1, 2, 3, 4]
 ```
 
 #### `UNIQUE(array)`
-Remove duplicates.
+Remove duplicates, keeping values of every type in first-seen order. Two values are duplicates when
+`==` says so: same type and value, text case-sensitive (ADR-0023).
 ```bash
 UNIQUE([1,2,2,3,3,3])        # [1, 2, 3]
+UNIQUE(["a", "a", 1])        # ["a", 1]
+UNIQUE(["a", "A"])           # ["a", "A"]
+```
+
+#### `SORT(array, [order])`
+Sort ascending, or descending with `order` `-1` (Excel) or `"DESC"` (Skillet). As in Excel, numbers
+come before text and text before booleans; text ignores case, and `FALSE` comes before `TRUE`.
+Equal items keep their order. Currency sorts with the numbers. `NULL`, DateTime, arrays, JSON
+objects and NaN are an error.
+```bash
+SORT([3, 1, 2])                    # [1, 2, 3]
+SORT([3, 1, 2], -1)                # [3, 2, 1]
+SORT(["banana", "Apple", "cherry"])  # ["Apple", "banana", "cherry"]
+SORT([TRUE, "b", 2, "A", 1])       # [1, 2, "A", "b", TRUE]
+```
+
+#### `REVERSE(array_or_text)`
+Items of an array, or characters of a string, in reverse order.
+```bash
+REVERSE([1, 2, 3])           # [3, 2, 1]
+REVERSE("abc")               # "cba"
 ```
 
 #### `COMPACT(array)`
@@ -750,6 +792,19 @@ Arrays are flattened, and only numbers count. No numbers is an error.
 ```bash
 NPV(0.1, -10000, 3000, 4200, 6800)                  # 1188.44
 NPV(0.08, [8000, 9200, 10000, 12000, 14500]) - 40000  # 1922.06
+```
+
+#### `DB(cost, salvage, life, period, [month])`
+Fixed-declining-balance depreciation for one period, Excel's `DB`. The rate is
+`1 - (salvage / cost)^(1 / life)`, rounded to 3 decimals. `month` (1-12, default 12) is the number
+of months in the first year; when it is less than 12 there is a last period `life + 1` for the
+remaining months. A cost of 0 or less, a negative salvage, a life of 0 or less, a `month` outside
+1-12, or a `period` outside 1..`life` (1..`life + 1` when `month` < 12) is an error (Excel `#NUM!`).
+```bash
+DB(1000000, 100000, 6, 1, 7)   # 186083.33
+DB(1000000, 100000, 6, 6, 7)   # 55841.76
+DB(1000000, 100000, 6, 7, 7)   # 15845.10
+DB(0, 0, 5, 1)                 # Error: DB needs cost > 0, salvage >= 0 and life > 0 (#NUM!)
 ```
 
 Optional arguments of `PPMT`, `PV` and `NPV` must be numbers (or NULL); other types are an error.
