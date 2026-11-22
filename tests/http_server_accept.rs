@@ -3,50 +3,37 @@
 //! Servers run on 127.0.0.1 only, from the temp directory (not the repo), like an installed
 //! binary.
 
+mod common;
+
+use common::ServerProcess;
 use std::io::{Read, Write};
 use std::net::TcpStream;
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 /// `sk_http_server` on a free 127.0.0.1 port, killed on drop.
-struct Server {
-    child: Child,
-    port: u16,
-}
+struct Server(ServerProcess);
 
 impl Server {
     fn spawn() -> Server {
-        let port = std::net::TcpListener::bind("127.0.0.1:0")
-            .unwrap()
-            .local_addr()
-            .unwrap()
-            .port();
-        let hooks = std::env::temp_dir().join("skillet-http-accept-no-hooks");
-        let child = Command::new(env!("CARGO_BIN_EXE_sk_http_server"))
-            .current_dir(std::env::temp_dir())
-            .args([port.to_string(), "--threads".into(), "2".into()])
-            .env("SKILLET_HOOKS_DIR", hooks)
-            .env("SKILLET_BIND_HOST", "127.0.0.1")
-            .env_remove("SKILLET_AUTH_TOKEN")
-            .env_remove("SKILLET_ADMIN_TOKEN")
-            .env_remove("SKILLET_CORS_ORIGIN")
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("spawn sk_http_server");
-        let server = Server { child, port };
-        for _ in 0..200 {
-            if server.get("/health").is_ok() {
-                return server;
-            }
-            std::thread::sleep(Duration::from_millis(50));
-        }
-        panic!("sk_http_server did not start");
+        Server(ServerProcess::start(|port| {
+            let hooks = std::env::temp_dir().join("skillet-http-accept-no-hooks");
+            let mut cmd = Command::new(env!("CARGO_BIN_EXE_sk_http_server"));
+            cmd.current_dir(std::env::temp_dir())
+                .args([port.to_string(), "--threads".into(), "2".into()])
+                .env("SKILLET_HOOKS_DIR", hooks)
+                .env("SKILLET_BIND_HOST", "127.0.0.1")
+                .env_remove("SKILLET_AUTH_TOKEN")
+                .env_remove("SKILLET_ADMIN_TOKEN")
+                .env_remove("SKILLET_CORS_ORIGIN")
+                .stdout(Stdio::null());
+            cmd
+        }))
     }
 
     /// One `GET` with `Connection: close`; returns the raw response.
     fn get(&self, path: &str) -> std::io::Result<String> {
-        let mut s = TcpStream::connect(("127.0.0.1", self.port))?;
+        let mut s = TcpStream::connect(("127.0.0.1", self.0.port))?;
         s.set_read_timeout(Some(Duration::from_secs(10)))?;
         write!(
             s,
@@ -56,13 +43,6 @@ impl Server {
         let mut out = String::new();
         s.read_to_string(&mut out)?;
         Ok(out)
-    }
-}
-
-impl Drop for Server {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
     }
 }
 
@@ -99,14 +79,14 @@ fn sigint_stops_idle_server() {
     let mut server = Server::spawn();
     std::thread::sleep(Duration::from_millis(200)); // idle: blocked in accept
     let status = Command::new("kill")
-        .args(["-INT", &server.child.id().to_string()])
+        .args(["-INT", &server.0.child.id().to_string()])
         .status()
         .expect("run kill");
     assert!(status.success());
 
     let deadline = Instant::now() + Duration::from_secs(10);
     let exit = loop {
-        if let Some(exit) = server.child.try_wait().expect("try_wait") {
+        if let Some(exit) = server.0.child.try_wait().expect("try_wait") {
             break exit;
         }
         assert!(
@@ -117,14 +97,7 @@ fn sigint_stops_idle_server() {
     };
     assert!(exit.success(), "exit status {:?}", exit);
 
-    let mut stderr = String::new();
-    server
-        .child
-        .stderr
-        .take()
-        .expect("stderr")
-        .read_to_string(&mut stderr)
-        .unwrap();
+    let stderr = server.0.stderr_after_exit();
     assert!(stderr.contains("Server shutdown complete."), "{}", stderr);
 }
 

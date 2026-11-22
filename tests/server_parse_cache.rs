@@ -3,52 +3,32 @@
 //! reported every time. Servers run on 127.0.0.1 with one worker, so every request after the
 //! first one uses the cached tree.
 
+mod common;
+
+use common::ServerProcess;
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::TcpStream;
-use std::time::Duration;
 
 /// A server binary on a free 127.0.0.1 port, killed on drop.
-struct Server {
-    child: std::process::Child,
-    port: u16,
-}
+struct Server(ServerProcess);
 
 impl Server {
     fn spawn(bin: &str, args: impl Fn(u16) -> Vec<String>) -> Server {
-        let port = std::net::TcpListener::bind("127.0.0.1:0")
-            .unwrap()
-            .local_addr()
-            .unwrap()
-            .port();
-        let hooks = std::env::temp_dir().join("skillet-parse-cache-no-hooks");
-        let child = std::process::Command::new(bin)
-            .args(args(port))
-            .env("SKILLET_HOOKS_DIR", hooks)
-            .env("SKILLET_BIND_HOST", "127.0.0.1")
-            .env_remove("SKILLET_AUTH_TOKEN")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .expect("spawn server");
-        for _ in 0..200 {
-            if TcpStream::connect(("127.0.0.1", port)).is_ok() {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(50));
-        }
-        Server { child, port }
-    }
-
-    fn connect(&self) -> TcpStream {
-        let s = TcpStream::connect(("127.0.0.1", self.port)).expect("connect");
-        s.set_read_timeout(Some(Duration::from_secs(60))).unwrap();
-        s
+        Server(ServerProcess::start(|port| {
+            let hooks = std::env::temp_dir().join("skillet-parse-cache-no-hooks");
+            let mut cmd = std::process::Command::new(bin);
+            cmd.args(args(port))
+                .env("SKILLET_HOOKS_DIR", hooks)
+                .env("SKILLET_BIND_HOST", "127.0.0.1")
+                .env_remove("SKILLET_AUTH_TOKEN")
+                .stdout(std::process::Stdio::null());
+            cmd
+        }))
     }
 
     /// One request to the server: an HTTP POST /eval for `sk_http_server`, one line for
     /// `sk_server`. Returns the JSON response body.
     fn eval(&self, http: bool, body: &str) -> serde_json::Value {
-        let mut s = self.connect();
+        let mut s = self.0.connect();
         let text = if http {
             let req = format!(
                 "POST /eval HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -68,13 +48,6 @@ impl Server {
             line
         };
         serde_json::from_str(&text).unwrap_or_else(|e| panic!("{e}: {text}"))
-    }
-}
-
-impl Drop for Server {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
     }
 }
 
@@ -172,7 +145,7 @@ fn bl012_sk_server_repeated_expressions_use_each_requests_variables() {
 
 /// One raw HTTP request; returns the JSON body.
 fn http(server: &Server, head: &str) -> serde_json::Value {
-    let mut s = server.connect();
+    let mut s = server.0.connect();
     s.write_all(format!("{head}\r\nHost: localhost\r\nConnection: close\r\n\r\n").as_bytes())
         .unwrap();
     let mut resp = String::new();

@@ -5,46 +5,30 @@
 
 use std::io::{Read, Write};
 use std::net::TcpStream;
-use std::time::Duration;
 
-/// `sk_http_server` with one worker on a free 127.0.0.1 port, killed on drop.
-struct Server {
-    child: std::process::Child,
-    port: u16,
-}
+mod common;
+use common::ServerProcess;
+
+/// `sk_http_server` with one worker on a port it owns (BL-061), killed on drop.
+struct Server(ServerProcess);
 
 impl Server {
     fn start() -> Server {
-        let port = std::net::TcpListener::bind("127.0.0.1:0")
-            .unwrap()
-            .local_addr()
-            .unwrap()
-            .port();
-        let hooks = std::env::temp_dir().join("skillet-http-status-no-hooks");
-        let child = std::process::Command::new(env!("CARGO_BIN_EXE_sk_http_server"))
-            .args([port.to_string().as_str(), "--threads", "1"])
-            .env("SKILLET_HOOKS_DIR", hooks)
-            .env_remove("SKILLET_AUTH_TOKEN")
-            .env_remove("SKILLET_ADMIN_TOKEN")
-            .env_remove("SKILLET_CORS_ORIGIN")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .expect("spawn sk_http_server");
-        let server = Server { child, port }; // killed on drop, also if it never starts
-        for _ in 0..200 {
-            if TcpStream::connect(("127.0.0.1", port)).is_ok() {
-                return server;
-            }
-            std::thread::sleep(Duration::from_millis(50));
-        }
-        panic!("sk_http_server did not start");
+        Server(ServerProcess::start(|port| {
+            let hooks = std::env::temp_dir().join("skillet-http-status-no-hooks");
+            let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_sk_http_server"));
+            cmd.args([port.to_string().as_str(), "--threads", "1"])
+                .env("SKILLET_HOOKS_DIR", hooks)
+                .env_remove("SKILLET_AUTH_TOKEN")
+                .env_remove("SKILLET_ADMIN_TOKEN")
+                .env_remove("SKILLET_CORS_ORIGIN")
+                .stdout(std::process::Stdio::null());
+            cmd
+        }))
     }
 
     fn connect(&self) -> TcpStream {
-        let s = TcpStream::connect(("127.0.0.1", self.port)).expect("connect");
-        s.set_read_timeout(Some(Duration::from_secs(60))).unwrap();
-        s
+        self.0.connect()
     }
 
     /// Send `data` from another thread and read the whole response. Returns the response and
@@ -70,13 +54,6 @@ impl Server {
             body.len()
         );
         self.exchange(req.into_bytes()).0
-    }
-}
-
-impl Drop for Server {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
     }
 }
 
