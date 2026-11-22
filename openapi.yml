@@ -838,7 +838,10 @@ components:
           description: Current number of cached entries
         evictions:
           type: integer
-          description: Number of cache evictions
+          description: |
+            Entries dropped because the cache was full (1,000 entries, least recently used
+            first). Replacing an entry that is already cached is not counted. Reset by
+            `DELETE /cache`.
         total_saved_time_ms:
           type: number
           description: Total time saved by caching
