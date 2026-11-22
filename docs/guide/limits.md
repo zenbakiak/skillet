@@ -9,8 +9,8 @@ goes over a limit returns an ordinary `Error`; it never crashes the process or t
 | Evaluation budget | 256 MiB of values created (`skillet::MAX_EVAL_BYTES`) | library, CLI, servers | `Evaluation budget exceeded (max 256 MB)` |
 | Deadline | 10 s per request | servers only | `Evaluation timed out (max 10 s)` |
 | Response size | serialized result must fit the 256 MiB budget | servers only | `Evaluation budget exceeded (max 256 MB)` |
-| Request size | 1 MB (1,048,576 bytes) | both servers | HTTP 400 `413 Payload Too Large` / `Request too large (max 1MB)` (`sk_server`) |
-| Request read time | 30 s for the whole request | both servers | HTTP 400 `408 Request Timeout` / `Request read timed out (max 30 s)` (`sk_server`) |
+| Request size | 1 MB (1,048,576 bytes) | both servers | HTTP 413 `Request body too large (max 1MB)` / `Request too large (max 1MB)` (`sk_server`) |
+| Request read time | 30 s for the whole request | both servers | HTTP 408 `Request read timed out (max 30 s)` / the same message (`sk_server`) |
 | Response write | 10 s for the whole response | both servers | none (the response is cut short and the connection closed) |
 | Connections per IP address | off by default; `--max-connections-per-ip N` or `SKILLET_MAX_CONNECTIONS_PER_IP` | both servers | HTTP 429 `Too many connections from this address (max N)` / the same JSON line (`sk_server`); see [servers](servers.md#connection-limit-per-ip-address) |
 | Cache entry | 64 KiB | `sk_http_server` result cache | none (bigger results are just not cached) |
@@ -317,18 +317,22 @@ environment variable to change them.
 The read deadline is a total, not a per-read timeout, so a client that sends one byte at a time
 cannot hold a worker thread for longer than 30 s (BL-033, BL-037).
 
-`sk_http_server` answers both limit errors with HTTP status **400** and a JSON body whose `error`
-names the condition. The status code is 400, not 413 or 408 (output of a release build of
-`develop` at d3e6a5d):
+`sk_http_server` answers the size limit with HTTP status **413** and the read deadline with
+**408**, on any path, with a JSON body whose `error` names the condition (BL-049; before 0.7.0
+both were 400). It then reads and discards the rest of the request until the client closes or
+the 30 s pass, so the client receives the error instead of a connection reset (output of a
+debug build of this change):
 
 ```console
 POST /eval  (body: {"expression": "1", "arguments": {"s": "x…(1,100,000)"}})
-400 {"error":"413 Payload Too Large","success":false}
+413 {"error":"Request body too large (max 1MB)","success":false}
 
 POST /eval  (headers say Content-Length: 100, then 6 bytes, then nothing)
 … 30.0 s later …
-400 {"error":"408 Request Timeout","success":false}
+408 {"error":"Request read timed out (max 30 s)","success":false}
 ```
+
+Headers over 1 MB without the closing blank line get 413 with `Request too large (max 1MB)`.
 
 `sk_server` answers with an ordinary error response and then closes the connection, because the
 rest of the stream can no longer be split into lines:

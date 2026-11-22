@@ -20,6 +20,9 @@ proof-of-concept tests, and file fixes. You don't merge your own fixes without a
 - **Token comparison is not constant-time** — `src/bin/http_server/auth.rs` uses `!=`. Low risk, cheap fix.
 - **No QuickJS resource limits** — `src/js_plugin.rs` sets no memory limit or interrupt handler; an
   uploaded `while(true){}` pins a worker thread forever.
+- **Fuzz finds (BL-019), fixed**: lexer subtract overflow on a lone leading `=` (`"=="`) and
+  negate overflow on a huge negative index (`[1][-1e300]`); both panicked in debug builds.
+  Pinned in `tests/fuzz_regressions.rs`.
 - **Present and good**: 1 MB request cap and 30 s read / 10 s write timeouts (`http_server/utils.rs`).
 
 ## Review checklist (for any PR touching parser, runtime, servers, or plugins)
@@ -31,8 +34,24 @@ proof-of-concept tests, and file fixes. You don't merge your own fixes without a
 - [ ] `cargo audit` clean (or advisories accepted in an ADR).
 
 ## Tools
-`cargo audit`, `cargo fuzz` (target: `parse` + `evaluate_with_json`, PRD-003 FR-8), `curl` against a
-local `sk_http_server`. Never test against hosts you don't own.
+`cargo audit`, `cargo fuzz` (see Fuzzing), `curl` against a local `sk_http_server`. Never test
+against hosts you don't own.
+
+## Fuzzing (BL-019, ADR-0028)
+`fuzz/` is a separate cargo-fuzz crate (own workspace, not published, no `plugins`). Targets:
+`parse`, `evaluate` (fixed variables, 1 MiB budget, 500 ms deadline) and `json_vars`
+(`<expr>\n<json>` into `evaluate_with_json`). `.github/workflows/fuzz.yml` runs each for 10 min
+every Monday and on manual dispatch, and uploads `fuzz/artifacts/` on a crash; it is not a
+required check, so read its result.
+```bash
+rustup toolchain install nightly-2025-08-04          # FUZZ_TOOLCHAIN in fuzz.yml
+cargo +nightly-2025-08-04 install cargo-fuzz --locked
+cargo +nightly-2025-08-04 fuzz run -a evaluate fuzz/corpus/evaluate fuzz/seeds/evaluate -- -max_total_time=60
+cargo +nightly-2025-08-04 fuzz run -a evaluate fuzz/artifacts/evaluate/crash-<hash>   # reproduce
+cargo +nightly-2025-08-04 fuzz tmin -a evaluate fuzz/artifacts/evaluate/crash-<hash>  # minimize
+```
+On macOS add `-s none` (the nightly ASan runtime hangs at start-up). Every crash gets a backlog
+item, and its fix lands with the minimized input in `tests/fuzz_regressions.rs`.
 
 ## Hand off
 Use the handoff template in `harness/roles/orchestrator.md`. Give each finding a severity

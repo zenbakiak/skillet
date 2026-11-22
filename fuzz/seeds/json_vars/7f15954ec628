@@ -1,0 +1,2 @@
+JQ(:arguments, "$.scores[*].value")
+{"scores": [{"value": 1}, {"value": 2}]}

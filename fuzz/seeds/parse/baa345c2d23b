@@ -1,0 +1,1 @@
+:data := {values: [10, 20, 30]}; SUM(:data.values)

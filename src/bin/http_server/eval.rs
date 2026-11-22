@@ -9,10 +9,12 @@ use std::time::Instant;
 
 use super::auth::check_authentication;
 use super::cache::{clear_cache, evaluate_cached, get_cache_stats};
+use super::parse_cache;
 use super::response_size;
 use super::stats::ServerStats;
 use super::types::{
     CacheStatsResponse, EvalRequest, EvalResponse, HealthResponse, IncludeVariables,
+    ParseCacheStatsResponse,
 };
 use super::utils::{
     parse_json_body, sanitize_json_key, send_http_error, send_http_response, to_json_exact,
@@ -173,6 +175,15 @@ pub fn handle_health(
             evictions: cache_stats.evictions,
             total_saved_time_ms: cache_stats.total_saved_time_ms,
         }),
+        parse_cache: {
+            let parse = parse_cache::stats();
+            ParseCacheStatsResponse {
+                hits: parse.hits,
+                misses: parse.misses,
+                hit_rate: parse.hit_rate(),
+                entries: parse.entries,
+            }
+        },
     };
 
     let json = serde_json::to_string(&response).unwrap_or_default();
@@ -190,8 +201,9 @@ pub fn handle_cache_clear(
         return;
     }
 
-    // Clear the expression cache
     clear_cache();
+    // Every worker's parsed trees too: this one's now, the others' at their next request.
+    parse_cache::clear_all();
 
     let response = serde_json::json!({
         "success": true,

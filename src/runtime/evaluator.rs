@@ -153,9 +153,10 @@ fn missing_variable(name: &str) -> Error {
     Error::new(format!("Missing variable: :{}", name), None)
 }
 
-/// Excel-style date arithmetic, in days: `DateTime ± Number` and `Number + DateTime` give a
-/// DateTime (fractional days allowed, rounded to the second), `DateTime - DateTime` gives the
-/// difference in days (fractional). Anything else is the usual arithmetic type error.
+/// Excel-style date arithmetic, in days: `DateTime ± x` and `x + DateTime` give a DateTime
+/// (fractional days allowed, rounded to the second), `DateTime - DateTime` gives the difference
+/// in days (fractional). `x` converts like any operator operand (ADR-0027): NULL is 0, numeric
+/// text and booleans convert, other text is `#VALUE!`. Anything else is the arithmetic type error.
 #[cold]
 #[inline(never)]
 fn date_arithmetic(op: BinaryOp, a: &Value, b: &Value) -> Result<Value, Error> {
@@ -170,30 +171,80 @@ fn date_arithmetic(op: BinaryOp, a: &Value, b: &Value) -> Result<Value, Error> {
         }
         .ok_or_else(|| Error::new("Date arithmetic out of range", None))
     };
+    let days = |v: &Value| coerced_operand(v, "Arithmetic op on non-number");
     match (op, a, b) {
-        (BinaryOp::Add, Value::DateTime(ts), Value::Number(n))
-        | (BinaryOp::Add, Value::Number(n), Value::DateTime(ts)) => shift(*ts, *n),
-        (BinaryOp::Sub, Value::DateTime(ts), Value::Number(n)) => shift(*ts, -*n),
         (BinaryOp::Sub, Value::DateTime(x), Value::DateTime(y)) => {
             Ok(Value::Number((*x as f64 - *y as f64) / DAY))
         }
+        (_, Value::DateTime(_), Value::DateTime(_)) => {
+            Err(Error::new("Arithmetic op on non-number", None))
+        }
+        (BinaryOp::Add, Value::DateTime(ts), x) | (BinaryOp::Add, x, Value::DateTime(ts)) => {
+            shift(*ts, days(x)?)
+        }
+        (BinaryOp::Sub, Value::DateTime(ts), x) => shift(*ts, -days(x)?),
         _ => Err(Error::new("Arithmetic op on non-number", None)),
     }
 }
 
+/// An arithmetic operator with a Currency operand and no DateTime (ADR-0027). The other operand
+/// converts like a number operand. `+ - * /` give Currency, except `Currency / Currency`, which
+/// is a ratio (Number); `^` and `%` give Number. No rounding: Currency is a tagged `f64`.
+#[cold]
+#[inline(never)]
+fn currency_arithmetic(op: BinaryOp, a: &Value, b: &Value) -> Result<Value, Error> {
+    let operand = |v: &Value| match v {
+        Value::Currency(c) => Ok(*c),
+        _ => coerced_operand(v, "Arithmetic op on non-number"),
+    };
+    let (an, bn) = (operand(a)?, operand(b)?);
+    let r = crate::runtime::arithmetic::checked_binary(op, an, bn)?;
+    let ratio = matches!((a, b), (Value::Currency(_), Value::Currency(_)));
+    Ok(match op {
+        BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul => Value::Currency(r),
+        BinaryOp::Div if !ratio => Value::Currency(r),
+        _ => Value::Number(r),
+    })
+}
+
 /// An arithmetic operator where an operand is not a number (BL-066). A DateTime operand is date
-/// arithmetic (no coercion). Otherwise each operand converts as in Excel: numeric text, `TRUE`/
-/// `FALSE` as 1/0 and NULL (a blank cell) as 0; other text is `#VALUE!`, and other types stay
-/// the arithmetic type error.
+/// arithmetic and a Currency operand is currency arithmetic (ADR-0027). Otherwise each operand
+/// converts as in Excel: numeric text, `TRUE`/`FALSE` as 1/0 and NULL (a blank cell) as 0; other
+/// text is `#VALUE!`, and other types stay the arithmetic type error.
 #[cold]
 #[inline(never)]
 fn coerced_arithmetic(op: BinaryOp, a: &Value, b: &Value) -> Result<Value, Error> {
     if matches!(a, Value::DateTime(_)) || matches!(b, Value::DateTime(_)) {
         return date_arithmetic(op, a, b);
     }
+    if matches!(a, Value::Currency(_)) || matches!(b, Value::Currency(_)) {
+        return currency_arithmetic(op, a, b);
+    }
     let operand = |v: &Value| coerced_operand(v, "Arithmetic op on non-number");
     let (an, bn) = (operand(a)?, operand(b)?);
     crate::runtime::arithmetic::checked_binary(op, an, bn).map(Value::Number)
+}
+
+/// Unary plus on a non-number: Currency is kept as it is (ADR-0027); other operands convert as
+/// in `coerced_operand`.
+#[cold]
+#[inline(never)]
+fn coerced_plus(v: &Value) -> Result<Value, Error> {
+    match v {
+        Value::Currency(c) => Ok(Value::Currency(*c)),
+        _ => coerced_operand(v, "Unary '+' on non-number").map(Value::Number),
+    }
+}
+
+/// Unary minus on a non-number: Currency stays Currency (ADR-0027); other operands convert as
+/// in `coerced_operand`. `0.0 - n`, not `-n`: `-NULL` and `-FALSE` are 0, not -0.
+#[cold]
+#[inline(never)]
+fn coerced_negate(v: &Value) -> Result<Value, Error> {
+    match v {
+        Value::Currency(c) => Ok(Value::Currency(0.0 - *c)),
+        _ => coerced_operand(v, "Unary '-' on non-number").map(|n| Value::Number(0.0 - n)),
+    }
 }
 
 /// An operator operand as a number: numbers as they are, NULL as 0 (a blank cell), numeric text
@@ -222,6 +273,10 @@ impl Evaluator {
                 let v = Self::eval_operand(e, context)?;
                 limits::tick()?;
                 Self::eval_unary_op(*op, &v)
+            }
+
+            Expr::Binary(l, op @ (BinaryOp::And | BinaryOp::Or), r) => {
+                Self::eval_short_circuit(*op, l, r, context)
             }
 
             Expr::Binary(l, op, r) => {
@@ -360,17 +415,37 @@ impl Evaluator {
         match op {
             UnaryOp::Plus => match v {
                 Value::Number(n) => Ok(Value::Number(*n)),
-                _ => coerced_operand(v, "Unary '+' on non-number").map(Value::Number),
+                _ => coerced_plus(v),
             },
             UnaryOp::Minus => match v {
                 Value::Number(n) => Ok(Value::Number(-*n)),
-                // `0.0 - n`, not `-n`: `-NULL` and `-FALSE` are 0, not -0.
-                _ => coerced_operand(v, "Unary '-' on non-number").map(|n| Value::Number(0.0 - n)),
+                _ => coerced_negate(v),
             },
             UnaryOp::Not => {
                 Ok(Value::Boolean(!v.as_bool().ok_or_else(|| {
                     Error::new("Unary '!' on non-boolean", None)
                 })?))
+            }
+        }
+    }
+
+    /// `a AND b`, `a OR b` (and `&&`, `||`): `b` is evaluated only when `a` does not decide the
+    /// result, so `FALSE AND 1/0` is FALSE (ADR-0029). Both sides must be booleans.
+    #[inline(never)]
+    fn eval_short_circuit<C: EvaluationContext>(
+        op: BinaryOp,
+        l: &Expr,
+        r: &Expr,
+        context: &C,
+    ) -> Result<Value, Error> {
+        let a = Self::eval_operand(l, context)?;
+        limits::tick()?;
+        match (op, a.as_bool()) {
+            (BinaryOp::And, Some(false)) => Ok(Value::Boolean(false)),
+            (BinaryOp::Or, Some(true)) => Ok(Value::Boolean(true)),
+            _ => {
+                let b = Self::eval_operand(r, context)?;
+                Self::eval_binary_op(op, &a, &b)
             }
         }
     }
@@ -604,14 +679,14 @@ impl Evaluator {
     }
 
     /// `IF` / `IFS` evaluate a condition, then only the branch it picks (D-8, Excel). Same
-    /// argument checks and truthiness as the eager versions in `logical.rs`, which still run
-    /// calls with a spread argument.
+    /// argument checks and conditions (`logical::condition`) as the eager versions in
+    /// `logical.rs`, which still run calls with a spread argument.
     fn eval_lazy_if<C: EvaluationContext>(
         name: &str,
         args: &[Expr],
         context: &C,
     ) -> Result<Value, Error> {
-        let truthy = |e: &Expr| Self::eval(e, context).map(|v| logical::truthy(&v));
+        let truthy = |e: &Expr| Self::eval(e, context).and_then(|v| logical::condition(name, &v));
         if name == "IF" {
             if args.len() < 2 {
                 return Err(Error::new("IF expects at least 2 arguments", None));
@@ -634,7 +709,7 @@ impl Evaluator {
                 return Self::eval(&pair[1], context);
             }
         }
-        Ok(Value::Boolean(false))
+        Err(logical::ifs_no_match())
     }
 
     /// Helper for higher-order functions - these need access to context for lambda evaluation
