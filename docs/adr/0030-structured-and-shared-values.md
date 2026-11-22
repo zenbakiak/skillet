@@ -1,12 +1,24 @@
 # 0030. Structured and shared values: `Value::Object`, and `Arc`-shared strings, arrays and objects
 
-- Status: Proposed
+- Status: Accepted (2026-11-21, with decisions a–d)
 - Date: 2026-11-21
 - Deciders: Maintainer (accepts), Language Designer and Performance Engineer (authors), Rust Engineer
 - Related: BL-011, BL-036, BL-038, ADR-0002 (`Rc` AST), ADR-0003 (`Value`, `f64`), ADR-0004 (JSON
   objects as text), ADR-0007 (custom functions, JS plugins), ADR-0008 (server threads), ADR-0011
   (evaluation budget, amended here), ADR-0021 (parse cache), ADR-0023 (equality)
-- Supersedes: ADR-0004 (on acceptance)
+- Supersedes: ADR-0004. Amends: ADR-0011 (read charge, cost model)
+
+## Decisions (maintainer review of PR #104, 2026-11-21)
+- **(a)** `.to_json()` returns a `String` holding JSON text: accepted (E9, E10).
+- **(b)** Large integers are **not** rounded. A JSON number whose f64 does not print back its
+  source text (an integer with |n| > 2^53, or any number such as `2.50`, `1.0`, `1e21`) keeps that
+  text while it passes through unchanged, and prints it (`sk --json`, server output, `:arguments`,
+  `.to_s()`, `JOIN`). Arithmetic still uses the f64 (ADR-0003). Design: §2 "Exact JSON numbers",
+  the `JsonNumber` variant in §1, plan steps 5 and 6. E16 is updated; E27–E31 added.
+- **(c)** `Value::Json` is deprecated in 0.7.x: accepted (§3, plan step 2).
+- **(d)** Integral numbers print without `.0`, but **only** a `Number` that is exactly integral
+  (and below 2^53, not `-0.0`). Non-integral numbers print exactly as today, and `Currency` keeps
+  today's formatting (§2 "Printing numbers", E19–E26).
 
 ## Context
 
@@ -79,6 +91,8 @@ on a prototype `Arc` object/array/string layout. Prototype: throwaway crate depe
 | Ingest `:rows` from JSON text: today (`from_str` + `json_to_value`) | 3.33–3.61 ms | direct `Deserialize`: 3.06–3.43 ms; via `serde_json::Value`: 4.56–4.87 ms |
 | Option A replica (text kept, content-hashed parse cache) | | 0.70–0.85 ms |
 | Option C replica (unshared `BTreeMap` object, deep clone per item) | | 1.27–1.39 ms |
+| Decision (b): classify the 30k numbers of `:rows` (1,003 keep their text, all prices like `12.80`) | | 0.28–0.29 ms (9.2–9.6 ns each; `str::parse::<f64>` of the same: 0.18 ms) |
+| Decision (b): sum / clone 10k prices, plain vs 10% `JsonNumber` | | 6.7–6.9 vs 6.6–7.0 µs / 5.6–6.7 vs 6.1–6.4 µs (noise) |
 
 Projections: the replica of today's `Json` work is about all of the `:rows` evaluation time, so
 the projected time is the structured work plus the evaluator's own per-item cost, measured at
@@ -157,8 +171,14 @@ pub enum Value {
     String(Arc<str>),
     Array(Array),     // Arc<{ cost: u64, depth: u16, items: Vec<Value> }>; Deref<Target = [Value]>
     Object(Object),   // Arc<{ cost: u64, depth: u16, entries: Box<[(Box<str>, Value)]> }>
+    JsonNumber(JsonNumber), // Arc<{ value: f64, text: str }> (one allocation); decision (b)
 }
 ```
+
+- `JsonNumber` is a number read from JSON text whose f64 does not print back its source text
+  (§2). It exists only so the text can be printed again; every operation reads `value`.
+  `Value::as_number()` returns `Some(f64)` for `Number` and `JsonNumber`, and the hand-written
+  `PartialEq` treats `JsonNumber(v, _)` and `Number(v)` as equal, like the language's `==`.
 
 - `Object` entries are sorted by key with duplicates removed (last wins), so `.keys()` order and
   duplicate handling stay as today; lookup is a binary search. Objects are immutable once built.
@@ -173,9 +193,7 @@ pub enum Value {
 - `::Json` parses a `String` as JSON (objects become `Object`, arrays `Array`, …) and fails at the
   cast with `Invalid JSON: …` on bad text; every other value passes through unchanged.
 - `.to_json()` returns a `String` holding JSON text (it is text).
-- Serializing an object or array to text (`.to_s()`, `::String`, `.to_json()`, `JOIN`, server
-  output) prints a finite integral `Number` with |n| < 2^53 without a fraction (`1`, not `1.0`),
-  other numbers as `serde_json` prints them, `Currency`/`DateTime` as numbers, keys sorted.
+- Serializing an object or array to text follows "Printing numbers" below; keys are sorted.
 - Objects keep any `Value` (a `Currency` stays a `Currency`).
 - Equality (ADR-0023): two objects are equal when they have the same keys and `==` holds for each
   value; `Arc::ptr_eq` is a fast path. Unchanged results, since today's `json_eq` already ignores
@@ -184,6 +202,55 @@ pub enum Value {
 - `CONCAT` and `::Boolean` on objects keep today's results (empty text, `true`).
 - `Debug` prints an object as `Object(<JSON text>)`, e.g. `Object({"a":1})`. The CLI prints
   `Debug`, so `sk` output for objects changes from `Json("{\"a\":1}")`.
+
+#### Printing numbers (decision d)
+JSON text of an object or array (`.to_s()`, `::String`, `.to_json()`, `JOIN` of objects, server
+and `sk --json` output, `:arguments`) prints each number as follows. This is today's code path
+(`serde_json` printing an f64, `json!(n)`) with one change, the first bullet.
+- `Number(n)` with n finite, `n.fract() == 0`, |n| < 2^53 and not `-0.0`: integer digits, `5`
+  (today `5.0`). This is the only change.
+- Every other `Number`: exactly what `serde_json` prints today: `1.5`, `0.1`, `1e-7`, `1e+21`,
+  `-0.0`. Non-finite numbers cannot reach an object (division by zero is an error).
+- `JsonNumber`: its source text, verbatim (`9007199254740993`, `2.50`, `1e21`).
+- `Currency(c)`: exactly as today, `serde_json`'s f64 text: `5::Currency` prints `5.0`,
+  `5.25::Currency` prints `5.25`. The integral rule does not apply and no fixed decimals are
+  added. `DateTime` prints its integer seconds, as today.
+
+Text of a single value outside JSON is unchanged: `::String`, `.to_s()`, `JOIN` and `CONCAT` on a
+`Number` use Rust's f64 `Display` (`5`, `-0`, `1000000000000000000000`); on a `Currency`, `::String`
+and `JOIN` use 4 decimals (`5.0000`) and `.to_s()` uses `Display` (`5.25`); a `JsonNumber` prints
+its source text in all of them (decision b).
+
+#### Exact JSON numbers (decision b)
+- **When one is made.** Only when a number is read from JSON *text*: the `evaluate_with_json*`
+  entry points, the servers' `arguments`, `sk --json`, `::Json` on a `String`, and
+  `Value::from_json_text`. It is a `JsonNumber` when its source text differs from what the
+  printing rule above prints for its f64: `9007199254740993`, `100000000000000000000000`, `2.50`,
+  `1.0`, `1e21`, `0.0000001`, `-0`. It stays a `Number` for `1`, `1.5`, `0.1`, `1e-7`, `-0.0`.
+  `json_to_value(serde_json::Value)` and `Deserialize` see an already-parsed number: they keep
+  integers beyond 2^53 exactly (`serde_json` holds them as `u64`/`i64`, which is why today's
+  pass-through is exact) but a decimal arrives as an f64, so `2.50` becomes `Number(2.5)`. The
+  rustdoc says to pass JSON text to keep the spelling.
+- **What it is in the language.** A number (`type_name` `"number"`, wire type `"Number"`). Every
+  operator, comparison, builtin and method uses its f64 (ADR-0003): `:big == 9007199254740992` is
+  `TRUE` and `SORT`/`UNIQUE` compare f64s, as today. Any computed result is a plain `Number`
+  (`:big + 0` is `9007199254740992`). A value that is only moved keeps its text: variable reads,
+  property, index, slice, `DIG` and `JQ` results, lambda items, array and object literal elements,
+  `IF`/`IFS` branches, assignments, and the elements of `MERGE`, `FLATTEN`, `REVERSE`, `SORT`,
+  `UNIQUE`, `FIRST`, `LAST`. Casts (`::Number`, `::Integer`, `::Currency`) compute, so they return
+  plain values.
+- **Where the text comes from.** `serde_json` (built without `arbitrary_precision`) reports a
+  decimal only as an f64. `arbitrary_precision` cannot be enabled: Cargo unifies features, so it
+  would change `serde_json::Number` in every embedder's build. So the text entry points use a
+  Skillet JSON reader (`runtime/json_reader.rs`): RFC 8259, the same 128 depth limit as
+  `serde_json`, building `Value`s directly (including the shared `:arguments`). It classifies each
+  number while scanning: a plain decimal with no exponent, no leading zero, no trailing fractional
+  zero, at most 15 significant digits and not below 1e-4 always prints back unchanged, so it is a
+  `Number` with no further work; anything else (3.3% of the numbers in the `:rows` data) prints its
+  f64 once and compares. `sk_http_server` reads `arguments` as a `serde_json` `RawValue` (the
+  additive `raw_value` feature) and hands that text to the reader.
+- **Debug** prints `Number(<text>)`, e.g. `Number(9007199254740993)`, so the CLI shows the exact
+  value.
 
 Example table (acceptance for QA; "today" measured on `f4f72da`):
 
@@ -204,9 +271,22 @@ Example table (acceptance for QA; "today" measured on `f4f72da`):
 | E13 | `{"p": 5::Currency}.p` | `Number(5.0)` | `Currency(5.0)` |
 | E14 | `JOIN([{"a":1}], ",")` | `"{\"a\":1.0}"` | `"{\"a\":1}"` |
 | E15 | `[{"a":1}]::String` | `"[Json(\"{\\\"a\\\":1.0}\")]"` | `"[Object({\"a\":1})]"` |
-| E16 | `:o` printed by a server or `sk --json` (`o = {"id": 9007199254740993}`) | `9007199254740993` | `9007199254740992` (ADR-0003 precision, now also for pass-through) |
+| E16 | `:o` printed by a server or `sk --json`, and `:o.to_s()` (`o = {"id": 9007199254740993}`) | `9007199254740993` | `9007199254740993` (decision b; kept exact) |
 | E17 | `:nums.map(SUM(:nums)).length()` (10k numbers) | budget error | `Number(10000.0)` (relaxation, ADR-0011 §Consequences) |
 | E18 | `:o` inside 100 nested array literals (`o` = a JSON object nested 40 deep) | value | `Expression nested too deeply (max 128)` |
+| E19 | `{"a": 1.5}::String`, `{"a": 0.1}::String` | `{"a":1.5}`, `{"a":0.1}` | same |
+| E20 | `{"a": 5}::String`, `[1.5, 5].to_json()` | `{"a":5.0}`, `Json("[1.5,5.0]")` | `{"a":5}`, `String("[1.5,5]")` |
+| E21 | `{"a": 1e21}::String` | `{"a":1e+21}` | same (not below 2^53) |
+| E22 | `{"a": -0.0}::String` | `{"a":-0.0}` | same (`-0.0` is excluded from the integral rule) |
+| E23 | `{"a": 1e-7}::String` | `{"a":1e-7}` | same |
+| E24 | `{"a": 5::Currency}::String`, `[5::Currency].to_json()` | `{"a":5.0}`, `Json("[5.0]")` | `{"a":5.0}`, `String("[5.0]")` |
+| E25 | `{"a": 5.25::Currency}::String` | `{"a":5.25}` | same |
+| E26 | `(5::Currency)::String`, `JOIN([5::Currency, 5.25::Currency], ",")`, `(5.25::Currency).to_s()` | `5.0000`, `5.0000,5.2500`, `5.25` | same |
+| E27 | `:o.to_s()` (`o = {"c": 2.50, "i": 1.0, "e": 1e21}` from JSON text) | `{"c":2.5,"e":1e+21,"i":1.0}` | `{"c":2.50,"e":1e21,"i":1.0}` (decision b) |
+| E28 | `:o.c * 2`, `:o.c` (same `o`) | `5`, `Number(2.5)` | `5`, `Number(2.50)` (prints its text, computes with 2.5) |
+| E29 | `:big`, `:big.to_s()`, `JOIN([:big], ",")` (`big = 9007199254740993` from JSON text) | `Number(9007199254740992.0)`, `"9007199254740992"`, `"9007199254740992"` | `Number(9007199254740993)`, `"9007199254740993"`, `"9007199254740993"` |
+| E30 | `:big == 9007199254740992`, `:big + 0` (same `big`) | `TRUE`, `9007199254740992` | same (f64 arithmetic, ADR-0003) |
+| E31 | `json_to_value(json!({"c": 2.50}))` printed | `{"c":2.5}` | same (already-parsed input has no source text) |
 
 ### 3. Public API and migration
 
@@ -223,10 +303,11 @@ What breaks for embedders in 0.8.0:
 | `json_to_value(json)` | objects → `Json(text)` | objects → `Object`; signature unchanged |
 | `evaluate_with_json*` | `:arguments` is `Json(text)` | `:arguments` is an `Object` whose children are shared with the top-level variables (one copy of the document instead of two); signatures unchanged |
 | `CustomFunction::execute(Vec<Value>)` | objects arrive as text | objects arrive as `Object`; cloning arguments is O(1); signature unchanged; returning `Value::Json` must become `from_json_text` |
+| Read a number | `Value::Number(n)` or `as_number()` | `as_number()` (covers `JsonNumber`); a bare `Value::Number(n)` pattern misses exact numbers that came from JSON text; `JsonNumber::text()` gives the source |
 | Threads | `Value: Send + Sync` | unchanged |
-| serde | `Value` implements neither | `Serialize` (0.7.x, additive) and `Deserialize` (0.8.0, direct visitor, no intermediate `serde_json::Value`: measured faster than today's ingest) |
+| serde | `Value` implements neither | `Serialize` (0.7.x, additive; prints numbers by §2) and `Deserialize` (0.8.0, direct visitor, no intermediate `serde_json::Value`: measured faster than today's ingest; keeps integers beyond 2^53 exact, decimal spelling needs the text entry points) |
 | JS plugins (ADR-0007) | objects passed as JSON text strings | unchanged: still JSON text, so existing hooks (`hook_examples/object_keys.js` parses text) keep working; JS objects returned become `Object` |
-| Server wire | objects as JSON with `"type":"Json"` | unchanged, except E9/E10 (`.to_json()` is now `"type":"String"`), E7/E14 spelling, E16 precision, and `Debug` text inside nested arrays (E15) |
+| Server wire | objects as JSON with `"type":"Json"` | unchanged, except E9/E10 (`.to_json()` is now `"type":"String"`), E7/E14/E20 integral spelling, E27/E29 source spelling kept, and `Debug` text inside nested arrays (E15) |
 
 Migration path:
 - **0.7.x (additive, no break):** `Value::from_json_text`, `Value::to_json_text`, `as_str`,
@@ -247,6 +328,7 @@ cost(Number | Currency | DateTime | Boolean | Null) = 32
 cost(String(s))       = 32 + len(s)
 cost(Array(items))    = 32 + Σ cost(item)
 cost(Object(entries)) = 32 + Σ (32 + len(key) + cost(value))
+cost(JsonNumber(n))   = 48 + len(text)       // 32 + the 16-byte shared header
 ```
 
 Costs are **logical**: a shared child is counted every time it appears, exactly as if it had been
@@ -263,12 +345,14 @@ copied. What is charged, and when:
 | `JQ` | parse charge on the input, `charge_json_node` per match | `cost(input)` before converting to a `serde_json` tree; matches charged with the new model |
 | `.to_json()`, `::String`, `.to_s()`, `JOIN` on objects/arrays; HTTP response size check | exact text size, counted first | same rule (escaping can grow text 6×) |
 | Embedder variables, ingest by `evaluate_with_json*` | not charged | not charged |
+| Exact numbers (`JsonNumber`) | — | charged like any value where created or returned (`48 + len(text)`); a computation on one returns a 32-byte `Number` |
 
 Why ADR-0011's guarantees still hold:
 - **Deterministic.** Charges depend only on the logical values, never on what happens to be shared,
   so an expression with the same variables always passes or always fails.
 - **Memory.** Sharing only lowers real memory below the logical cost; with the sorted-slice object
-  layout the cost model is an upper bound for every variant (measured above). So live heap is still
+  layout the model is an upper bound for arrays and objects (measured above), and strings and exact
+  numbers are within a few bytes, as strings are today (ADR-0011 finding N3). So live heap is still
   at most the budget plus the value that crossed it.
 - **No exponential blow-up through sharing.** `[1×26].reduce([:acc, :acc], 0)` now builds 26 real
   nodes, but its logical cost doubles each step and is charged at each result site, so A1–A6 fail
@@ -309,14 +393,30 @@ rule); same machine, before/after.
    reference counts on the hot path).
 5. **Object variant (BL-011; break 2).** `Object`, removal of `Json`, direct `Deserialize`,
    `json_to_value`, ingest with a shared `:arguments`, §2 semantics, server output, JS boundary,
-   `#[non_exhaustive]`. Tests: E6–E18 flipped to their new values, `limits.rs` unit tests for the
+   `#[non_exhaustive]`, and `JsonNumber` for integers beyond 2^53 (from `serde_json`'s `u64`/`i64`,
+   so today's exact pass-through (E16) never regresses at any commit). Tests: E6–E26 and E29 at
+   their new values, `limits.rs` unit tests for the
    object cost and the `::Json` pre-charge, and the existing tests that build or match `Value::Json`
    updated (`tests/{object_literals,conversion_methods,safe_navigation,evaluator_parity,jsonpath,
    eval_budget,dotted_function_names,evaluate_parsed,comments_and_whitespace_tests,
    http_server_jsonpath}.rs`, the `json_to_value` doc test, `benches/*` variable builders). Bench:
    must improve `json_vars`, `json_lambda` and every `:rows` row; ingest of `:rows` and
    `jsonpath_jq` must not regress.
-6. **Cleanup and docs.** Remove `charge_json_parse`/`count_node_bytes` and the `Json` estimate in
+6. **Exact JSON numbers from text (decision b; 0.8.0).** The Skillet JSON reader for the text
+   entry points, number classification, `RawValue` in `sk_http_server`, `JsonNumber` for every
+   number whose text does not print back. All internal number reads go through `as_number()`.
+   Tests: E27, E28, E30, E31; the reader against a conformance list (valid and invalid RFC 8259 inputs,
+   depth 128/129, escapes, invalid UTF-8 surrogates, numbers at the edges of f64); a property test
+   that the reader and `serde_json` produce equal values (by f64) on random documents; a fuzz
+   target for the reader (same infrastructure as the existing fuzz targets); and one CI test run
+   with a `cfg` (`skillet_exact_numbers_everywhere`, set through `RUSTFLAGS`, not a Cargo feature)
+   that makes the reader produce `JsonNumber` for every number, so any site that matches only
+   `Value::Number` fails the existing suite. Bench: ingest of `:rows` must not regress more than
+   10% against step 5 (estimate: classification is 0.28 ms for the 30k numbers of `:rows`, about
+   9% of the 3.1–3.4 ms ingest if it were added on top of `serde_json`; the reader replaces that
+   parse, so the net is expected at or below today); every `:rows` eval row must not regress
+   (measured: summing or cloning 10k prices, 10% of them exact, is within noise, 6.6–6.9 µs both).
+7. **Cleanup and docs.** Remove `charge_json_parse`/`count_node_bytes` and the `Json` estimate in
    `http_server/response_size.rs`; update `docs/guide/limits.md` (cost model, read charge),
    `docs/guide/user-guide.md` (object storage, `.to_json`, `::Json`), the migration guide, PRD-001;
    add a status note to ADR-0011; mark ADR-0004 `Superseded by 0030`.
@@ -332,8 +432,12 @@ rule); same machine, before/after.
 - \+ `Value` shrinks from 32 to 24 bytes.
 - − One breaking release for embedders (§3), plus the language changes E6–E18 (mostly text
   spelling of objects, `.to_json()` returning a `String`, `::Json` validating at the cast).
-- − Large integers in pass-through objects are rounded to `f64` (E16). ADR-0003 already accepts this
-  for every other path; an exact integer type would be a separate ADR.
+- \+ JSON numbers passed through unchanged keep their exact text (decision b), now also outside
+  objects (`:big`, `:o.id`, E29) and for decimal spelling (E27), which today is lost.
+- − A second number variant: embedders must read numbers with `as_number()`, and two integers that
+  differ only beyond 2^53 still compare equal (`==` is on f64, ADR-0003; an exact integer type
+  would be a separate ADR).
+- − Skillet owns a JSON reader for the text entry points (conformance, property and fuzz tests).
 - − Atomic reference counts on clones of strings, arrays and objects (3–4 ns each, measured); number
   arrays are unaffected.
 - − Objects nested inside arrays now count towards `MAX_NESTING_DEPTH` (E18).
@@ -341,7 +445,12 @@ rule); same machine, before/after.
   open.
 
 ## Alternatives considered
-Options A, B and C above, and `Rc` in D. Also: keeping both `Json(String)` (deprecated, accepted as
-input) and `Object` in 0.8.0. Rejected: embedders that match `Value::Json` on results with a
+Options A, B and C above, and `Rc` in D. For decision (b): changing `Number(f64)` to
+`Number(Num)` with an optional text (compiler-checked, but every `Value::Number(2.0)` in embedder
+code and 262 + 241 sites in `src/` and `tests/` change); a side table of texts in arrays and
+objects (cannot cover a scalar variable such as `:big` or a property result such as `:o.id`);
+`serde_json`'s `arbitrary_precision` (Cargo feature unification changes `serde_json` for the
+embedder's whole build); a decimal type for every number (ADR-0003 territory). Also: Also: keeping both `Json(String)`
+(deprecated, accepted as input) and `Object` in 0.8.0. Rejected: embedders that match `Value::Json` on results with a
 wildcard arm would silently stop matching, and every internal site would handle both forms for a
 release; removing it makes every affected line a compile error instead.
