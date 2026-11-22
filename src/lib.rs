@@ -82,9 +82,9 @@ fn sanitize_json_key(key: &str) -> String {
         .collect()
 }
 
-/// Build the variable map for the `*_json*` entry points: the raw JSON is
-/// exposed as `:arguments` (for `JQ`) and each top-level key becomes a
-/// sanitized variable.
+/// Build the variable map for the `*_json*` entry points: each top-level key
+/// becomes a sanitized variable, and the raw JSON is exposed as `:arguments`
+/// (for `JQ`).
 fn json_vars_to_map(json_vars: &str) -> Result<HashMap<String, Value>, Error> {
     let json_value: serde_json::Value = serde_json::from_str(json_vars)
         .map_err(|e| Error::new(format!("Invalid JSON: {}", e), None))?;
@@ -96,11 +96,12 @@ fn json_vars_to_map(json_vars: &str) -> Result<HashMap<String, Value>, Error> {
     };
 
     let mut vars = HashMap::with_capacity(map.len() + 1);
-    // Add the original JSON data for JQ function
-    vars.insert("arguments".to_string(), Value::Json(json_vars.to_string()));
     for (key, value) in map {
         vars.insert(sanitize_json_key(&key), json_to_value(value)?);
     }
+    // Inserted last so a key named `arguments` cannot replace it (BL-077); that key's value is
+    // `:arguments.arguments`.
+    vars.insert("arguments".to_string(), Value::Json(json_vars.to_string()));
     Ok(vars)
 }
 
@@ -192,7 +193,9 @@ pub fn evaluate_with(input: &str, vars: &HashMap<String, Value>) -> Result<Value
 /// Each top-level key becomes a variable, converted with [`json_to_value`] (nested objects
 /// become [`Value::Json`] and support property access such as `:user.name`). Characters other
 /// than letters, digits and `_` in a key are replaced by `_`, so `"first-name"` is read as
-/// `:first_name`. The whole JSON text is also available as `:arguments`, for `JQ`.
+/// `:first_name`. The whole JSON text is also available as `:arguments`, for `JQ`. That name is
+/// reserved: a key named `arguments` does not replace it, and its value is read as
+/// `:arguments.arguments`.
 ///
 /// The input must be a JSON object; anything else is an error.
 ///
@@ -207,6 +210,10 @@ pub fn evaluate_with(input: &str, vars: &HashMap<String, Value>) -> Result<Value
 /// assert_eq!(
 ///     evaluate_with_json("JQ(:arguments, '$.user.age')", json).unwrap(),
 ///     Value::Number(36.0)
+/// );
+/// assert_eq!(
+///     evaluate_with_json(":arguments.arguments", r#"{"arguments": 5}"#).unwrap(),
+///     Value::Number(5.0)
 /// );
 /// assert_eq!(
 ///     evaluate_with_json("1", "[1, 2]").unwrap_err().message,

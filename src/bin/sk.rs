@@ -122,13 +122,6 @@ fn main() {
             let vars = match json_value {
                 serde_json::Value::Object(map) => {
                     let mut result = HashMap::new();
-
-                    // Add the original JSON data for JQ function
-                    result.insert(
-                        "arguments".to_string(),
-                        skillet::Value::Json(json_str.clone()),
-                    );
-
                     for (key, value) in map {
                         let skillet_value = match skillet::json_to_value(value) {
                             Ok(v) => v,
@@ -140,6 +133,12 @@ fn main() {
                         let sanitized_key = sanitize_json_key(&key);
                         result.insert(sanitized_key, skillet_value);
                     }
+                    // The original JSON for JQ, last so a key named `arguments` cannot
+                    // replace it (BL-077).
+                    result.insert(
+                        "arguments".to_string(),
+                        skillet::Value::Json(json_str.clone()),
+                    );
                     result
                 }
                 _ => {
