@@ -10,6 +10,7 @@
 //!   character) and `~` (escapes the next `*`, `?` or `~`) for `=` and `<>`. `<`, `>` compare
 //!   text case-insensitively, without wildcards.
 
+use crate::ast::Expr;
 use crate::error::Error;
 use crate::limits;
 use crate::types::Value;
@@ -351,6 +352,52 @@ fn kmp_table(needle: &[char]) -> Vec<usize> {
     fail
 }
 
+/// Whether a criteria expression reads the item `:x`, which makes it a per-item lambda (BL-081).
+/// This is decided from the expression, never by evaluating it: evaluating it first in the
+/// caller's scope would read an outer `:x` and turn the lambda into a fixed criterion.
+/// `:x` inside the lambda argument of a nested `filter`/`map`/`find`/`reduce` method or a
+/// `FILTER`/`FIND`/`MAP`/`REDUCE`/`COUNTIF`/`SUMIF`/`AVERAGEIF` call is bound there, so it does
+/// not count.
+pub(crate) fn reads_item(expr: &Expr) -> bool {
+    match expr {
+        Expr::Variable(name) => name == "x",
+        Expr::Number(_) | Expr::StringLit(_) | Expr::Null => false,
+        Expr::Unary(_, e) | Expr::Spread(e) => reads_item(e),
+        Expr::PropertyAccess { target, .. } | Expr::SafePropertyAccess { target, .. } => {
+            reads_item(target)
+        }
+        Expr::TypeCast { expr, .. } => reads_item(expr),
+        Expr::Assignment { value, .. } => reads_item(value),
+        Expr::Binary(a, _, b) => reads_item(a) || reads_item(b),
+        Expr::Index { target, index } => reads_item(target) || reads_item(index),
+        Expr::Slice { target, start, end } => {
+            reads_item(target) || start.iter().chain(end).any(|e| reads_item(e))
+        }
+        Expr::MethodCall {
+            target, name, args, ..
+        }
+        | Expr::SafeMethodCall { target, name, args } => {
+            let lambda = matches!(name.as_str(), "filter" | "map" | "find" | "reduce");
+            reads_item(target)
+                || args
+                    .iter()
+                    .enumerate()
+                    .any(|(i, a)| !(lambda && i == 0) && reads_item(a))
+        }
+        Expr::FunctionCall { name, args } => {
+            let lambda = matches!(
+                name.to_ascii_uppercase().as_str(),
+                "FILTER" | "FIND" | "MAP" | "REDUCE" | "COUNTIF" | "SUMIF" | "AVERAGEIF" | "AVGIF"
+            );
+            args.iter()
+                .enumerate()
+                .any(|(i, a)| !(lambda && i == 1) && reads_item(a))
+        }
+        Expr::Array(items) | Expr::Sequence(items) => items.iter().any(reads_item),
+        Expr::ObjectLiteral(fields) => fields.iter().any(|(_, e)| reads_item(e)),
+    }
+}
+
 /// Which conditional aggregate to compute.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Aggregate {
@@ -586,6 +633,36 @@ mod tests {
             wildcard_match(&long, &format!("x{}bx", "a".repeat(70))),
             reference_match(&long, &format!("x{}bx", "a".repeat(70)))
         );
+    }
+
+    #[test]
+    fn reads_item_is_decided_from_the_expression() {
+        let reads = |src: &str| reads_item(&crate::parse(src).unwrap());
+        for src in [
+            ":x",
+            ":x > 2",
+            "NOT :x",
+            ":x % 2",
+            ":x.length() > 1",
+            "SUM(:x, 1) > 2",
+            "[1, :x]",
+        ] {
+            assert!(reads(src), "{src}");
+        }
+        for src in [
+            "\">2\"",
+            "5",
+            ":c",
+            ":y > 2",
+            ":lst.filter(:x > 1).length()",
+            ":lst.map(:x * 2).sum()",
+            "FILTER(:lst, :x > 1).length()",
+            "COUNTIF(:lst, :x > 1)",
+        ] {
+            assert!(!reads(src), "{src}");
+        }
+        assert!(reads(":lst.filter(:x > 1).length() + :x"));
+        assert!(reads("FILTER(:x, :y > 1)"));
     }
 
     #[test]
