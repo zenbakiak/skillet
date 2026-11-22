@@ -761,6 +761,10 @@ worksheet `DATEDIF`. `"m"` is **months** everywhere; minutes are `"n"`.
 An unknown unit is an error: `#VALUE!` in `DATEADD` and `DATEDIFF` (VBA rejects it), `#NUM!` in
 `DATEDIF` (as Excel).
 
+The same letter can mean different things: `"y"` is years in `DATEDIF` but days in `DATEDIFF`,
+and `"w"` in `DATEADD` adds one day. In `DATEADD` and `DATEDIFF`, prefer the long words
+(`"years"`, `"weeks"`, …), which cannot be misread (ADR-0035).
+
 #### `DATEADD(date, amount, unit)`
 Add `amount` units to a date, like VBA `DateAdd`. `amount` is truncated. Months, quarters and
 years keep the day, clamped to the end of a shorter month. A result out of range is `#NUM!`.

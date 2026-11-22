@@ -39,6 +39,7 @@ ADRs 0001–0008 are **retroactive**: they record decisions already embodied in 
 | [0032](0032-edition-2024.md) | Edition 2024, MSRV unchanged, std `LazyLock`, rustfmt style 2021 for now | Accepted |
 | [0033](0033-one-numeric-type.md) | One numeric type; `::Currency` is a conversion | Accepted, amended by 0034 |
 | [0034](0034-text-form-of-values.md) | Text form of values | Accepted |
+| [0035](0035-date-unit-codes.md) | Date unit codes: VBA codes in `DATEADD`/`DATEDIFF`, Excel codes in `DATEDIF` | Accepted |
 
 Number 0026 is unused: no ADR was filed under it.
 
