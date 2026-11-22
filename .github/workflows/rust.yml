@@ -86,3 +86,30 @@ jobs:
           key: msrv
       - name: Build all targets on the MSRV (locked)
         run: cargo build --locked --all-targets
+
+  # BL-062: build the sk_http_server image and smoke-test it. Loaded into the runner's
+  # Docker only, never pushed. Not a required check in the branch ruleset (maintainer's call).
+  docker:
+    name: docker image
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # mode=max also caches the builder stage, where the cargo build happens.
+      - name: Build image (load only, no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          tags: skillet-http:ci
+          load: true
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Same script humans run (docs/ops/docker.md). It removes its containers on exit.
+      - name: Smoke test the image
+        run: ./scripts/docker_smoke.sh skillet-http:ci

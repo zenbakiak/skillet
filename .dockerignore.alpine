@@ -24,3 +24,8 @@ Thumbs.db
 # Large test/bench files (not needed for build)
 # benches/ must stay: Cargo.toml declares [[bench]] targets (BL-062).
 performance_results/
+
+# Local secrets never enter the build context.
+.env
+.env.*
+!.env.example

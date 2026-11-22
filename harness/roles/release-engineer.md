@@ -43,7 +43,9 @@ Agents prepare steps 1–3; **only a human publishes, tags, or pushes to `main`.
   (`rust.yml`) and `release.yml` pin Rust 1.89.0 via `RUST_TOOLCHAIN`; bump both together.
   `.tool-versions` is gitignored, local only.
 - CI (`rust.yml`) runs `./harness/check.sh`, `cargo audit` and the MSRV build on pushes and PRs to
-  `main` and `develop`, all `--locked`.
+  `main` and `develop`, all `--locked`. A fourth job, `docker image` (BL-062), builds `Dockerfile`
+  with buildx (GitHub Actions cache, loaded locally, never pushed) and runs
+  `scripts/docker_smoke.sh`. It is not a required check in the ruleset.
 - Release (ADR-0022): one tag `vX.Y.Z`, one workflow `release.yml`: `verify` (tag = `Cargo.toml`
   version, CHANGELOG section present) → `build-binaries` + `crate-check` → `github-release`
   (body from `scripts/changelog_section.sh`) → `crates-io`. All `--locked`. `workflow_dispatch`
@@ -69,7 +71,8 @@ Agents prepare steps 1–3; **only a human publishes, tags, or pushes to `main`.
   runtime `debian:bookworm-slim`, `cargo build --locked`, no `curl` (health check is
   `docker/healthcheck.sh` over bash `/dev/tcp`). `docker/entrypoint.sh` fails closed without
   `SKILLET_AUTH_TOKEN` and `SKILLET_ADMIN_TOKEN` and passes them by env only. Compose publishes on
-  `127.0.0.1`. Not built in CI yet.
+  `127.0.0.1`. Built and smoke-tested in CI by the `docker image` job (`scripts/docker_smoke.sh`).
+  `.dockerignore` must keep `benches/` (Cargo.toml declares `[[bench]]` targets).
 
 ## Hand off
 Use the handoff template in `harness/roles/orchestrator.md`; include `cargo package --list` diff
