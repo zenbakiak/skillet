@@ -373,14 +373,64 @@ fn write_json(w: &mut impl Write, v: &Value, charge: bool) -> Result<(), Error> 
 /// A number as JSON (ADR-0030 decision d): integer digits for an integral `n` with
 /// `|n| < 2^53` (not `-0`), else `serde_json`'s shortest round-trip text.
 fn write_json_number(w: &mut impl Write, n: f64) -> Result<(), Error> {
-    if n.fract() == 0.0 && n.abs() < EXACT_INT && !(n == 0.0 && n.is_sign_negative()) {
-        let _ = write!(w, "{}", n as i64);
+    if let Some(i) = json_int(n) {
+        let _ = write!(w, "{i}");
         return Ok(());
     }
-    let num = serde_json::Number::from_f64(n)
-        .ok_or_else(|| Error::new("Invalid number for JSON", None))?;
+    let num = serde_json::Number::from_f64(n).ok_or_else(|| Error::new(NOT_JSON_NUMBER, None))?;
     let _ = write!(w, "{num}");
     Ok(())
+}
+
+const NOT_JSON_NUMBER: &str = "Invalid number for JSON";
+
+/// The integer a number prints as in JSON (ADR-0030 decision d): integral, `|n| < 2^53`, not `-0`.
+fn json_int(n: f64) -> Option<i64> {
+    let integral = n.fract() == 0.0 && n.abs() < EXACT_INT && !(n == 0.0 && n.is_sign_negative());
+    integral.then_some(n as i64)
+}
+
+/// The same JSON as [`Value::to_json_text`]: written by the rules of [`write_json`], so with
+/// `serde_json` the output is byte for byte that text. Nothing is charged to the evaluation
+/// budget. A non-finite number, or a `Json` value whose text is not JSON, is a serializer error.
+///
+/// ```rust
+/// use skillet::Value;
+///
+/// let v = Value::from_json_text(r#"[1, 2.5, "x", {"b": [true, null], "a": 1}]"#).unwrap();
+/// let text = serde_json::to_string(&v).unwrap();
+/// assert_eq!(text, r#"[1,2.5,"x",{"a":1,"b":[true,null]}]"#);
+/// assert_eq!(text, v.to_json_text().unwrap());
+/// ```
+#[allow(deprecated)] // `Value::Currency` is read as a Number (ADR-0033); `Json` until 0.8
+impl serde::Serialize for Value {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::Error as _;
+        match self {
+            Value::Null => serializer.serialize_unit(),
+            Value::Boolean(b) => serializer.serialize_bool(*b),
+            Value::Number(n) | Value::Currency(n) => match json_int(*n) {
+                Some(i) => serializer.serialize_i64(i),
+                None if n.is_finite() => serializer.serialize_f64(*n),
+                None => Err(S::Error::custom(NOT_JSON_NUMBER)),
+            },
+            Value::String(s) => serializer.serialize_str(s),
+            Value::DateTime(ts) => serializer.collect_str(&DateTimeText(*ts)),
+            Value::Array(items) => serializer.collect_seq(items),
+            Value::Json(s) => serde_json::from_str::<serde_json::Value>(s)
+                .map_err(|e| S::Error::custom(format_args!("Invalid JSON: {e}")))?
+                .serialize(serializer),
+        }
+    }
+}
+
+/// A DateTime's text, written straight into the serializer.
+struct DateTimeText(i64);
+
+impl fmt::Display for DateTimeText {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write_datetime(f, self.0)
+    }
 }
 
 /// A string as JSON, escaped as `serde_json` escapes it: `"` and `\`, the short escapes

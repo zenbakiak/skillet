@@ -421,7 +421,11 @@ unchanged at 256 MiB, only now configurable. Details: [Limits](limits.md).
 | `runtime::builtin_functions::exec_builtin` | public | deprecated (still works); it reports argument errors as `Unknown function`. Use `runtime::function_dispatch::exec_builtin_fast` or `evaluate` |
 | `skillet::parse("a & b")` | `Expr::FunctionCall { name: "__CONCAT__", … }` | `Expr::Binary(a, BinaryOp::Concat, b)` (ADR-0034); a `match` on `BinaryOp` needs a `_` arm (see `#[non_exhaustive]` below) |
 | `Value::Currency` | a tagged number | deprecated (ADR-0033), removed in 0.8. Still compiles; a Currency you pass in is read as a Number, and results never contain one. Use `Value::Number` |
-| `Value::Json` | the variant for JSON objects | deprecated (ADR-0030); behaviour unchanged. Objects that Skillet evaluates or reads from JSON are still `Json`, and you can build and match it, with a warning. In 0.8.0 (BL-011) it is replaced by the structured `Value::Object` and removed. Build objects with `skillet::json_to_value` (its signature stays in 0.8.0) |
+| `Value::Json` | the variant for JSON objects | deprecated (ADR-0030); behaviour unchanged. Objects that Skillet evaluates or reads from JSON are still `Json`, and you can build and match it, with a warning. In 0.8.0 (BL-011) it is replaced by the structured `Value::Object` and removed. Build objects with `Value::from_json_text` (or `skillet::json_to_value` for a parsed `serde_json::Value`) and read them with `Value::to_json_text`; their signatures stay in 0.8.0 |
+| `Value::from_json_text(&str)`, `Value::to_json_text()` | none | new (ADR-0030 step 2, BL-104). `from_json_text` reads JSON text as `evaluate_with_json` reads a variable (objects are `Json`; an `Invalid JSON: …` error otherwise). `to_json_text` returns `Result<String, Error>` with the text `.to_json()` writes, except that `NULL` is `null` (`.to_json()` keeps `{}`); it fails on `NaN`/infinity or a `Json` holding invalid text |
+| `Value::as_str()`, `Value::as_array()` | none | new: `Option<&str>`, `Option<&[Value]>`; they keep compiling when 0.8.0 shares strings and arrays |
+| `From<String>`, `From<&str>`, `From<Vec<Value>>`, `From<f64>`, `From<bool>` for `Value` | none | new: `Value::from("a")`, `vec.into()`; 0.8.0 keeps them, so prefer them to naming `Value::String`/`Value::Array` |
+| `serde::Serialize` for `Value` | not implemented | implemented: with `serde_json` the output is exactly `to_json_text` (a `Json` value as its parsed JSON, not a quoted string); `NaN`/infinity is a serializer error. `Deserialize` follows in 0.8.0 |
 | `Value`, `lexer::Token`, `ast::Expr`, `ast::BinaryOp`, `ast::UnaryOp`, `ast::TypeName` | exhaustive enums | `#[non_exhaustive]`: later variants (`Value::Object` in 0.8.0) are not breaking, but a `match` on them in your crate needs a `_` arm, even one that names every variant. `matches!`, `if let` and `==` are unaffected. Constructing variants is unaffected |
 
 The two changes that most Rust callers see:
@@ -457,6 +461,9 @@ fn print(value: &Value) {
 }
 
 // Building an object: 0.6 `Value::Json(r#"{"a":1}"#.to_string())`; 0.7 warns. Use:
+let obj = Value::from_json_text(r#"{"a": 1}"#)?;
+assert_eq!(obj.to_json_text()?, r#"{"a":1}"#);
+// or, from a parsed document:
 let obj = skillet::json_to_value(serde_json::json!({"a": 1}))?;
 ```
 
