@@ -866,6 +866,7 @@ fn bl027c_peak_heap_stays_within_twice_the_budget() {
             }),
         ),
         ("to_a on a 1 MB string", format!("{one_mb}.to_a()")),
+        ("::Array on a 1 MB string", format!("{one_mb}::Array")),
         (
             "to_json on 1 MB of \\x01",
             format!("{}.to_json()", big_string("\u{1}", 1000)),

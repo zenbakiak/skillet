@@ -1,6 +1,5 @@
 use crate::error::Error;
-use crate::limits;
-use crate::runtime::text::{json_text, to_text};
+use crate::runtime::text::{json_text, string_chars, to_text};
 use crate::types::Value;
 
 /// Handle conversion method calls for all types (Ruby-style)
@@ -73,12 +72,7 @@ fn to_array(value: &Value) -> Result<Value, Error> {
     let result = match value {
         Value::Null => Vec::new(),
         Value::Array(arr) => arr.clone(),
-        Value::String(s) => {
-            // One string per character: 48 + its bytes each, charged before building.
-            let chars = s.chars().count() as u64;
-            limits::charge(32 + limits::STRING_COST * chars + s.len() as u64)?;
-            s.chars().map(|c| Value::String(c.to_string())).collect()
-        }
+        Value::String(s) => string_chars(s)?,
         other => vec![other.clone()],
     };
     Ok(Value::Array(result))

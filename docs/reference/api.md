@@ -1405,7 +1405,8 @@ An unknown type name is `Error: Unknown cast type at position N`, N being where 
 - `Float` - Convert to float
 - `String` - Convert to string
 - `Boolean` - Convert to boolean
-- `Array` - Convert to array
+- `Array` - Convert to array: a string splits into characters, as `.to_a()` (`""` is `[]`); an
+  array stays as it is; any other value, `NULL` included, becomes a one-item array
 - `Currency` - Round to 4 decimals; the result is a Number (ADR-0033)
 - `DateTime` - Convert to datetime
 - `Json` - Convert to JSON
@@ -1416,7 +1417,9 @@ An unknown type name is `Error: Unknown cast type at position N`, N being where 
 42 :: String                 # "42"
 1 :: Boolean                 # true
 0 :: Boolean                 # false
-"hello" :: Array             # ["hello"] (a scalar becomes a one-item array)
+"hello" :: Array             # ["h", "e", "l", "l", "o"] (one item per character, as .to_a())
+"héllo" :: Array             # ["h", "é", "l", "l", "o"] (characters, not bytes)
+5 :: Array                   # [5] (any other scalar becomes a one-item array)
 ```
 
 ### Number conversions

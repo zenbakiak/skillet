@@ -1516,8 +1516,9 @@ Skillet's conversion methods follow Ruby conventions for intuitive behavior:
 2. **Boolean to Number**: `true` → 1, `false` → 0
 3. **Empty Values to Boolean**: Empty strings and arrays become `false`
 4. **Null Safety**: `null` converts to safe defaults for all types
-5. **String Arrays**: `.to_a()` splits a string into characters (`"hi".to_a()` → `["h", "i"]`);
-   the `::Array` cast does not (`"hi"::Array` → `["hi"]`)
+5. **String Arrays**: `.to_a()` and the `::Array` cast split a string into characters
+   (`"hi".to_a()` and `"hi"::Array` → `["h", "i"]`; `""` → `[]`). They differ on `null`:
+   `null.to_a()` is `[]`, `null::Array` is `[null]`
 
 ### Method Name Variants
 

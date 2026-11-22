@@ -35,6 +35,8 @@ Check these first. They change results without an error:
 15. **`SUBSTITUTE` with an instance number**, **`SORT(…, -1)`** and **`DB`** now follow Excel:
    `SUBSTITUTE("a-a-a", "-", "_", 2)` replaces only the second match, `SORT([2, 1], -1)` sorts
    descending, and `DB` rounds the rate to 3 decimals.
+16. **`::Array` on a string** splits it into characters, as `.to_a()` (BL-105): `"ab"::Array` is
+   `["a","b"]` (was `["ab"]`). Write `[:s]` for a one-item array.
 
 ## Expressions
 
@@ -281,6 +283,7 @@ builds.
 | `"x" & {"a": 1}`, `CONCAT("x", {"a": 1})` | `"x"` | `"x{\"a\":1.0}"` |
 | `[{"a": 1}].join()`, `TEXTJOIN(",", TRUE, {"a": 1})` | `Error` | `"{\"a\":1.0}"` |
 | `"héllo".length()`, `"héllo".len()` | `6` (bytes) | `5` (characters, as `LEN`) |
+| `"hello"::Array`, `""::Array` (BL-105) | `["hello"]`, `[""]` | `["h","e","l","l","o"]`, `[]` (characters, as `.to_a()`); keep the old result with `["hello"]` or `[:s]` |
 | `__CONCAT__("a", 1)` | `"a1"` (internal name of `&`) | `Error: Unknown function: __CONCAT__` |
 
 `(0.1 + 0.2)::String::Float` is now `0.3`, not `0.1 + 0.2`; `"1E+21"::Integer` is `1` (use
