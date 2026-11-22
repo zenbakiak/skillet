@@ -12,6 +12,9 @@ Check these first. They change results without an error:
 4. **`JQ`** with a wildcard path that matches one item now returns an array.
 5. **`%` before `-` or `+`** is now a percent, not modulo: `10 % -3` is `-2.9` (was `1`).
 6. **`1e3`** is now `1000` (it was silently `1`).
+7. **`AND`/`OR` with `NULL` or an array holding text**: `AND(TRUE, NULL)` is now `true`.
+8. **`DATEADD`/`DATEDIFF` units `"m"`, `"y"`, `"w"`** now follow Excel (B-15): `"m"` is months
+   (was minutes), `"y"` is days (was years), `"w"` adds days (was weeks). Search for them.
 
 ## Expressions
 
@@ -88,12 +91,36 @@ To keep a default, test first: `IF(:n == 0, 0, :total / :n)` (now lazy, see belo
 | `TIME(14, 30, 0)` | current time (0.6.3) | `0.6041666666666666` (fraction of a day) |
 | `IPMT(0.1, 1, 3, 1000)`, `IPMT(0.1, 2, 3, 1000)` | `100`, `49.79…` | `-100`, `-69.79…` |
 | `FIND("b", "abc")` | `Error` | `2` (text search) |
-| `IF(TRUE, 1, UPPER(1))` | `Error` | `1` (only the chosen branch runs) |
-| `IF("x", 1, 2)` | `2` | `Error` |
-| `IFS(FALSE, 1)` (no true condition) | `false` | `Error` |
 
 The methods keep Ruby semantics and do not change: `"  a   b  ".trim()` is still `"a   b"`, and
 `(-3.7).int()` is still `-3` (while `INT(-3.7)` is `-4`).
+
+### Logical functions and operators (ADR-0018 D-8, ADR-0029)
+`IF` and `IFS` evaluate only the branch they pick. Their condition must be `TRUE`/`FALSE` or a
+number (non-zero is true); `NULL` is false. The `AND`/`OR`/`NOT`/`XOR` builtins follow Excel:
+inside an array, text and `NULL` are skipped; text passed directly is `#VALUE!`; no logical value
+at all is `#VALUE!`. The builtins evaluate every argument, while the operators `AND`, `OR`, `&&`
+and `||` stop as soon as the left side decides the result.
+
+| Expression | 0.6 | 0.7 |
+|---|---|---|
+| `IF(TRUE, 1, UPPER(1))` | `Error` | `1` (only the chosen branch runs) |
+| `IF("x", 1, 2)`, `IF([1], 1, 2)` | `2` | `Error` (`#VALUE!`) |
+| `IFS(FALSE, 1)` (no true condition) | `false` | `Error` (`#N/A`) |
+| `AND(TRUE, NULL)`, `AND(TRUE, [TRUE, "x"])` | `false` | `true` (blank and text ignored) |
+| `AND(TRUE, "x")`, `OR(FALSE, "TRUE")`, `NOT("x")` | `false`, `false`, `true` | `Error` (`#VALUE!`) |
+| `AND()`, `OR()`, `AND([])` | `true`, `false`, `true` | `Error` (`#VALUE!`) |
+| `XOR(TRUE, TRUE, TRUE)`, `XOR(TRUE)` | `Error` | `true` (odd number of TRUE) |
+| `FALSE && 1/0`, `TRUE \|\| UPPER(1)` | `Error` | `false`, `true` (right side not evaluated) |
+| `NOT TRUE`, `NOT :x > 1` | parse error | `false`, `NOT (:x > 1)` (`NOT` keyword) |
+| `NOT (0) == FALSE` (space before `(`) | `false` (`NOT(0) == FALSE`) | `true` (`NOT ((0) == FALSE)`) |
+| `AND(1, TRUE)`, `NOT(0)`, `1 AND TRUE` | `true`, `true`, `Error` | unchanged |
+
+The `NOT` keyword binds looser than comparisons and tighter than `AND`, as in SQL:
+`NOT 1 > 2 AND TRUE` is `(NOT (1 > 2)) AND TRUE`. Inside a tighter operator it needs
+parentheses (`1 + (NOT x)`). `NOT(x)` with no space stays the function call, and `!` keeps its
+tight precedence (`!:a == :b` is `(!:a) == :b`). To keep a 0.6 `NOT (x) == y`, remove the space:
+`NOT(x) == y`.
 
 ### Dates (ADR-0018 D-5)
 | Expression | 0.6 | 0.7 |
@@ -107,6 +134,24 @@ The methods keep Ruby semantics and do not change: `"  a   b  ".trim()` is still
 | `DATE(2026, 1, 1) + "1"`, `"1" + DATE(2026, 1, 1)`, `DATE(2026, 1, 1) + TRUE` | `Error` | 2026-01-02 |
 | `DATE(2026, 1, 1) + "x"` | `Error: Arithmetic op on non-number` | `Error: Cannot convert "x" to a number (#VALUE!)` |
 | `"2026-02-30"::DateTime` | `Error` | `Error` (casts never roll over) |
+
+### Date units follow Excel (B-15)
+`DATEADD` and `DATEDIFF` read the unit codes of VBA's `DateAdd`/`DateDiff`, case-insensitively.
+The long words (`"months"`, `"minutes"`, …) are unchanged. Use them, or the new codes, to keep the
+old result. The new `DATEDIF` has Excel's worksheet codes (`"y"`, `"m"`, `"d"`, `"md"`, `"ym"`,
+`"yd"`).
+
+| Expression | 0.6 | 0.7 | Keep the old result with |
+|---|---|---|---|
+| `DATEADD(DATE(2026, 1, 1), 1, "m")` | +1 minute | 2026-02-01 (+1 month) | `"n"` or `"minutes"` |
+| `DATEDIFF(DATE(2026, 1, 1), DATE(2026, 3, 1), "m")` | `84960` (minutes) | `2` (months) | `"n"` or `"minutes"` |
+| `DATEADD(DATE(2026, 1, 1), 1, "y")` | 2027-01-01 | 2026-01-02 (`"y"` is day of year) | `"yyyy"` or `"years"` |
+| `DATEDIFF(DATE(2025, 1, 1), DATE(2026, 1, 1), "y")` | `1` | `365` (days) | `"yyyy"` or `"years"` |
+| `DATEADD(DATE(2026, 1, 1), 1, "w")` | 2026-01-08 | 2026-01-02 (`"w"` is weekday) | `"ww"` or `"weeks"` |
+| `DATEADD(DATE(2024, 1, 31), 1, "months")`, `DATEADD(DATE(2026, 3, 31), 1, "months")` | 2024-02-28, 2026-04-28 | 2024-02-29, 2026-04-30 (end of month, as VBA) | |
+| `DATEADD(…, 1, "eons")` | `Error: DATEADD unit must be one of: …` | the same error, ending in `(#VALUE!)` | |
+| `DATEADD(DATE(2026, 1, 1), 1e15, "m")`, `…, 1e18, "days")` | hang or panic | `Error: DATEADD result is out of range (#NUM!)` | |
+| `DATEADD(…, "q")`, `"yyyy"`, `"ww"`, `"n"` | `Error` | quarters, years, weeks, minutes | |
 
 ### Currency in arithmetic (ADR-0027)
 Currency now works in the arithmetic operators instead of failing. The other operand converts as
@@ -126,7 +171,7 @@ for a number (numeric text, booleans, `NULL` as 0). Results are not rounded (Cur
 ### New names (additive)
 These used to fail with `Unknown function` or a parse error: `STDEV.P`, `STDEV.S`, `STDEV`,
 `VAR.P`, `VAR.S`, `VAR`, `MODE.SNGL`, `MODE`, `PERCENTILE.INC`, `PERCENTILE`, `QUARTILE.INC`,
-`QUARTILE`, `COUNTA`, `LEN`, `TODAY`, `PPMT`, `PV`, `NPV`, `TEXTJOIN`, `AVERAGEIF`.
+`QUARTILE`, `COUNTA`, `LEN`, `TODAY`, `PPMT`, `PV`, `NPV`, `TEXTJOIN`, `AVERAGEIF`, `DATEDIF`.
 
 ### Null equality (ADR-0013)
 | Expression | 0.6 | 0.7 |
@@ -196,6 +241,7 @@ Each evaluation has a budget of 256 MB of created values, and the servers stop a
 | `skillet::runtime::evaluation` | re-export shim | removed; use `skillet::runtime::evaluator` or the top-level `evaluate*` functions (ADR-0010) |
 | `runtime::method_calls::exec_filter`/`exec_map`/`exec_find`/`exec_reduce`, `exec_string_method`, `exec_array_method` | take a variable map | take `&dyn EvaluationContext` |
 | Minimum Rust version | not stated | 1.85 (ADR-0012) |
+| `runtime::builtin_functions::exec_builtin` | public | deprecated (still works); it reports argument errors as `Unknown function`. Use `runtime::function_dispatch::exec_builtin_fast` or `evaluate` |
 
 ## Servers
 | Change | 0.6 | 0.7 |
@@ -208,6 +254,7 @@ Each evaluation has a budget of 256 MB of created values, and the servers stop a
 | `sk_server` wrong or missing token | can retry on the same connection | `Unauthorized: invalid token`, then the connection closes |
 | `/upload-js`, `/update-js`, `/delete-js` file names | any path | only `[A-Za-z0-9_-]+.js`, otherwise 400 |
 | Writing one response | 10 s per socket write | 10 s in total; a slower reader gets a truncated response |
+| `sk_http_server` request over 1 MB / slower than 30 s | HTTP 400 with `"error": "413 Payload Too Large"` / `"408 Request Timeout"` | HTTP 413 / 408 with `"error"` set to the limit message, e.g. `Request body too large (max 1MB)`, `Request read timed out (max 30 s)` (BL-049) |
 
 Update clients first: send `Content-Type: application/json` on every `POST` and `PUT`, and set
 tokens on every deployment.

@@ -1,10 +1,11 @@
 //! `sk_http_server` cross-origin policy, JSON-only request bodies and the admin token from
 //! the environment (ADR-0019, BL-051). Servers run on 127.0.0.1 with one worker.
 
+mod common;
+
+use common::{free_port, ServerProcess};
 use std::io::{Read, Write};
-use std::net::TcpStream;
 use std::process::{Command, Stdio};
-use std::time::Duration;
 
 const ENV_VARS: [&str; 3] = [
     "SKILLET_AUTH_TOKEN",
@@ -13,18 +14,7 @@ const ENV_VARS: [&str; 3] = [
 ];
 
 /// `sk_http_server` on a free port, killed on drop.
-struct Server {
-    child: std::process::Child,
-    port: u16,
-}
-
-fn free_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
-}
+struct Server(ServerProcess);
 
 fn command(port: u16, args: &[&str], env: &[(&str, &str)]) -> Command {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_sk_http_server"));
@@ -48,21 +38,12 @@ fn command(port: u16, args: &[&str], env: &[(&str, &str)]) -> Command {
 
 impl Server {
     fn start(args: &[&str], env: &[(&str, &str)]) -> Server {
-        let port = free_port();
-        let child = command(port, args, env).spawn().expect("spawn server");
-        for _ in 0..200 {
-            if TcpStream::connect(("127.0.0.1", port)).is_ok() {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(50));
-        }
-        Server { child, port }
+        Server(ServerProcess::start(|port| command(port, args, env)))
     }
 
     /// Send raw `head` (request line + headers, without the blank line) and `body`.
     fn raw(&self, head: &str, body: &str) -> String {
-        let mut s = TcpStream::connect(("127.0.0.1", self.port)).expect("connect");
-        s.set_read_timeout(Some(Duration::from_secs(30))).unwrap();
+        let mut s = self.0.connect();
         let req = format!(
             "{head}\r\nHost: localhost\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
             body.len()
@@ -94,13 +75,6 @@ impl Server {
             &format!("POST /eval HTTP/1.1{ct}{extra}"),
             r#"{"expression": "=1 + 2"}"#,
         )
-    }
-}
-
-impl Drop for Server {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
     }
 }
 
