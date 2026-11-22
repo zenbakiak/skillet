@@ -21,8 +21,9 @@ Excel's result. When it gives a different number, the user gets no error, only a
 ### The rule
 - **UPPERCASE builtins and operators follow Excel's documented behaviour.** Same arguments, same
   result, and an Excel error value (`#DIV/0!`, `#NUM!`, `#VALUE!`, `#N/A`) becomes a Skillet `Error`.
-- **Lowercase methods keep Ruby semantics** (`.trim()`, `.int()`, `.round()`). A method does not
+- **Lowercase methods keep Ruby semantics** (`.trim()`, `.int()`). A method does not
   have to give the same result as the builtin of the same name. Each difference is documented.
+  Exception (BL-088, maintainer decision 2026-11-22): `.round([digits])` is `ROUND`.
 - Skillet-only builtins (`AVG`, `JOIN`, `DATEADD`, `DIG`, `JQ`, …) keep their own documented
   behaviour. A Skillet extension to an Excel builtin (an optional argument Excel does not have,
   a lambda criterion) is allowed if it does not change any result Excel defines.

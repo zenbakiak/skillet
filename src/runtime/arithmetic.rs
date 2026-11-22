@@ -97,13 +97,29 @@ fn unary(
 fn round(args: &[Value]) -> Result<Value, Error> {
     arity("ROUND", args, 1, 2, "number, [num_digits]")?;
     let n = number_arg("ROUND", args, 0, "number")?;
-    let digits = optional_number_arg("ROUND", args, 1, "num_digits", 0.0)?;
+    round_to("ROUND", n, args.get(1))
+}
+
+/// `ROUND(n, digits)`, shared by `ROUND` and `.round([digits])` (BL-088): `digits` missing or
+/// NULL is 0, and `name` is the form named in errors.
+pub(crate) fn round_to(name: &str, n: f64, digits: Option<&Value>) -> Result<Value, Error> {
+    let digits = match digits {
+        Some(Value::Number(d)) => *d,
+        Some(d) => optional_number_arg(name, std::slice::from_ref(d), 0, "num_digits", 0.0)?,
+        None => 0.0,
+    };
     if digits.is_nan() {
-        return Err(Error::new("ROUND num_digits is not a number (#NUM!)", None));
+        return Err(Error::new(
+            format!("{name} num_digits is not a number (#NUM!)"),
+            None,
+        ));
     }
     let r = round_half_away(n, digits.trunc().clamp(-400.0, 400.0) as i32);
     if n.is_finite() && !r.is_finite() {
-        return Err(Error::new("ROUND result is out of range (#NUM!)", None));
+        return Err(Error::new(
+            format!("{name} result is out of range (#NUM!)"),
+            None,
+        ));
     }
     Ok(Value::Number(r))
 }
@@ -116,7 +132,7 @@ pub(crate) fn round_currency(n: f64) -> f64 {
     if !n.is_finite() || n.abs() >= UNCHANGED_FROM {
         return n;
     }
-    let r = round4(n);
+    let r = round_half_away(n, 4);
     if r == 0.0 {
         0.0
     } else {
@@ -124,37 +140,125 @@ pub(crate) fn round_currency(n: f64) -> f64 {
     }
 }
 
-/// `round_half_away(n, 4)` without its text formatting when that cannot change the result.
-/// `round_half_away` rounds the 15-significant-digit decimal form of `n`, which is within
-/// `5e-15 * |n|` of `n`; `|n| * 10^4` is within half an ulp of the exact product. So when the
-/// fraction of `|n| * 10^4` is further than `1e-14` of itself (plus a margin) from one half,
-/// both round to the same integer `m`, and both return `m / 10^4`. Below `1e9` the decimal form
-/// keeps more than 4 decimals, so `round_half_away` does round there.
-fn round4(n: f64) -> f64 {
-    let a = n.abs();
-    if a < 1e9 {
-        let x = a * 1e4;
-        let frac = x - x.floor();
-        if (frac - 0.5).abs() > x * 1e-14 + 1e-9 {
-            return n.signum() * (x.round() / 1e4);
+/// Exact powers of ten, `10^0` to `10^22` (the largest one an `f64` holds exactly).
+const POW10: [f64; 23] = [
+    1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11, 1e12, 1e13, 1e14, 1e15, 1e16,
+    1e17, 1e18, 1e19, 1e20, 1e21, 1e22,
+];
+
+/// `n` rounded half away from zero to `digits` decimals (negative: to the left of the point),
+/// on its 15-significant-digit decimal form, as Excel's `ROUND` does. Bit for bit the result of
+/// [`round_half_away_text`], without its text formatting when that cannot change the result
+/// (PERF-1, BL-088):
+///
+/// The decimal form `t` of `|n|` is within `5e-15 * |n|` of it, and `x = |n| * 10^digits` (one
+/// correctly rounded operation by an exact power of ten) within half an ulp of the exact
+/// product. So when the fraction of `x` is further than `1e-14 * x` (plus a margin) from one
+/// half, `x` and `t * 10^digits` round to the same integer `m`, and both return `m / 10^digits`
+/// (`m * 10^-digits`). `x < 9e13` keeps `t * 10^digits` below `10^14`, where the decimal form
+/// still has a digit to round; `x >= 0.2` keeps it at `0.1` or more, where the text method
+/// rounds instead of returning `+0`. Near a half, [`near_half`] decides without text when it
+/// can; anything else takes the text method.
+#[inline]
+pub(crate) fn round_half_away(n: f64, digits: i32) -> f64 {
+    if (-22..=22).contains(&digits) {
+        let p = POW10[digits.unsigned_abs() as usize];
+        let a = n.abs();
+        let x = if digits >= 0 { a * p } else { a / p };
+        if (0.2..9e13).contains(&x) {
+            let frac = x - x.floor();
+            let m = if (frac - 0.5).abs() > x * 1e-14 + 1e-9 {
+                Some(x.round())
+            } else {
+                near_half(x)
+            };
+            if let Some(m) = m {
+                return n.signum() * if digits >= 0 { m / p } else { m * p };
+            }
         }
     }
-    round_half_away(n, 4)
+    round_half_away_text(n, digits)
 }
 
-pub(crate) fn round_half_away(n: f64, digits: i32) -> f64 {
+/// The integer that `t`, the 15-significant-digit decimal form of the exact `y = |n| * 10^digits`,
+/// rounds to, for `x = fl(y)` in `[0.2, 9e13)` within `1e-14 * x + 1e-9` of the half `g = k + 0.5`;
+/// `None` when it is too close to call. `g` is on the 15-digit grid (its step `u` is at most
+/// 0.1 below `10^14`), so `t == g` and `m = k + 1` when `|y - g| < u / 2`, and `t` is on `y`'s
+/// side of `g` (`m = x.round()`) when `|y - g| > u / 2`. `|x - g|` is exact and `|x - y|` is at
+/// most half an ulp, so only a band of about one ulp each side of `u / 2` is left to the text
+/// method. Decimal inputs at a half (`ROUND(0.685, 2)`) are within an ulp or two of `g`.
+#[inline(never)]
+fn near_half(x: f64) -> Option<f64> {
+    // `e`: the decimal exponent of `x` (and of `t`: no power of ten is near a half).
+    let e = if x < 1.0 {
+        -1
+    } else {
+        POW10[1..=13].iter().take_while(|&&p| p <= x).count() as i32
+    };
+    let half_step = 0.5 / POW10[(14 - e) as usize];
+    let g = x.floor() + 0.5;
+    let dist = (x - g).abs();
+    let err = x * 2.3e-16;
+    if dist + err < half_step * (1.0 - 1e-9) {
+        Some(x.floor() + 1.0)
+    } else if dist - err > half_step * (1.0 + 1e-9) {
+        Some(x.round())
+    } else {
+        None
+    }
+}
+
+/// The reference `ROUND`: format the 15 significant digits Excel works with, then round the
+/// digit after `digits` decimals half away from zero. The text goes to a stack buffer.
+#[cold]
+#[inline(never)]
+fn round_half_away_text(n: f64, digits: i32) -> f64 {
+    use std::fmt::Write;
+    /// "d.dddddddddddddde-308" is 21 bytes.
+    struct Buf {
+        bytes: [u8; 32],
+        len: usize,
+    }
+    impl Write for Buf {
+        fn write_str(&mut self, s: &str) -> std::fmt::Result {
+            let end = self.len + s.len();
+            let dst = self.bytes.get_mut(self.len..end).ok_or(std::fmt::Error)?;
+            dst.copy_from_slice(s.as_bytes());
+            self.len = end;
+            Ok(())
+        }
+    }
     if !n.is_finite() || n == 0.0 {
         return n;
     }
     // "d.dddddddddddddde<exp>": the 15 significant digits Excel works with.
-    let s = format!("{:.14e}", n.abs());
+    let mut buf = Buf {
+        bytes: [0; 32],
+        len: 0,
+    };
+    if write!(buf, "{:.14e}", n.abs()).is_err() {
+        return n;
+    }
+    let Ok(s) = std::str::from_utf8(&buf.bytes[..buf.len]) else {
+        return n;
+    };
     let Some((mantissa, exp)) = s.split_once('e') else {
         return n;
     };
     let Ok(exp) = exp.parse::<i64>() else {
         return n;
     };
-    let ds: Vec<u8> = mantissa.bytes().filter(u8::is_ascii_digit).collect();
+    // Digits of "d.dddddddddddddd" without the point: at most 15.
+    let mut ds = [0u8; 16];
+    let mut len = 0;
+    for d in mantissa.bytes().filter(u8::is_ascii_digit) {
+        if len == ds.len() {
+            return n;
+        }
+        ds[len] = d;
+        len += 1;
+    }
+    let ds = &ds[..len];
     let keep = exp + 1 + i64::from(digits);
     if keep >= ds.len() as i64 {
         return n;
@@ -299,11 +403,48 @@ pub(crate) fn checked_binary(op: BinaryOp, a: f64, b: f64) -> Result<f64, Error>
 }
 
 #[cfg(test)]
-mod currency_rounding_tests {
-    use super::{round_currency, round_half_away};
+mod rounding_tests {
+    use super::{round_currency, round_half_away, round_half_away_text, POW10};
+
+    /// `ROUND` before BL-088 (heap `String` and `Vec`), the oracle for both paths.
+    fn reference_round(n: f64, digits: i32) -> f64 {
+        if !n.is_finite() || n == 0.0 {
+            return n;
+        }
+        // "d.dddddddddddddde<exp>": the 15 significant digits Excel works with.
+        let s = format!("{:.14e}", n.abs());
+        let Some((mantissa, exp)) = s.split_once('e') else {
+            return n;
+        };
+        let Ok(exp) = exp.parse::<i64>() else {
+            return n;
+        };
+        let ds: Vec<u8> = mantissa.bytes().filter(u8::is_ascii_digit).collect();
+        let keep = exp + 1 + i64::from(digits);
+        if keep >= ds.len() as i64 {
+            return n;
+        }
+        let sign = n.signum();
+        if keep < 0 {
+            return 0.0;
+        }
+        let keep = keep as usize;
+        let mut m: u64 = ds[..keep]
+            .iter()
+            .fold(0, |acc, d| acc * 10 + u64::from(d - b'0'));
+        if ds[keep] >= b'5' {
+            m += 1;
+        }
+        let r = if digits >= 0 {
+            m as f64 / 10f64.powi(digits)
+        } else {
+            m as f64 * 10f64.powi(-digits)
+        };
+        sign * r
+    }
 
     fn reference(n: f64) -> f64 {
-        let r = round_half_away(n, 4);
+        let r = reference_round(n, 4);
         if r == 0.0 {
             0.0
         } else {
@@ -317,7 +458,7 @@ mod currency_rounding_tests {
         assert_eq!(got.to_bits(), want.to_bits(), "{n:?}: {got:?} != {want:?}");
     }
 
-    /// The fast path of `round4` gives exactly `ROUND(n, 4)`: halves at every scale, their
+    /// `round_currency` gives exactly the text method's `ROUND(n, 4)`: halves at every scale, their
     /// neighbouring floats, and a pseudo-random spread of magnitudes.
     #[test]
     fn fast_path_matches_round_half_away() {
@@ -356,5 +497,145 @@ mod currency_rounding_tests {
         ] {
             check(n);
         }
+    }
+
+    fn check_digits(n: f64, d: i32) {
+        let want = reference_round(n, d);
+        for (path, got) in [
+            ("fast", round_half_away(n, d)),
+            ("text", round_half_away_text(n, d)),
+        ] {
+            assert_eq!(
+                got.to_bits(),
+                want.to_bits(),
+                "ROUND({n:?}, {d}) {path}: {got:?} != {want:?}"
+            );
+        }
+    }
+
+    /// The fast path uses the same powers of ten as the text method's `10f64.powi`.
+    #[test]
+    fn pow10_table_is_powi() {
+        for (d, p) in POW10.iter().enumerate() {
+            assert_eq!(p.to_bits(), 10f64.powi(d as i32).to_bits(), "10^{d}");
+        }
+    }
+
+    /// The fast path of `round_half_away` gives exactly the text method at every digit count it
+    /// takes (and around it): halves of each digit count, their neighbouring floats, values near
+    /// the `0.2` and `9e13` bounds, and a pseudo-random spread of magnitudes.
+    #[test]
+    fn fast_path_matches_text_method_for_any_digits() {
+        let probe = |x: f64, d: i32| {
+            for y in [
+                x,
+                f64::from_bits(x.to_bits() + 1),
+                f64::from_bits(x.to_bits().saturating_sub(1)),
+                f64::from_bits(x.to_bits() + 2),
+                f64::from_bits(x.to_bits().saturating_sub(2)),
+            ] {
+                check_digits(y, d);
+                check_digits(-y, d);
+            }
+        };
+        for d in -24..=24 {
+            let p = 10f64.powi(d);
+            for k in 0..1_500u64 {
+                // Halves at this digit count, spread over several magnitudes.
+                for scale in [1.0, 1e3, 1e7, 1e11] {
+                    probe((k as f64 * 13.0 + 0.5) * scale / p, d);
+                }
+                // Short decimals (one more digit than `d`), the common input.
+                probe((k as f64 * 37.0 + 5.0) / (10.0 * p), d);
+            }
+            for x in [0.1, 0.2, 0.5, 1.5, 9e13, 1e14, 8.99999999999995e13] {
+                probe(x / p, d);
+            }
+            // Half a 15-digit step from a half, where `near_half` hands over to the text method.
+            for g in [
+                0.5,
+                2.5,
+                9.5,
+                10.5,
+                99.5,
+                123.5,
+                999_999.5,
+                12_345_678_901.5,
+                8.9e13 + 0.5,
+            ] {
+                let e = f64::log10(g).floor() as i32;
+                let h = 0.5 * 10f64.powi(e - 14);
+                for x in [g - h, g + h] {
+                    let mut y = x;
+                    for _ in 0..4 {
+                        y = f64::from_bits(y.to_bits() - 1);
+                    }
+                    for _ in 0..9 {
+                        probe(y / p, d);
+                        y = f64::from_bits(y.to_bits() + 1);
+                    }
+                }
+            }
+        }
+        let mut state = 0x9E37_79B9_7F4A_7C15u64;
+        for _ in 0..400_000 {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            let mantissa = (state >> 11) as f64 / (1u64 << 53) as f64;
+            let exp = (state % 40) as i32 - 20;
+            let d = ((state >> 32) % 31) as i32 - 15;
+            let n = mantissa * 10f64.powi(exp);
+            check_digits(n, d);
+            check_digits(-n, d);
+        }
+        for (n, d) in [
+            (1.005, 2),
+            (2.675, 2),
+            (0.285, 2),
+            (1.00005, 4),
+            (0.1 + 0.2, 16),
+            (0.1 + 0.2, 1),
+            (1234.567, -2),
+            (-0.04, 0),
+            (-0.4, 0),
+            (0.49999999999999994, 0),
+            (4503599627370495.5, 0),
+            (1e300, -290),
+            (5e-324, 22),
+            (f64::MAX, 0),
+            (-f64::MIN_POSITIVE, 320),
+            (1.5e-300, 300),
+        ] {
+            check_digits(n, d);
+        }
+    }
+
+    /// Decimal inputs at a half are decided without text: `near_half` returns the rounded-up
+    /// integer for them, so the fast path covers them.
+    #[test]
+    fn near_half_decides_decimal_halves() {
+        use super::near_half;
+        for (n, d, m) in [
+            (0.685, 2, 69.0),
+            (1.005, 2, 101.0),
+            (2.675, 2, 268.0),
+            (0.5, 0, 1.0),
+            (1234.5, 0, 1235.0),
+            (8.345, 2, 835.0),
+            (1.00005, 4, 10001.0),
+        ] {
+            let x = n * 10f64.powi(d);
+            assert_eq!(near_half(x), Some(m), "{n} at {d} digits");
+        }
+        let mut decided = 0;
+        for k in 0..100_000u32 {
+            let n: f64 = format!("{k}.5").parse().unwrap();
+            let x = n / 10.0 * 10.0;
+            if near_half(x) == Some(f64::from(k) + 1.0) {
+                decided += 1;
+            }
+        }
+        assert_eq!(decided, 100_000);
     }
 }

@@ -122,22 +122,13 @@ fn exec_number_method(
         "abs" => Ok(Value::Number(num.abs())),
         "ceil" | "ceiling" => Ok(Value::Number(num.ceil())),
         "floor" => Ok(Value::Number(num.floor())),
+        // The same function as `ROUND` (BL-088): half away from zero on the 15-digit form.
         "round" => {
-            if args_expr.is_empty() {
-                Ok(Value::Number(num.round()))
-            } else {
-                let precision_val = eval_arg(&args_expr[0], ctx)?;
-                let precision = match precision_val {
-                    Value::Number(p) => p as i32,
-                    _ => return Err(Error::new("round precision must be number", None)),
-                };
-
-                if precision == 0 {
-                    Ok(Value::Number(num.round()))
-                } else {
-                    let multiplier = 10f64.powi(precision);
-                    Ok(Value::Number((num * multiplier).round() / multiplier))
-                }
+            let round = crate::runtime::arithmetic::round_to;
+            match args_expr {
+                [] => round("round", num, None),
+                [digits] => round("round", num, Some(&eval_arg(digits, ctx)?)),
+                _ => Err(Error::new("round expects ([num_digits])", None)),
             }
         }
         "sqrt" => {
