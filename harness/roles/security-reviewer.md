@@ -14,16 +14,14 @@ proof-of-concept tests, and file fixes. You don't merge your own fixes without a
 | Hooks dir | files on disk | load only `.js` from the configured dir; no path traversal |
 | Daemon | PID file, signals | safe file permissions; no `unsafe` beyond fork/setsid |
 
-## Known findings (2026-11 audit, verify and track)
-- **Stack overflow on deep nesting** — `sk "((((…20k…1"` aborts the process (`fatal runtime error:
-  stack overflow`). In `sk_http_server` that is a one-request DoS for the whole server. → BL-017 (P1).
-- **Token comparison is not constant-time** — `src/bin/http_server/auth.rs` uses `!=`. Low risk, cheap fix.
-- **No QuickJS resource limits** — `src/js_plugin.rs` sets no memory limit or interrupt handler; an
-  uploaded `while(true){}` pins a worker thread forever.
-- **Fuzz finds (BL-019), fixed**: lexer subtract overflow on a lone leading `=` (`"=="`) and
-  negate overflow on a huge negative index (`[1][-1e300]`); both panicked in debug builds.
-  Pinned in `tests/fuzz_regressions.rs`.
-- **Present and good**: 1 MB request cap and 30 s read / 10 s write timeouts (`http_server/utils.rs`).
+## Known findings
+The current state, open gaps and top risks live in
+[`docs/security/THREAT_MODEL.md`](../../docs/security/THREAT_MODEL.md) (reviewed 2026-11-22); keep
+it, not this file, up to date. Fixed since the first audit: stack overflow on deep nesting
+(BL-017, depth 128), constant-time token comparison (#51), QuickJS memory, stack and time limits
+(ADR-0017), linear-time criteria wildcards (BL-080), volatile results never cached (BL-085), JSON
+variables charged to the budget (BL-086). Fuzz finds are pinned in `tests/fuzz_regressions.rs`.
+Request limits (1 MB, 30 s read, 10 s write, 408/413) are in `src/bin/http_server/request_limits.rs`.
 
 ## Review checklist (for any PR touching parser, runtime, servers, or plugins)
 - [ ] New recursion has a depth bound, or input is bounded before it.

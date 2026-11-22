@@ -10,7 +10,7 @@ Skillet is a high-performance, embeddable expression engine written in Rust, ins
 **✨ New Features:**
 - **Ruby-style Type Conversion Methods**: `null.to_s()`, `"123".to_i()`, `[1,2,3].to_bool()` - available on all types
 - **Safe Navigation Operator**: `obj&.property&.method()` - prevents null reference errors
-- **String Helpers**: `SUBSTITUTE(text, substr, replacement)`, `SUBSTITUTEM(text, substr, replacement)` and Excel-style `REPLACE(old_text, start_num, num_chars, new_text)`
+- **String Helpers**: `SUBSTITUTE(text, old, new, [instance_num])` and Excel-style `REPLACE(old_text, start_num, num_chars, new_text)` (`SUBSTITUTEM` is deprecated since 0.7.0; use `SUBSTITUTE`)
 - **JSON Digging**: `DIG(json, ['path','to','key'], default)` and method form `json.dig([...], default)`
 - **JSONPath Queries**: `JQ(json_data, "$.path.to.data")` for powerful JSON queries with aggregation support
 - **Enhanced Null Safety**: Conversion methods provide safe defaults for null values
@@ -28,16 +28,21 @@ Skillet is a high-performance, embeddable expression engine written in Rust, ins
 **Operations**: Arithmetic, logical, comparisons, method chaining, array operations, lambdas
 **Extensions**: JavaScript plugins, Rust custom functions, HTTP/TCP server modes
 
-📚 **[Full Documentation](docs/guide/user-guide.md)** | 📖 **[API Reference](docs/reference/api.md)** | 🛡️ **[Limits](docs/guide/limits.md)**
+📚 **[Full Documentation](docs/guide/user-guide.md)** | 📖 **[API Reference](docs/reference/api.md)** | 🛡️ **[Limits](docs/guide/limits.md)** | ⬆️ **[Migrating from 0.6 to 0.7](docs/guide/migration-0.7.md)**
+
+Upgrading from 0.6? 0.7.0 has breaking changes (Excel precedence and builtins, equality, dates as
+text, one number type, and more); the [migration guide](docs/guide/migration-0.7.md) lists each one
+with the old and the new result.
 
 ## Build
 
-- Requirements: Rust 1.85 or newer (edition 2024)
+- Requirements: Rust 1.85 or newer (MSRV 1.85, ADR-0012; edition 2024). CI uses 1.89.0.
 - Build and test:
 
 ```
 cargo build
 cargo test
+./harness/check.sh   # the full gate: both feature sets, clippy, fmt
 ```
 
 ## Quick Examples
@@ -66,8 +71,8 @@ cargo run --bin sk -- ":data := {\"name\": null}; :data&.name&.length()"  # null
 # SUBSTITUTE replaces all occurrences of a substring
 cargo run --bin sk -- "SUBSTITUTE('foo bar foo', 'foo', 'baz')"      # "baz bar baz"
 
-# SUBSTITUTEM: same as SUBSTITUTE (replace multiple occurrences)
-cargo run --bin sk -- "SUBSTITUTEM('a-a-a', '-', '_')"               # "a_a_a"
+# SUBSTITUTE with instance_num replaces only that occurrence
+cargo run --bin sk -- "SUBSTITUTE('a-a-a', '-', '_', 2)"             # "a-a_a"
 
 # REPLACE: positional, 1-based start
 cargo run --bin sk -- "REPLACE('abcdef', 3, 2, 'XY')"                 # "abXYef"
@@ -110,14 +115,16 @@ Add to your Cargo project (from crates.io):
 
 ```toml
 [dependencies]
-skillet = "0.5.3"
+skillet = "0.7"
 ```
 
-Or with cargo-edit:
+Or:
 
 ```
-cargo add skillet@0.4.1
+cargo add skillet@0.7
 ```
+
+Without JavaScript plugins (no QuickJS): `skillet = { version = "0.7", default-features = false }`.
 
 ## Server Modes
 
@@ -145,17 +152,18 @@ cargo run --bin sk_http_server 5074 -d --host 0.0.0.0 --token secret123 --admin-
 - `--token <value>` - Require token for eval requests (or set `SKILLET_AUTH_TOKEN`; the flag wins; an empty value is a start-up error)
 - `--admin-token <value>` - Require admin token for JS function management and `DELETE /cache` (or set `SKILLET_ADMIN_TOKEN`; same rules as `--token`)
 - `--cors-origin <origin>` - `Access-Control-Allow-Origin` value (or set `SKILLET_CORS_ORIGIN`). Default: `*` when a token is set, no CORS headers otherwise. Request bodies must be `Content-Type: application/json` (415 otherwise); see [servers guide](docs/guide/servers.md#cross-origin-requests-and-request-bodies-sk_http_server)
-- `--pid-file <file>` - PID file for daemon mode
-- `--log-file <file>` - Log file for daemon mode
+- `-t, --threads <num>` - Worker threads (default: CPU count)
+- `--eval-timeout <s>` / `--max-eval-bytes <n>` - Deadline (default 20 s) and memory budget (default 256M) per evaluation (or `SKILLET_EVAL_TIMEOUT` / `SKILLET_MAX_EVAL_BYTES`); see [limits](docs/guide/limits.md)
+- `--max-connections-per-ip <n>` - Optional limit on concurrent connections per client address (or `SKILLET_MAX_CONNECTIONS_PER_IP`)
+- `--pid-file <file>` - PID file for daemon mode (default: `skillet-http-server.pid`)
 
 **HTTP Endpoints:**
-- `GET /health` - Health check
-- `GET /` - API documentation
+- `GET /health` - Health check and cache statistics
+- `GET /` - Documentation page; `GET /docs` and `GET /openapi.yml` - API reference
 - `POST /eval` - Evaluate expressions (JSON body)
 - `GET /eval?expr=...` - Evaluate expressions (query params)
-- `POST /js/functions` - Upload JavaScript functions (admin)
-- `GET /js/functions` - List JavaScript functions
-- `DELETE /js/functions/{name}` - Delete JavaScript function (admin)
+- `POST /upload-js`, `PUT /update-js`, `DELETE /delete-js`, `GET /list-js`, `POST /reload-hooks` - JavaScript function management (admin token)
+- `DELETE /cache` - Clear the result and parse caches (admin token)
 
 **Example API calls:**
 ```bash
@@ -215,8 +223,7 @@ cargo run --bin sk_server 8080 8 -d --host 0.0.0.0 --token secret123
 - `-H, --host <addr>` - Bind address (default: 127.0.0.1)
 - `-d, --daemon` - Run as background daemon
 - `--token <value>` - Require authentication token (or set `SKILLET_AUTH_TOKEN`; the flag wins; an empty value is a start-up error)
-- `--pid-file <file>` - PID file for daemon mode
-- `--log-file <file>` - Log file for daemon mode
+- `--pid-file <file>` - PID file for daemon mode (default: `skillet-server.pid`)
 
 **Protocol:** JSON-based TCP protocol for maximum performance
 
@@ -271,7 +278,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
   - Strings: `.upper() .lower() .trim() .reverse()`
 - Arrays: literals `[1, 2, 3]`; indexing `arr[i]` (negatives allowed); slicing `arr[a:b]`
 - Spread: `...expr` inside arg lists
-- Casting: `expr::Integer|Float|String|Boolean|Array|Currency|DateTime|Json`
+- Casting: `expr::Integer|Float|String|Boolean|Array|Currency|DateTime|Json` (`::Integer`, `::Float` and `::Currency` return a Number; `::Currency` rounds to 4 decimals)
 
 ## Examples
 
@@ -325,10 +332,12 @@ Scripts:
 - Logical: `AND`, `OR`, `NOT`, `XOR`, `IF`, `IFS`
 - String: `LENGTH`, `CONCAT`, `UPPER`, `LOWER`, `TRIM`, `SUBSTRING`, `SPLIT`, `REPLACE`, `REVERSE`, `ISBLANK`, `ISNUMBER`, `ISTEXT`
 - Array: `ARRAY`, `FLATTEN`, `FIRST`, `LAST`, `CONTAINS`, `IN`, `COUNT`, `UNIQUE`, `SORT`, `REVERSE`, `JOIN`
-- Date/Time: `NOW`, `DATE`, `TIME`, `YEAR`, `MONTH`, `DAY`, `DATEADD`, `DATEDIFF`
-- Financial: `PMT`, `DB`, `FV`, `IPMT`
+- Date/Time: `NOW`, `TODAY`, `DATE`, `TIME`, `YEAR`, `MONTH`, `DAY`, `DATEADD`, `DATEDIFF`, `DATEDIF`
+- Financial: `PMT`, `DB`, `FV`, `IPMT`, `PPMT`, `PV`, `NPV`
 - Statistical: `MEDIAN`, `MODE.SNGL` (`MODESNGL`, `MODE_SNGL`), `STDEV.P` (`STDEVP`, `STDEV_P`), `VAR.P` (`VARP`, `VAR_P`), `PERCENTILE.INC` (`PERCENTILEINC`, `PERCENTILE_INC`), `QUARTILE.INC` (`QUARTILEINC`, `QUARTILE_INC`)
 - Functional: `FILTER(array, expr, [param])`, `MAP(array, expr, [param])`, `REDUCE(array, expr, initial, [valParam], [accParam])`, `SUMIF(range, criteria, [sum_range])`, `AVERAGEIF(range, criteria, [average_range])`, `COUNTIF(range, criteria)`
+
+The complete list, generated from the builtin table, is [docs/reference/functions.md](docs/reference/functions.md); how each one compares with Excel is in [docs/reference/excel-compat.md](docs/reference/excel-compat.md).
 
 ## API Surface (Rust)
 
@@ -352,7 +361,8 @@ Scripts:
 Run the test suite:
 
 ```
-cargo test
+cargo test             # about 890 tests, doctests included
+./harness/check.sh     # the full gate (also runs the no-plugins tests, clippy and fmt)
 ```
 
 ## Author

@@ -48,13 +48,17 @@ Agents prepare steps 1–3; **only a human publishes, tags, or pushes to `main`.
   `main` and `develop`, all `--locked`. A fourth job, `docker image` (BL-062), builds `Dockerfile`
   with buildx (GitHub Actions cache, loaded locally, never pushed) and runs
   `scripts/docker_smoke.sh`. It is not a required check in the ruleset.
-- `fuzz.yml` (ADR-0028) runs the `fuzz/` targets weekly and on dispatch on a pinned nightly
+- `slow-tests.yml` (BL-087) runs the `#[ignore]` deadline tests (408, read/write deadlines,
+  server timeouts; about 100 s) every Monday and on dispatch, from `main` only; not a required check.
+- `fuzz.yml` (ADR-0028) runs the `fuzz/` targets weekly and on dispatch (once it is on `main`) on a pinned nightly
   (`FUZZ_TOOLCHAIN`) and `cargo-fuzz` version; not a required check. `fuzz/` has its own
   workspace and `Cargo.lock` and is outside `include`.
 - Release (ADR-0022): one tag `vX.Y.Z`, one workflow `release.yml`: `verify` (tag = `Cargo.toml`
   version, CHANGELOG section present) → `build-binaries` + `crate-check` → `github-release`
   (body from `scripts/changelog_section.sh`) → `crates-io`. All `--locked`. `workflow_dispatch`
-  is a dry run (verify + builds, no publishing). There is no `crate-v*` tag any more.
+  is a dry run (verify + builds, no publishing), but GitHub offers it, and runs `schedule`, only
+  for workflows on the default branch: until 0.7.0 reaches `main`, neither the release dry run
+  nor the weekly `fuzz.yml` can run (REL-2, BL-083). There is no `crate-v*` tag any more.
 - `release.yml` writes `<archive>.tar.gz.sha256` next to each archive in the build job;
   the `github-release` job verifies every checksum before uploading.
 - `Cargo.toml` `include`: `Cargo.toml`, README, CHANGELOG, licences, `docs/guide/`, `docs/reference/`,
