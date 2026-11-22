@@ -244,13 +244,7 @@ impl<'a> Parser<'a> {
             self.bump()?;
             let (rhs, dr) = self.parse_binary(prec + 1)?;
             depth = self.node_depth(Some(depth.max(dr)))?;
-            node = match op {
-                Some(op) => Expr::Binary(Rc::new(node), op, Rc::new(rhs)),
-                None => Expr::FunctionCall {
-                    name: CONCAT_OP.to_string(),
-                    args: vec![node, rhs],
-                },
-            };
+            node = Expr::Binary(Rc::new(node), op, Rc::new(rhs));
         }
         Ok((node, depth))
     }
@@ -793,16 +787,11 @@ impl<'a> Parser<'a> {
     }
 }
 
-/// Internal function name the `&` operator parses to (two arguments, joined as text with
-/// `CONCAT` rules). Like `__TERNARY__`, the evaluator handles it before custom functions.
-pub(crate) const CONCAT_OP: &str = "__CONCAT__";
-
 /// Precedence of `AND`/`&&`. The `NOT` keyword sits between it and the comparisons.
 const AND_PREC: u8 = 2;
 
-/// Binary operator and precedence (higher binds tighter) for a token, if it is one. The
-/// operator is `None` for `&`, which has no `BinaryOp` and becomes a `CONCAT_OP` call.
-fn binary_op(tok: &Token) -> Option<(Option<BinaryOp>, u8)> {
+/// Binary operator and precedence (higher binds tighter) for a token, if it is one.
+fn binary_op(tok: &Token) -> Option<(BinaryOp, u8)> {
     let (op, prec) = match tok {
         Token::Or | Token::OrOr => (BinaryOp::Or, 1),
         Token::And | Token::AndAnd => (BinaryOp::And, AND_PREC),
@@ -816,7 +805,7 @@ fn binary_op(tok: &Token) -> Option<(Option<BinaryOp>, u8)> {
         Token::Less => (BinaryOp::Lt, 4),
         Token::Ge => (BinaryOp::Ge, 4),
         Token::Le => (BinaryOp::Le, 4),
-        Token::Ampersand => return Some((None, 5)),
+        Token::Ampersand => (BinaryOp::Concat, 5),
         Token::Plus => (BinaryOp::Add, 6),
         Token::Minus => (BinaryOp::Sub, 6),
         Token::Star => (BinaryOp::Mul, 7),
@@ -824,7 +813,7 @@ fn binary_op(tok: &Token) -> Option<(Option<BinaryOp>, u8)> {
         Token::Percent => (BinaryOp::Mod, 7),
         _ => return None,
     };
-    Some((Some(op), prec))
+    Some((op, prec))
 }
 
 #[cfg(test)]

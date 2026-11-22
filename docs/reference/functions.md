@@ -48,8 +48,8 @@ Methods (`:arr.sum()`), operators and the rest of the language: [api.md](api.md)
 |---|---|---|---|---|---|
 | `LENGTH` | `LENGTH(text_or_array)` | 1 | Characters in a string or items in an array; 0 for NULL. | `LENGTH('héllo')` | `5` |
 | `LEN` | `LEN(text)` | 1 | Excel `LEN`: characters in the text; numbers and booleans count as their text, NULL as 0. | `LEN('héllo')` | `5` |
-| `TEXTJOIN` | `TEXTJOIN(delimiter, ignore_empty, text…)` | 3+ | Excel `TEXTJOIN`: join texts, numbers, booleans and dates (arrays flattened) with `delimiter`; skip empty ones when `ignore_empty` is TRUE. | `TEXTJOIN(', ', TRUE, 'a', '', ['b', 'c'])` | `"a, b, c"` |
-| `CONCAT` | `CONCAT(values…)` | 0+ | Join values as text: numbers as numbers, booleans as TRUE/FALSE, a DateTime as ISO 8601 UTC text, arrays flattened; NULL and JSON add nothing. | `CONCAT('a', 1, TRUE)` | `"a1TRUE"` |
+| `TEXTJOIN` | `TEXTJOIN(delimiter, ignore_empty, text…)` | 3+ | Excel `TEXTJOIN`: join the text of each value (arrays flattened) with `delimiter`; skip empty ones when `ignore_empty` is TRUE. | `TEXTJOIN(', ', TRUE, 'a', '', ['b', 'c'])` | `"a, b, c"` |
+| `CONCAT` | `CONCAT(values…)` | 0+ | Join the text of each value: numbers to 15 significant digits, booleans as TRUE/FALSE, a DateTime as ISO 8601 UTC, a JSON object as its JSON text, arrays flattened; NULL adds nothing. | `CONCAT('a', 1, TRUE)` | `"a1TRUE"` |
 | `UPPER` | `UPPER(text)` | 1 | Upper-case. | `UPPER('abc')` | `"ABC"` |
 | `LOWER` | `LOWER(text)` | 1 | Lower-case. | `LOWER('ABC')` | `"abc"` |
 | `TRIM` | `TRIM(text)` | 1 | Remove leading and trailing spaces and collapse inner runs of spaces (Excel). `.trim()` keeps inner spaces. | `TRIM('  a   b  ')` | `"a b"` |
@@ -81,7 +81,7 @@ Methods (`:arr.sum()`), operators and the rest of the language: [api.md](api.md)
 | `UNIQUE` | `UNIQUE(array)` | 1 | Distinct values in first-seen order (`==` equality: same type and value, text case-sensitive). | `UNIQUE([1, 'a', 1, 'a'])` | `[1, "a"]` |
 | `SORT` | `SORT(array, [order])` | 1-2 | Sorted ascending (Excel: numbers or dates < text < booleans, dates by instant, text ignores case), or descending with order `-1` or `'DESC'`; numbers with dates, and other values, are an error. | `SORT(['b', 2, 'A', 1])` | `[1, 2, "A", "b"]` |
 | `REVERSE` | `REVERSE(array or text)` | 1 | Items of an array, or characters of a string, in reverse order. | `REVERSE([1, 2, 3])` | `[3, 2, 1]` |
-| `JOIN` | `JOIN(array, [separator])` | 1-2 | Items joined into a string with `separator` (default `,`); a DateTime is ISO 8601 UTC text; nested arrays are an error. | `JOIN([1, 'a', TRUE], '-')` | `"1-a-TRUE"` |
+| `JOIN` | `JOIN(array, [separator])` | 1-2 | The text of each item joined with `separator` (default `,`); nested arrays are an error. | `JOIN([1, 'a', TRUE], '-')` | `"1-a-TRUE"` |
 | `MERGE` | `MERGE(values…)` | 0+ | Arrays concatenated; scalar arguments are appended as items. | `MERGE([1, 2], 3, [4])` | `[1, 2, 3, 4]` |
 | `FILTER` † | `FILTER(array, expr, [param])` | 2-3 | Items for which `expr` is TRUE; the item is `:x` (or `:param`). | `FILTER([1, 2, 3, 4], :x % 2 == 0)` | `[2, 4]` |
 | `FIND` † | `FIND(array, expr, [param])` | 2-3 | First item for which `expr` is TRUE, else NULL. With text first, Excel `FIND(find_text, within_text, [start_num])`: 1-based, case-sensitive position; error when not found. | `FIND([1, 5, 10], :x > 3)` | `5` |

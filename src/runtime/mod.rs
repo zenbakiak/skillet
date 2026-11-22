@@ -15,6 +15,7 @@ pub mod logical;
 pub mod method_calls;
 pub mod statistical;
 pub mod string;
+pub(crate) mod text;
 pub mod type_casting;
 pub mod utils;
 

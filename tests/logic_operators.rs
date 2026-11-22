@@ -67,7 +67,7 @@ fn not_keyword_matches_the_builtin() {
 #[test]
 fn not_followed_directly_by_paren_is_the_call() {
     // The call is an atom, so a method applies to its result.
-    assert_eq!(ok("NOT(TRUE).to_s()"), Value::String("false".into()));
+    assert_eq!(ok("NOT(TRUE).to_s()"), Value::String("FALSE".into()));
     // The keyword's operand includes the postfix chain: NOT ((TRUE).to_s()) is text.
     err_has("NOT (TRUE).to_s()", "#VALUE!");
     err_has("NOT(1, 2)", "NOT expects 1 argument");

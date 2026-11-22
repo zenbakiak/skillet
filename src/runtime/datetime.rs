@@ -398,14 +398,72 @@ fn rollover_date(year: i32, month0: i64, day: u32) -> Option<NaiveDate> {
 /// Write a DateTime as text (ADR-0031): ISO 8601 UTC with whole seconds,
 /// `2026-01-01T00:00:00Z`. Years outside 0000–9999 get a sign (`+10000`); a timestamp beyond
 /// chrono's range falls back to its Unix seconds, which `parse_datetime_text` also reads.
+///
+/// Years 0000–9999 are written by hand (PERF-4, ADR-0034 §7): no chrono format parsing, one
+/// write of 20 bytes. Other years take chrono's path.
 pub(crate) fn write_datetime(w: &mut impl std::fmt::Write, ts: i64) -> std::fmt::Result {
+    if let Some(text) = iso_four_digit_year(ts) {
+        if let Ok(s) = std::str::from_utf8(&text) {
+            return w.write_str(s);
+        }
+    }
     match DateTime::from_timestamp(ts, 0) {
         Some(dt) => write!(w, "{}", dt.format("%Y-%m-%dT%H:%M:%SZ")),
         None => write!(w, "{}", ts),
     }
 }
 
+/// `0000-01-01T00:00:00Z` and `9999-12-31T23:59:59Z`: the range of the 20-byte form.
+const FOUR_DIGIT_YEARS: std::ops::RangeInclusive<i64> = -62_167_219_200..=253_402_300_799;
+
+/// `YYYY-MM-DDTHH:MM:SSZ` for a timestamp in [`FOUR_DIGIT_YEARS`], else `None`.
+fn iso_four_digit_year(ts: i64) -> Option<[u8; 20]> {
+    if !FOUR_DIGIT_YEARS.contains(&ts) {
+        return None;
+    }
+    let (days, secs) = (ts.div_euclid(86_400), ts.rem_euclid(86_400));
+    let (year, month, day) = civil_from_days(days);
+    let mut out = *b"0000-00-00T00:00:00Z";
+    let mut put = |at: usize, v: i64| {
+        out[at] = b'0' + (v / 10) as u8;
+        out[at + 1] = b'0' + (v % 10) as u8;
+    };
+    put(0, year / 100);
+    put(2, year % 100);
+    put(5, month);
+    put(8, day);
+    put(11, secs / 3600);
+    put(14, secs / 60 % 60);
+    put(17, secs % 60);
+    Some(out)
+}
+
+/// Proleptic Gregorian (year, month, day) of a day count from 1970-01-01 (H. Hinnant's
+/// `civil_from_days`), integer arithmetic only.
+fn civil_from_days(days: i64) -> (i64, i64, i64) {
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    (yoe + era * 400 + i64::from(month <= 2), month, day)
+}
+
+/// Length in bytes of `write_datetime`'s text: 20 for years 0000–9999, counted otherwise.
+pub(crate) fn datetime_text_len(ts: i64) -> usize {
+    if FOUR_DIGIT_YEARS.contains(&ts) {
+        return 20;
+    }
+    let mut c = crate::limits::ByteCounter(0);
+    let _ = write_datetime(&mut c, ts);
+    c.0 as usize
+}
+
 /// `write_datetime` into a new `String`.
+#[cfg(test)]
 pub(crate) fn datetime_text(ts: i64) -> String {
     let mut s = String::with_capacity(20);
     let _ = write_datetime(&mut s, ts);
@@ -462,6 +520,34 @@ mod text_tests {
             assert_eq!(parse_datetime_text(&datetime_text(ts)), Some(ts), "{ts}");
         }
         assert_eq!(datetime_text(1_767_225_600), "2026-01-01T00:00:00Z");
+    }
+
+    /// The hand-written 0000–9999 form is chrono's text, at the edges and in between.
+    #[test]
+    fn four_digit_years_match_chrono() {
+        let chrono_text = |ts: i64| {
+            chrono::DateTime::from_timestamp(ts, 0)
+                .map(|dt| dt.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+                .unwrap_or_default()
+        };
+        let (lo, hi) = (
+            *super::FOUR_DIGIT_YEARS.start(),
+            *super::FOUR_DIGIT_YEARS.end(),
+        );
+        let mut edges = vec![lo, lo + 1, hi - 1, hi, 0, -1, 951_782_400, 4_107_542_399];
+        let mut x: u64 = 0x2545_F491_4F6C_DD1D;
+        for _ in 0..100_000 {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            edges.push(lo + (x % (hi - lo + 1) as u64) as i64);
+        }
+        for ts in edges {
+            assert_eq!(datetime_text(ts), chrono_text(ts), "{ts}");
+            assert_eq!(super::datetime_text_len(ts), 20, "{ts}");
+        }
+        assert_eq!(datetime_text(lo - 1), "-0001-12-31T23:59:59Z");
+        assert_eq!(datetime_text(hi + 1), "+10000-01-01T00:00:00Z");
     }
 
     #[test]

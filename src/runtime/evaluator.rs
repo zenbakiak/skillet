@@ -455,6 +455,8 @@ impl Evaluator {
             | BinaryOp::Le
             | BinaryOp::Gt
             | BinaryOp::Ge => crate::runtime::comparison::compare(op, a, b),
+            // `a & b` is `CONCAT(a, b)`, charged before it is built (ADR-0034 §6).
+            BinaryOp::Concat => crate::runtime::text::concat_pair(a, b).map(Value::String),
             BinaryOp::And | BinaryOp::Or => {
                 let name = logical_op_name(op);
                 let ab = logical::condition(name, a)?;
@@ -530,12 +532,11 @@ impl Evaluator {
     /// Builtins that charge their own result before building it (ADR-0011 amendment 2); their
     /// result is only depth-checked. A custom function of the same name is charged as usual.
     fn is_prepaid_builtin<C: EvaluationContext>(name: &str, context: &C) -> bool {
-        name == crate::parser::CONCAT_OP
-            || matches!(name, "MERGE" | "CONCAT" | "TEXTJOIN")
-                && !context
-                    .get_custom_registry()
-                    .and_then(|r| r.read().ok().map(|reg| reg.has_function(name)))
-                    .unwrap_or(false)
+        matches!(name, "MERGE" | "CONCAT" | "TEXTJOIN")
+            && !context
+                .get_custom_registry()
+                .and_then(|r| r.read().ok().map(|reg| reg.has_function(name)))
+                .unwrap_or(false)
     }
 
     /// Evaluate function calls with optimized dispatch
@@ -556,14 +557,6 @@ impl Evaluator {
                 } else {
                     Self::eval(&args[2], context)
                 };
-            }
-            // `a & b` (D-10): both sides joined as text with `CONCAT` rules.
-            crate::parser::CONCAT_OP => {
-                let [a, b] = args else {
-                    return Err(Error::new("'&' expects 2 operands", None));
-                };
-                let joined = [Self::eval(a, context)?, Self::eval(b, context)?];
-                return exec_builtin_fast("CONCAT", &joined);
             }
             "__CONST_TRUE__" => return Ok(Value::Boolean(true)),
             "__CONST_FALSE__" => return Ok(Value::Boolean(false)),

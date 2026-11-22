@@ -133,7 +133,9 @@ is not a finite number (overflow, a non-real power) are a `#NUM!` error.
 
 ### Text Operator
 - `&` - Joins both sides as text, with `CONCAT` rules: `"a" & 1 & TRUE` is `"a1TRUE"`,
-  `NULL` adds nothing. Write `& .5` with a space: `&.` is safe navigation.
+  `"Total: " & 3 * 0.1` is `"Total: 0.3"`, `NULL` adds nothing. Each side is written in its
+  [text form](#values-as-text). Write `& .5` with a space: `&.` is safe navigation. In the AST
+  (`skillet::parse`) it is `Expr::Binary(a, BinaryOp::Concat, b)`.
 
 ### Comparison Operators
 - `>` - Greater than
@@ -567,7 +569,8 @@ NOT("x")                     # Error: NOT expects a logical value, got string (#
 ### Text Functions
 
 #### `LEN(text)`, `LENGTH(text_or_array)`
-String length in characters. `LEN` is Excel's: numbers and booleans count as their text and NULL
+String length in characters. `LEN` is Excel's: numbers and booleans count as their
+[text form](#values-as-text) (`LEN(0.1 + 0.2)` is 3, `LEN(TRUE)` is 4) and NULL
 (an empty cell) is 0; an array is an error. `LENGTH` also counts array items, and is an error for
 numbers.
 ```bash
@@ -580,8 +583,9 @@ LENGTH([1, 2, 3])            # 3
 
 #### `TEXTJOIN(delimiter, ignore_empty, text1, ...)`
 Excel's `TEXTJOIN`: joins the texts (arrays are flattened) with `delimiter`. With `ignore_empty`
-TRUE, empty strings and NULLs are skipped. Numbers and booleans become text, and a DateTime its
-ISO 8601 text (`2026-01-01T00:00:00Z`). An array delimiter is used in turn between items. At
+TRUE, empty strings and NULLs are skipped. Every item is written in its
+[text form](#values-as-text): numbers with 15 significant digits, `TRUE`/`FALSE`, a DateTime as
+ISO 8601 text (`2026-01-01T00:00:00Z`), a JSON object as its JSON text. An array delimiter is used in turn between items. At
 least one text is required.
 ```bash
 TEXTJOIN(", ", TRUE, "a", "", ["b", "c"])     # "a, b, c"
@@ -602,14 +606,15 @@ FIND("x", "abc")                   # Error: FIND: find_text not found in within_
 ```
 
 #### `CONCAT(...)`
-Join every value as text, as Excel does. Numbers are written in Skillet's number text
-(`1.5::Currency` is `"1.5"`), booleans as `TRUE`/`FALSE`, and a DateTime as its `::String` text,
-ISO 8601 UTC (ADR-0031). Arrays are flattened. `NULL` and JSON objects add nothing. The `&`
-operator uses the same rules.
+Join every value as text, as Excel does, each in its [text form](#values-as-text): numbers with
+15 significant digits, booleans as `TRUE`/`FALSE`, a DateTime as ISO 8601 UTC, a JSON object as
+its JSON text. Array arguments are flattened item by item. `NULL` adds nothing. The `&` operator
+uses the same rules.
 ```bash
 CONCAT("Hello", " ", "World")          # "Hello World"
 CONCAT("Value: ", 42)                  # "Value: 42"
-CONCAT("Total: ", 9.5::Currency)       # "Total: 9.5"
+CONCAT("Total: ", 0.1 + 0.2)           # "Total: 0.3"
+CONCAT("a", [1, 2], TRUE)              # "a12TRUE"
 CONCAT("On ", DATE(2026, 1, 1))        # "On 2026-01-01T00:00:00Z"
 ```
 
@@ -1021,9 +1026,10 @@ Check if string contains substring.
 ```
 
 #### `.length()`
-String length.
+String length in characters, as `LEN` (ADR-0034).
 ```bash
 "hello".length()             # 5
+"héllo".length()             # 5
 ```
 
 ### Array Methods
@@ -1075,15 +1081,16 @@ array gives `NULL`. `.sum()` and `.avg()` take numbers only.
 ```
 
 #### `.join([separator])`
-Join to string. Strings, numbers, booleans (`true`/`false`), DateTimes (as ISO 8601 text),
-and `NULL` (as nothing, as `JOIN`) join; arrays and JSON values
-are an error.
+Join to string, as `JOIN` does: each item in its [text form](#values-as-text) (numbers with 15
+significant digits, `TRUE`/`FALSE`, DateTimes as ISO 8601 text, `NULL` as nothing, a JSON object
+as its JSON text). A nested array is an error.
 ```bash
 [1,2,3].join("-")            # "1-2-3"
 ["a","b","c"].join()         # "a,b,c" (default: comma)
 [DATE(2026,1,1)].join()      # "2026-01-01T00:00:00Z"
-[1, 2.5, NULL].join(",")   # "1,2.5,"
-[TRUE, 1].join()             # "true,1" (JOIN gives "TRUE,1")
+[1, 2.5, NULL].join(",")     # "1,2.5,"
+[TRUE, 1].join()             # "TRUE,1"
+[0.1 + 0.2].join()           # "0.3"
 ```
 
 #### `.contains(value)`, `.includes(value)`
@@ -1291,7 +1298,8 @@ MIN(JQ(:arguments, "$.prices[*].cost"))    # Minimum price
 Available on **all value types** including null.
 
 ### Method Names
-- `to_s()` or `to_string()` - Convert to string
+- `to_s()` or `to_string()` - Convert to string: the value's [text form](#values-as-text), the
+  same as `::String`
 - `to_i()` or `to_int()` - Convert to integer
 - `to_f()` or `to_float()` - Convert to float
 - `to_a()` or `to_array()` - Convert to array
@@ -1321,6 +1329,8 @@ null.to_bool()               # false
 ### Number Conversions
 ```bash
 123.to_s()                   # "123"
+(0.1 + 0.2).to_s()           # "0.3" (15 significant digits)
+1e21.to_s()                  # "1E+21"
 123.45.to_i()                # 123 (truncated)
 42.to_a()                    # [42]
 0.to_bool()                  # false
@@ -1329,7 +1339,7 @@ null.to_bool()               # false
 
 ### Boolean Conversions
 ```bash
-true.to_s()                  # "true"
+true.to_s()                  # "TRUE"
 true.to_i()                  # 1
 false.to_i()                 # 0
 true.to_a()                  # [true]
@@ -1337,7 +1347,8 @@ true.to_a()                  # [true]
 
 ### Array Conversions
 ```bash
-[1,2,3].to_s()               # "[1, 2, 3]"
+[1,2,3].to_s()               # "[1,2,3]" (JSON text)
+["a", TRUE, NULL].to_s()     # "[\"a\",true,null]"
 [1,2,3].to_i()               # 3 (length)
 [].to_i()                    # 0 (empty length)
 [].to_bool()                 # false
@@ -1430,6 +1441,33 @@ Skillet has one number type, as Excel does; integer and currency are conversions
 (0.1 + 0.2)::Currency        # 0.3
 "$5"::Currency               # Error: Cannot cast String to Currency
 (2.5::Currency)::String      # "2.5"
+```
+
+### Values as text
+Every place that turns a value into text writes the same text for the same value (ADR-0034):
+`::String`, `.to_s()`, `CONCAT`, `&`, `JOIN`, `.join()`, `TEXTJOIN`, and `LEN`/`FIND` on a
+number or boolean.
+
+| Value | Text | Examples |
+|---|---|---|
+| Number | 15 significant digits; integers below 2^53 exactly; scientific below 1e-7 and for 16 or more integer digits | `5`, `0.3` (`0.1 + 0.2`), `0.333333333333333`, `1E+21`, `1.5E-08`; `-0` is `0` |
+| Boolean | `TRUE` / `FALSE` | |
+| `NULL` | empty text | |
+| DateTime | ISO 8601 UTC (below) | `2026-01-01T00:00:00Z` |
+| String | itself | |
+| Array | its JSON text, as `.to_json()` writes it; numbers inside keep full precision | `["a",1,true,null]`, `[0.30000000000000004]` |
+| JSON object | its JSON text | `{"a":1.0}` |
+
+`CONCAT`, `&` and `TEXTJOIN` flatten an array argument and write each item; `JOIN` and `.join()`
+write each item and reject a nested array. To show exactly two decimals, round first:
+`ROUND(:x, 2) & ""`.
+
+```bash
+(0.1 + 0.2)::String          # "0.3"
+(0.1 + 0.2)::String::Float   # 0.3 (the text has 15 digits)
+[0.1 + 0.2]::String          # "[0.30000000000000004]"
+[TRUE, 1].join()             # "TRUE,1"
+LEN(1/3)                     # 17 ("0.333333333333333")
 ```
 
 ### Dates as text

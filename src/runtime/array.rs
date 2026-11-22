@@ -1,5 +1,4 @@
 use crate::error::Error;
-use crate::runtime::datetime::datetime_text;
 use crate::runtime::utils::values_equal;
 use crate::types::Value;
 use std::cmp::Ordering;
@@ -98,21 +97,9 @@ pub fn exec_array(name: &str, args: &[Value]) -> Result<Value, Error> {
                     Some(Value::String(s)) => s.as_str(),
                     _ => ",",
                 };
-                let mut parts: Vec<String> = Vec::with_capacity(items.len());
-                for it in items {
-                    crate::limits::tick_item(parts.len())?;
-                    let part = match it {
-                        Value::Boolean(b) => (if *b { "TRUE" } else { "FALSE" }).to_string(),
-                        Value::Json(s) => s.clone(),
-                        Value::Array(_) => {
-                            return Err(Error::new("JOIN does not flatten nested arrays", None))
-                        }
-                        other => join_text(other).unwrap_or_default(),
-                    };
-                    parts.push(part);
-                }
-                crate::limits::charge_join(&parts, sep)?;
-                Ok(Value::String(parts.join(sep)))
+                // Each item's text form (ADR-0034); charged before it is built.
+                crate::runtime::text::join(items, sep, "JOIN does not flatten nested arrays")
+                    .map(Value::String)
             }
             _ => Err(Error::new("JOIN expects array, [separator]", None)),
         },
@@ -145,20 +132,6 @@ pub fn exec_array(name: &str, args: &[Value]) -> Result<Value, Error> {
 }
 
 /// Count the values in `args` (arrays flattened) for which `keep` holds.
-/// The text `JOIN` and `.join()` both write for an item: strings as is, numbers as `to_string`,
-/// `NULL` as nothing, dates as ISO 8601 (ADR-0031). `None` for the items each writes its own
-/// way (booleans, JSON, arrays).
-#[allow(deprecated)] // `Value::Currency` is read as a Number (ADR-0033)
-pub(crate) fn join_text(v: &Value) -> Option<String> {
-    match v {
-        Value::String(s) => Some(s.clone()),
-        Value::Number(n) | Value::Currency(n) => Some(n.to_string()),
-        Value::Null => Some(String::new()),
-        Value::DateTime(ts) => Some(datetime_text(*ts)),
-        Value::Boolean(_) | Value::Json(_) | Value::Array(_) => None,
-    }
-}
-
 fn count_where(args: &[Value], keep: &dyn Fn(&Value) -> bool) -> usize {
     args.iter()
         .map(|a| match a {

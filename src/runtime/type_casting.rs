@@ -1,7 +1,8 @@
 use crate::ast::TypeName;
 use crate::error::Error;
 use crate::runtime::arithmetic::round_currency;
-use crate::runtime::datetime::{datetime_text, parse_datetime_text};
+use crate::runtime::datetime::parse_datetime_text;
+use crate::runtime::text::to_text;
 use crate::types::Value;
 
 /// `v::ty`. Every number cast returns a `Number`; `::Currency` rounds to 4 decimals (ADR-0033).
@@ -40,20 +41,10 @@ pub fn cast_value(v: Value, ty: &TypeName) -> Result<Value, Error> {
             Value::Null => Value::Number(0.0),
             _ => return Err(Error::new("Cannot cast to Integer", None)),
         },
+        // The text form of the value (ADR-0034); an array is its JSON text.
         TypeName::String => match v {
-            Value::String(s) => Value::String(s),
-            Value::Number(n) | Value::Currency(n) => Value::String(n.to_string()),
-            Value::Boolean(b) => Value::String(if b { "TRUE".into() } else { "FALSE".into() }),
-            Value::Null => Value::String(String::new()),
-            Value::Array(items) => {
-                // `Debug` escapes control characters up to 6x: count it, charge, then build.
-                crate::limits::charge_formatted(|c| {
-                    let _ = std::fmt::Write::write_fmt(c, format_args!("{:?}", items));
-                })?;
-                Value::String(format!("{:?}", items))
-            }
-            Value::DateTime(ts) => Value::String(datetime_text(ts)),
-            Value::Json(s) => Value::String(s),
+            Value::String(s) | Value::Json(s) => Value::String(s),
+            other => Value::String(to_text(&other)?),
         },
         TypeName::Boolean => match v {
             Value::Boolean(b) => Value::Boolean(b),

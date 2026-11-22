@@ -25,6 +25,10 @@ Check these first. They change results without an error:
 12. **`.round(digits)`** is now `ROUND` (BL-088): halves round away from zero on the number's
    15-digit decimal form, so `1.005.round(2)` is `1.01` (was `1.0`). About 3 in 100 two-decimal
    halves change; see the table below.
+13. **Values as text** have one form each (ADR-0034): numbers with 15 significant digits
+   (`"Total: " & 3 * 0.1` is `"Total: 0.3"`, was `"Total: 0.30000000000000004"`), `.to_s()` and
+   `.join()` write `TRUE`/`FALSE`, an array is its JSON text, and `"héllo".length()` is `5` (was
+   `6`).
 
 ## Expressions
 
@@ -201,7 +205,7 @@ the number into text.
 |---|---|---|
 | `DATE(2026, 1, 1)::String`, `DATE(2026, 1, 1).to_s()` | `"1767225600"` | `"2026-01-01T00:00:00Z"` |
 | `CONCAT("on ", DATE(2026, 1, 1))`, `"on " & DATE(2026, 1, 1)` | `"on 1767225600"` | `"on 2026-01-01T00:00:00Z"` |
-| `JOIN([DATE(2026, 1, 1)])`, `[DATE(2026, 1, 1)].to_s()` | `"1767225600"`, `"[1767225600]"` | `"2026-01-01T00:00:00Z"`, `"[2026-01-01T00:00:00Z]"` |
+| `JOIN([DATE(2026, 1, 1)])`, `[DATE(2026, 1, 1)].to_s()` | `"1767225600"`, `"[1767225600]"` | `"2026-01-01T00:00:00Z"`, `"[\"2026-01-01T00:00:00Z\"]"` (an array is JSON text, ADR-0034) |
 | `DATE(2026, 1, 1).to_json()` | `Json("\"1767225600\"")` | `Json("\"2026-01-01T00:00:00Z\"")` |
 | `[DATE(2026, 1, 1)].join()`, `TEXTJOIN(",", TRUE, DATE(2026, 1, 1))` | `Error` | `"2026-01-01T00:00:00Z"` |
 | `DATE(2026, 1, 1)::String::DateTime` (BL-078) | parse error | `DATE(2026, 1, 1)` |
@@ -209,6 +213,48 @@ the number into text.
 | `LEN(DATE(2026, 1, 1))`, `FIND("2", DATE(2026, 1, 1))` | `Error` | unchanged; use `LEN(:d::String)` |
 | `"2026-01-01T10:30:00Z"::DateTime` | `Error` | 2026-01-01 10:30 UTC |
 | `DATE(2026, 1, 1)::Json`, server responses, `"1767225600"::DateTime` | Unix seconds | unchanged |
+
+### Values as text (ADR-0034)
+Every place that turns a value into text (`::String`, `.to_s()`, `CONCAT`, `&`, `JOIN`, `.join()`,
+`TEXTJOIN`, and `LEN`/`FIND` on a number) writes the same text for the same value:
+
+- **Number**: 15 significant digits, as Excel shows it. Integers below 2^53 (about 9e15) are
+  written exactly. Below 1e-7 and from 1e15 (non-integers) or 2^53 (integers) up, the text is
+  scientific: `1E+21`, `1.5E-08`. `-0` is `0`.
+- **Boolean**: `TRUE`/`FALSE`, also in `.to_s()` and `.join()` (they wrote `true`/`false`).
+- **NULL**: empty text. **Date**: ISO 8601 UTC (above). **Text**: itself.
+- **Array**: its JSON text, the same as `.to_json()`: `["a",1,true,null]`. Inside it, numbers
+  keep full precision (`[0.1 + 0.2]::String` is `"[0.30000000000000004]"`).
+- **JSON object**: its JSON text, now also in `CONCAT`, `&`, `TEXTJOIN` and `.join()`.
+
+To keep every digit of a number, write it inside an array or with `.to_json()`. To keep exactly
+two decimals, round first: `ROUND(:x, 2) & ""`. `CONCAT` and `&` still flatten an array
+argument item by item (`CONCAT("a", [1, 2])` is `"a12"`).
+
+`&`, `TEXTJOIN` and `LEN` are new in 0.7; for them the first column is the 0.7 development
+builds.
+
+| Expression | 0.6 | 0.7 |
+|---|---|---|
+| `(0.1 + 0.2)::String`, `0.1 + 0.2 & ""`, `.to_s()`, `JOIN`, `.join()`, `TEXTJOIN` | `"0.30000000000000004"` | `"0.3"` |
+| `(1/3)::String`, `SQRT(2) & ""` | `"0.3333333333333333"`, `"1.4142135623730951"` | `"0.333333333333333"`, `"1.4142135623731"` |
+| `1e21::String`, `12345678901234567890 & ""` | `"1000000000000000000000"`, `"12345678901234567000"` | `"1E+21"`, `"1.23456789012346E+19"` |
+| `1.5e-8 & ""` | `"0.000000015"` | `"1.5E-08"` |
+| `(0 - 0.0) * -1 & ""` | `"-0"` | `"0"` |
+| `LEN(0.1 + 0.2)` | `19` | `3` |
+| `5::String`, `1234567890123456 & ""`, `1e-7 & ""` | `"5"`, `"1234567890123456"`, `"0.0000001"` | unchanged |
+| `TRUE.to_s()`, `[TRUE, 1].join()` | `"true"`, `"true,1"` | `"TRUE"`, `"TRUE,1"` |
+| `["a", 1, TRUE, NULL]::String` | `"[String(\"a\"), Number(1.0), Boolean(true), Null]"` | `"[\"a\",1,true,null]"` |
+| `["a", 1, TRUE, NULL].to_s()` | `"[a, 1, true, ]"` | `"[\"a\",1,true,null]"` |
+| `[[1, 2], 3].to_s()` | `"[[1, 2], 3]"` | `"[[1,2],3]"` |
+| `[1.5, 5].to_json()`, `5.to_json()` | `Json("[1.5,5.0]")`, `Json("5.0")` | `Json("[1.5,5]")`, `Json("5")` |
+| `"x" & {"a": 1}`, `CONCAT("x", {"a": 1})` | `"x"` | `"x{\"a\":1.0}"` |
+| `[{"a": 1}].join()`, `TEXTJOIN(",", TRUE, {"a": 1})` | `Error` | `"{\"a\":1.0}"` |
+| `"héllo".length()`, `"héllo".len()` | `6` (bytes) | `5` (characters, as `LEN`) |
+| `__CONCAT__("a", 1)` | `"a1"` (internal name of `&`) | `Error: Unknown function: __CONCAT__` |
+
+`(0.1 + 0.2)::String::Float` is now `0.3`, not `0.1 + 0.2`; `"1E+21"::Integer` is `1` (use
+`::Float`).
 
 ### Dates in aggregates, sorting and criteria (ADR-0031 amendment 2, BL-090)
 Functions that pick or order values accept dates and compare them by instant: `MIN`, `MAX`,
@@ -373,6 +419,7 @@ unchanged at 256 MiB, only now configurable. Details: [Limits](limits.md).
 | `runtime::method_calls::exec_filter`/`exec_map`/`exec_find`/`exec_reduce`, `exec_string_method`, `exec_array_method` | take a variable map | take `&dyn EvaluationContext` |
 | Minimum Rust version | not stated | 1.85 (ADR-0012) |
 | `runtime::builtin_functions::exec_builtin` | public | deprecated (still works); it reports argument errors as `Unknown function`. Use `runtime::function_dispatch::exec_builtin_fast` or `evaluate` |
+| `skillet::parse("a & b")` | `Expr::FunctionCall { name: "__CONCAT__", … }` | `Expr::Binary(a, BinaryOp::Concat, b)` (ADR-0034); a `match` on `BinaryOp` needs a `Concat` arm |
 | `Value::Currency` | a tagged number | deprecated (ADR-0033), removed in 0.8. Still compiles; a Currency you pass in is read as a Number, and results never contain one. Use `Value::Number` |
 
 ## JSON variables (BL-077)

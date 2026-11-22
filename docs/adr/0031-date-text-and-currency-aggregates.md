@@ -1,5 +1,9 @@
 # 0031. Dates as ISO 8601 text; Currency in the aggregates
 
+> **Amended by [ADR-0034](0034-text-form-of-values.md) (2026-11-22):** every text path goes
+> through one `write_text`; `.join()` writes booleans as `TRUE`/`FALSE` (replaces A3's boolean
+> sentence); a date inside an array's text is a quoted JSON string.
+
 > **Amendment 1 (maintainer, 2026-11-21, BL-078):** five follow-ups, all accepted as recommended.
 > Status stays Accepted. Results below are what the BL-078 implementation must give; error
 > positions count bytes from the start of the caller's input, including a leading `=` and any
