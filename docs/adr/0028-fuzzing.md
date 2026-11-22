@@ -57,6 +57,7 @@ hangs at start-up on recent macOS. Add `-a` to match CI's debug assertions.
 - The parser and evaluator get coverage-guided testing every week without slowing the PR gate.
 - The nightly pin and `cargo-fuzz` version need an occasional deliberate bump.
 - A red fuzz run does not block merges; someone has to read it. The security reviewer owns that.
-- The first local run (60 s per target) found a lexer subtract overflow on a lone `=` at the
-  start of the input (`"=="`), fixed with a saturating bound and pinned in
-  `tests/fuzz_regressions.rs`.
+- The first local runs found two debug-build panics, both fixed with a one-line bound and pinned
+  in `tests/fuzz_regressions.rs`: a lexer subtract overflow on a lone `=` at the start of the
+  input (`"=="`), and a negate overflow in `clamp_index` for huge negative indexes
+  (`[1][-1e300]`).

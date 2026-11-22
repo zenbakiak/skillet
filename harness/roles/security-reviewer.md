@@ -20,8 +20,9 @@ proof-of-concept tests, and file fixes. You don't merge your own fixes without a
 - **Token comparison is not constant-time** — `src/bin/http_server/auth.rs` uses `!=`. Low risk, cheap fix.
 - **No QuickJS resource limits** — `src/js_plugin.rs` sets no memory limit or interrupt handler; an
   uploaded `while(true){}` pins a worker thread forever.
-- **Lexer subtract overflow on a lone leading `=`** (`"=="`), found by the first fuzz run;
-  fixed with a saturating bound (BL-019, `tests/fuzz_regressions.rs`).
+- **Fuzz finds (BL-019), fixed**: lexer subtract overflow on a lone leading `=` (`"=="`) and
+  negate overflow on a huge negative index (`[1][-1e300]`); both panicked in debug builds.
+  Pinned in `tests/fuzz_regressions.rs`.
 - **Present and good**: 1 MB request cap and 30 s read / 10 s write timeouts (`http_server/utils.rs`).
 
 ## Review checklist (for any PR touching parser, runtime, servers, or plugins)
