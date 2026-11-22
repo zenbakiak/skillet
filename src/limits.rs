@@ -253,7 +253,39 @@ pub(crate) fn charge_value(value: &Value) -> Result<(), Error> {
     BUDGET.with(|b| b.charge_value(value))
 }
 
-/// Pre-charge a parse of the JSON text `s`: `len + 32 × (1 + count of , : [ {)`, a one-pass
+/// Charge the variables of an evaluation to the active budget, with the cost model of
+/// [`MAX_EVAL_BYTES`] (ADR-0011 amendment 5, BL-086).
+///
+/// The `*_json*` entry points and both servers call this for the variables they build from JSON,
+/// inside the scope of the evaluation, so a request whose variables alone are over the budget
+/// fails with the budget error. Each value is charged once, here: the evaluator does not charge
+/// it again for borrowing it, and a read that copies it is charged for the copy (amendment 2).
+/// Keys are not charged. One walk over the values, with no allocation; arrays are not checked
+/// for depth (the values came from `serde_json`, which stops at 128 levels).
+///
+/// Call it inside [`with_limits`] (or from code an evaluation calls): outside any scope nothing
+/// is enforced and it always succeeds. [`evaluate_with`](crate::evaluate_with) and the other
+/// `HashMap` entry points do not call it; a host that builds a large map itself can.
+///
+/// ```rust
+/// use std::collections::HashMap;
+/// use skillet::{charge_variables, with_limits, EvalLimits, Value};
+///
+/// let mut vars = HashMap::new();
+/// vars.insert("n".to_string(), Value::Number(1.0)); // 32
+/// vars.insert("s".to_string(), Value::String("abcd".into())); // 48 + 4
+/// let mut limits = EvalLimits::default();
+/// limits.max_bytes = 84;
+/// assert!(with_limits(limits, || charge_variables(&vars)).is_ok());
+/// limits.max_bytes = 83;
+/// let err = with_limits(limits, || charge_variables(&vars)).unwrap_err();
+/// assert_eq!(err.message, "Evaluation budget exceeded (max 83 bytes)");
+/// ```
+pub fn charge_variables(vars: &std::collections::HashMap<String, Value>) -> Result<(), Error> {
+    with_meter(|meter| vars.values().try_for_each(|v| meter.charge_value(v)))
+}
+
+/// Pre-charge a parse of the JSON text `s`:`len + 32 × (1 + count of , : [ {)`, a one-pass
 /// upper bound on the nodes `serde_json::from_str` builds.
 pub(crate) fn charge_json_parse(s: &str) -> Result<(), Error> {
     let nodes = 1 + count_node_bytes(s.as_bytes());

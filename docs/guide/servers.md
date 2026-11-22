@@ -57,6 +57,13 @@ The server accepts JSON requests over TCP, one request per line:
 }
 ```
 
+Each key of `variables` becomes a variable, with the same rule as `sk --json` and
+`sk_http_server`: characters other than letters, digits and `_` become `_`, so
+`{"first-name": "Ada"}` is read as `:first_name`. Two keys that give the same variable are an
+error, answered like any failed request (`"success": false`), for example
+`"error": "JSON keys \"a-b\" and \"a_b\" both map to variable :a_b"`; rename one key.
+`sk_server` builds no `:arguments`: a key named `arguments` is an ordinary variable.
+
 ### Response Format
 
 ```json
@@ -230,21 +237,26 @@ $ SKILLET_EVAL_TIMEOUT= sk_http_server 5795
 Error: SKILLET_EVAL_TIMEOUT must not be empty; give a number of seconds greater than 0 or unset it
 ```
 
-The banner shows both values and the worst case they allow (captured from a debug build):
+The banner shows both values and the worst case they allow:
 
 ```console
 $ sk_server 5792 8 --eval-timeout 120 --max-eval-bytes 512M
 🚀 Skillet Server started on 127.0.0.1:5792
 📊 Worker threads: 8
 ⏱️  Eval timeout: 120 s (--eval-timeout or SKILLET_EVAL_TIMEOUT)
-💾 Eval budget: 512 MiB per evaluation, up to about 4 GiB with 8 threads (--max-eval-bytes or SKILLET_MAX_EVAL_BYTES)
+💾 Eval budget: 512 MiB per evaluation, request variables included (--max-eval-bytes or SKILLET_MAX_EVAL_BYTES)
+🧮 Worst-case memory: about 9.8 GiB with 8 threads (per thread: 2 x 512 MiB evaluation, 160 MiB to read a 1 MiB request, 64 MiB JS heap, 10 MiB parsed expressions)
 🔧 Ready for high-throughput expression evaluation
 ```
 
-**Size the machine for it.** Each worker thread can run one evaluation at the full budget, so
-the budget alone can take `threads × max-eval-bytes` of memory: 8 threads × 256 MiB = 2 GiB with
-the defaults (the Docker image's 4 threads: 1 GiB counted, about 2 GiB live). Live memory per
-evaluation can reach about twice the budget (see [limits](limits.md#sizing-a-server)). Lower `--threads` or `--max-eval-bytes` if the host has less.
+The request's variables count towards the budget (ADR-0011 amendment 5), so a request whose
+variables alone are over `--max-eval-bytes` gets the budget error.
+
+**Size the machine for it.** Each worker thread can hold one evaluation at the full budget (live
+memory up to about twice the budget), one request being read and parsed, a JavaScript call and its
+parse cache. With the defaults that is about 5.9 GiB for 8 threads, and about 3 GiB for the
+Docker image's 4 threads; `sk_http_server` adds its result cache (63 MiB) once. Details:
+[limits](limits.md#sizing-a-server). Lower `--threads` or `--max-eval-bytes` if the host has less.
 
 The other time limits do not change with the deadline: a request must still arrive within 30 s,
 a response must be written within 10 s, and a JavaScript plugin call stops after 10 s or at the
@@ -723,6 +735,30 @@ docker run -p 127.0.0.1:8080:8080 -e SKILLET_AUTH_TOKEN skillet-server
 # Test from host (sk_server expects the token in each request; see "Connections and authentication" above)
 echo '{"expression": "=2+3*4", "variables": null}' | nc 127.0.0.1 8080
 ```
+
+## Result cache (`sk_http_server`)
+
+`sk_http_server` keeps up to 1,000 results, least recently used evicted first, shared by all
+workers. A request with the same key gets the stored result without evaluating again.
+
+- **Key**: the expression text, every variable (name and value), and whether `include_variables`
+  is set. With `include_variables` the entry also holds the assigned variables; without it, it
+  does not, so the two requests use different entries. `output_json` and the list of selected
+  variable names are applied to the stored entry, so they are not in the key.
+- **Not cached**: errors (including budget and deadline errors), entries over 64 KiB
+  ([limits](limits.md#result-cache)), and every expression that reads the clock: `NOW()`,
+  `TODAY()`, and `DATE()` or `TIME()` with no arguments, anywhere in the expression, including
+  inside `IF`, other calls and method lambdas (BL-085). `=NOW()` is evaluated on every request.
+- **Custom functions**: results that call JavaScript hooks are cached like any other.
+  `/reload-hooks` clears the cache ([hook files](#javascript-hook-files-sk_http_server)), so an
+  updated hook is used at once after a reload. A hook that returns a different value each time
+  (it reads `Date.now()` or `Math.random()`) is still cached; send `DELETE /cache` or avoid
+  such hooks.
+- **Limits**: the evaluation limits are set at start-up and the cache lives in the same process,
+  so every stored result was computed under the limits in force. They are not in the key.
+
+`GET /health` reports the cache as `cache_stats` (hits, misses, entries, evictions).
+`DELETE /cache` clears it.
 
 ## Parse cache
 

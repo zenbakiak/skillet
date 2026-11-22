@@ -148,6 +148,75 @@ pub fn describe_bytes(max: u64) -> String {
     format!("{max} bytes")
 }
 
+/// Live memory of one evaluation is at most about this many times its budget: the budget plus
+/// the value that crossed it (ADR-0011, Consequences).
+const LIVE_PER_BUDGET: u64 = 2;
+/// Heap of one JavaScript plugin call, not charged to the budget (ADR-0017).
+pub const JS_HEAP_BYTES: u64 = 64 * MIB;
+/// Parsed expressions one worker's parse cache can hold (ADR-0021: at most ~10 MiB).
+pub const PARSE_CACHE_BYTES: u64 = 10 * MIB;
+/// Memory for reading and parsing one request, per byte of the request size cap: the request text
+/// plus the `serde_json` tree of its variables, which the budget does not count (ADR-0011
+/// amendment 5 charges only the variables built from it). Measured in BL-086 up to 138 bytes per
+/// byte, for an array of one-key objects; arrays of numbers take about 25.
+pub const REQUEST_MEMORY_FACTOR: u64 = 160;
+
+/// Upper bound on the memory of a server with `threads` workers: each can hold one evaluation
+/// at the full budget, a JavaScript call, its parse cache and one request at `request_cap`, and
+/// `shared` is what the whole process holds once (the HTTP result cache).
+pub fn worst_case_bytes(
+    limits: &EvalLimits,
+    threads: usize,
+    request_cap: usize,
+    shared: u64,
+) -> u64 {
+    let request = (request_cap as u64).saturating_mul(REQUEST_MEMORY_FACTOR);
+    let per_thread = limits
+        .max_bytes
+        .saturating_mul(LIVE_PER_BUDGET)
+        .saturating_add(request)
+        .saturating_add(JS_HEAP_BYTES)
+        .saturating_add(PARSE_CACHE_BYTES);
+    per_thread
+        .saturating_mul(threads as u64)
+        .saturating_add(shared)
+}
+
+/// The start-up line for [`worst_case_bytes`], with what it is made of.
+pub fn describe_worst_case(
+    limits: &EvalLimits,
+    threads: usize,
+    request_cap: usize,
+    shared: u64,
+) -> String {
+    let total = worst_case_bytes(limits, threads, request_cap, shared);
+    let mut text = format!(
+        "Worst-case memory: about {} with {threads} threads (per thread: {LIVE_PER_BUDGET} x {} evaluation, {} to read a {} request, {} JS heap, {} parsed expressions",
+        describe_approx(total),
+        describe_bytes(limits.max_bytes),
+        describe_approx((request_cap as u64).saturating_mul(REQUEST_MEMORY_FACTOR)),
+        describe_bytes(request_cap as u64),
+        describe_bytes(JS_HEAP_BYTES),
+        describe_bytes(PARSE_CACHE_BYTES),
+    );
+    if shared > 0 {
+        text.push_str(&format!("; plus {} result cache", describe_approx(shared)));
+    }
+    text.push(')');
+    text
+}
+
+/// `5.9 GiB` from 1 GiB up, else whole MiB rounded up (`809 MiB`), else KiB rounded up.
+fn describe_approx(bytes: u64) -> String {
+    if bytes >= GIB {
+        format!("{:.1} GiB", bytes as f64 / GIB as f64)
+    } else if bytes >= MIB {
+        format!("{} MiB", bytes.div_ceil(MIB))
+    } else {
+        format!("{} KiB", bytes.div_ceil(KIB))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -280,5 +349,32 @@ mod tests {
         assert_eq!(describe_bytes(64 * KIB), "64 KiB");
         assert_eq!(describe_bytes(1500), "1500 bytes");
         assert_eq!(describe_bytes(GIB + MIB), "1025 MiB");
+    }
+
+    #[test]
+    fn worst_case_counts_every_part() {
+        let limits = defaults();
+        // 2 x 256 + 160 (1 MiB request) + 64 (JS) + 10 (parse cache) = 746 MiB per thread.
+        assert_eq!(worst_case_bytes(&limits, 1, MIB as usize, 0), 746 * MIB);
+        assert_eq!(
+            worst_case_bytes(&limits, 8, MIB as usize, 1000 * 64 * KIB),
+            8 * 746 * MIB + 1000 * 64 * KIB
+        );
+        assert_eq!(
+            describe_worst_case(&limits, 8, MIB as usize, 1000 * 64 * KIB),
+            "Worst-case memory: about 5.9 GiB with 8 threads (per thread: 2 x 256 MiB evaluation, \
+             160 MiB to read a 1 MiB request, 64 MiB JS heap, 10 MiB parsed expressions; plus \
+             63 MiB result cache)"
+        );
+        assert_eq!(
+            describe_worst_case(&limits, 1, MIB as usize, 0),
+            "Worst-case memory: about 746 MiB with 1 threads (per thread: 2 x 256 MiB evaluation, \
+             160 MiB to read a 1 MiB request, 64 MiB JS heap, 10 MiB parsed expressions)"
+        );
+        assert_eq!(describe_approx(1500), "2 KiB");
+        assert_eq!(
+            worst_case_bytes(&limits, usize::MAX, usize::MAX, u64::MAX),
+            u64::MAX
+        );
     }
 }

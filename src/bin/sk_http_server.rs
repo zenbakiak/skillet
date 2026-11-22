@@ -20,7 +20,11 @@ use http_server::js_management::{
     handle_delete_js, handle_list_js, handle_reload_hooks, handle_update_js, handle_upload_js,
 };
 use http_server::pid_file::write_pid_file;
-use http_server::request_limits::{close_after_reject, DeadlineReader};
+use http_server::request_limits::{close_after_reject, DeadlineReader, MAX_REQUEST_SIZE};
+
+/// The result cache, held once per process: 1000 entries of at most 64 KiB each by the cost
+/// model (`http_server/cache.rs`).
+const RESULT_CACHE_BYTES: u64 = 1000 * 64 * 1024;
 use http_server::stats::ServerStats;
 use http_server::utils::{
     handle_cors_preflight, load_html_file, read_complete_http_request, read_error_status,
@@ -327,10 +331,17 @@ fn print_eval_limits(thread_count: usize) {
         eval_limits::describe_timeout(&limits)
     );
     eprintln!(
-        "💾 Eval budget: {} per evaluation, up to about {} with {} threads (--max-eval-bytes or SKILLET_MAX_EVAL_BYTES)",
+        "💾 Eval budget: {} per evaluation, request variables included (--max-eval-bytes or SKILLET_MAX_EVAL_BYTES)",
         eval_limits::describe_bytes(limits.max_bytes),
-        eval_limits::describe_bytes(limits.max_bytes.saturating_mul(thread_count as u64)),
-        thread_count
+    );
+    eprintln!(
+        "🧮 {}",
+        eval_limits::describe_worst_case(
+            &limits,
+            thread_count,
+            MAX_REQUEST_SIZE,
+            RESULT_CACHE_BYTES
+        )
     );
 }
 

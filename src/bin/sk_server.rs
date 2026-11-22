@@ -101,6 +101,11 @@ use daemon::daemonize;
 mod eval_limits;
 use eval_limits::server_limits;
 
+// Variable names from JSON keys, shared with `sk --json`, `sk_http_server` and the library.
+#[path = "../json_keys.rs"]
+mod json_keys;
+use json_keys::{check_json_keys, sanitize_json_key};
+
 /// One request line read from a connection.
 enum Line {
     Request(String),
@@ -246,11 +251,21 @@ fn process_request(req: EvalRequest, request_id: u64) -> EvalResponse {
     // Convert JSON variables to Skillet values
     let vars = match req.variables {
         Some(json_vars) => {
+            // Keys are sanitized like the other surfaces; colliding keys are rejected (BL-096).
+            if let Err(e) = check_json_keys(json_vars.keys().map(String::as_str)) {
+                return EvalResponse {
+                    success: false,
+                    result: None,
+                    error: Some(e),
+                    execution_time_ms: start_time.elapsed().as_secs_f64() * 1000.0,
+                    request_id,
+                };
+            }
             let mut result = HashMap::new();
             for (key, value) in json_vars {
                 match skillet::json_to_value(value) {
                     Ok(v) => {
-                        result.insert(key, v);
+                        result.insert(sanitize_json_key(&key), v);
                     }
                     Err(e) => {
                         return EvalResponse {
@@ -270,6 +285,8 @@ fn process_request(req: EvalRequest, request_id: u64) -> EvalResponse {
 
     // Evaluate expression
     let result = skillet::with_limits(server_limits(), || {
+        // Charged in the evaluation's budget scope (ADR-0011 amendment 5).
+        skillet::charge_variables(&vars)?;
         let expr = parsed(&req.expression)?;
         if req.expression.contains(";") || req.expression.contains(":=") {
             evaluate_parsed_with_assignments(&expr, &vars)
@@ -420,10 +437,12 @@ fn print_eval_limits(num_threads: usize) {
         eval_limits::describe_timeout(&limits)
     );
     eprintln!(
-        "💾 Eval budget: {} per evaluation, up to about {} with {} threads (--max-eval-bytes or SKILLET_MAX_EVAL_BYTES)",
+        "💾 Eval budget: {} per evaluation, request variables included (--max-eval-bytes or SKILLET_MAX_EVAL_BYTES)",
         eval_limits::describe_bytes(limits.max_bytes),
-        eval_limits::describe_bytes(limits.max_bytes.saturating_mul(num_threads as u64)),
-        num_threads
+    );
+    eprintln!(
+        "🧮 {}",
+        eval_limits::describe_worst_case(&limits, num_threads, MAX_REQUEST_SIZE, 0)
     );
 }
 

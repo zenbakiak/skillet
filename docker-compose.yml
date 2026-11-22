@@ -9,7 +9,9 @@ services:
     environment:
       PORT: "8080"
       HOST: "0.0.0.0"
-      # Worker threads. Worst case about SK_THREADS x SKILLET_MAX_EVAL_BYTES (4 x 256 MiB = 1 GiB).
+      # Worker threads. Worst-case memory about SK_THREADS x (2 x SKILLET_MAX_EVAL_BYTES + 234 MiB
+      # for a 1 MiB request, a JS call and the parse cache) + 63 MiB result cache:
+      # 4 x 746 MiB + 63 MiB = about 3 GiB. The start-up log prints it (docs/guide/limits.md).
       SK_THREADS: "4"
       SKILLET_HOOKS_DIR: /app/hooks
       # Required. Read from the shell environment or from .env (gitignored; see .env.example).

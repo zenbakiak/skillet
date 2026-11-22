@@ -157,6 +157,112 @@ fn both_servers_use_the_configured_budget() {
     }
 }
 
+/// Send `expr` with the variables `vars` (a JSON object) and return the raw response.
+fn eval_vars(server: &ServerProcess, http: bool, expr: &str, vars: serde_json::Value) -> String {
+    let mut s = server.connect();
+    if http {
+        let body = serde_json::json!({"expression": expr, "arguments": vars}).to_string();
+        let req = format!(
+            "POST /eval HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        s.write_all(req.as_bytes()).unwrap();
+        let mut resp = String::new();
+        let _ = s.read_to_string(&mut resp);
+        resp
+    } else {
+        let body = serde_json::json!({"expression": expr, "variables": vars});
+        s.write_all(format!("{body}\n").as_bytes()).unwrap();
+        let mut line = String::new();
+        let _ = BufReader::new(s).read_line(&mut line);
+        line
+    }
+}
+
+fn get(server: &ServerProcess, path_and_query: &str) -> String {
+    let mut s = server.connect();
+    let req =
+        format!("GET {path_and_query} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+    s.write_all(req.as_bytes()).unwrap();
+    let mut resp = String::new();
+    let _ = s.read_to_string(&mut resp);
+    resp
+}
+
+/// The response body (HTTP) or line (`sk_server`) up to and including the error text.
+fn error_shape(resp: &str, http: bool) -> &str {
+    let body = if http {
+        &resp[resp.find("\r\n\r\n").map_or(0, |i| i + 4)..]
+    } else {
+        resp
+    };
+    &body[..body.find("\",").map_or(body.len(), |i| i + 1)]
+}
+
+/// ADR-0011 amendment 5 (BL-086): request variables are charged to the configured budget, in the
+/// evaluation's scope. With a 64 KiB budget, 1900 numbers fit (HTTP: 34 × 1900 + 90 with
+/// `:arguments`; `sk_server`: 32 × 1900 + 32) and 2100 do not. The error has the same status and
+/// shape as a budget error from the evaluation itself.
+#[test]
+fn both_servers_charge_request_variables() {
+    let zeros = |n: usize| serde_json::json!({ "nums": vec![0; n] });
+    let too_big = "Evaluation budget exceeded (max 65536 bytes)";
+    for (bin, http) in [(HTTP, true), (LINE, false)] {
+        let server = start(bin, &["--max-eval-bytes", "64K"], &[]);
+        let resp = eval_vars(&server, http, ":nums.length()", zeros(1900));
+        assert!(resp.contains("1900"), "{bin}: {}", head(&resp));
+        assert!(
+            !resp.contains("\"success\":false"),
+            "{bin}: {}",
+            head(&resp)
+        );
+
+        let over = eval_vars(&server, http, ":nums.length()", zeros(2100));
+        assert!(over.contains(too_big), "{bin}: {}", head(&over));
+        // An evaluation that goes over the budget by itself, for comparison.
+        let by_eval = eval_vars(&server, http, &ones(3000), serde_json::json!({}));
+        assert!(by_eval.contains(too_big), "{bin}: {}", head(&by_eval));
+        assert_eq!(
+            error_shape(&over, http),
+            error_shape(&by_eval, http),
+            "{bin}"
+        );
+        if http {
+            assert!(over.starts_with("HTTP/1.1 400"), "{}", head(&over));
+            assert!(by_eval.starts_with("HTTP/1.1 400"), "{}", head(&by_eval));
+        }
+        drop(server);
+
+        // The default budget takes the same request as before.
+        let server = start(bin, &[], &[]);
+        let resp = eval_vars(&server, http, ":nums.length()", zeros(2100));
+        assert!(resp.contains("2100"), "{bin}: {}", head(&resp));
+    }
+}
+
+/// `GET /eval` query variables are charged too: a 20,000-character string fits 64 KiB
+/// (`:q` 48 + 20000, `:arguments` 48 + 20008), a 40,000-character one does not.
+#[test]
+fn sk_http_server_charges_query_variables() {
+    let server = start(HTTP, &["--max-eval-bytes", "64K"], &[]);
+    let resp = get(
+        &server,
+        &format!("/eval?expr=:q.length()&q={}", "x".repeat(20_000)),
+    );
+    assert!(resp.starts_with("HTTP/1.1 200"), "{}", head(&resp));
+    assert!(resp.contains("20000"), "{}", head(&resp));
+    let resp = get(
+        &server,
+        &format!("/eval?expr=:q.length()&q={}", "x".repeat(40_000)),
+    );
+    assert!(resp.starts_with("HTTP/1.1 400"), "{}", head(&resp));
+    assert!(
+        resp.contains("Evaluation budget exceeded (max 65536 bytes)"),
+        "{}",
+        head(&resp)
+    );
+}
+
 /// Start, then stop, and return what the server printed at start-up.
 fn banner(bin: &str, args: &[&str], env: &[(&str, &str)]) -> String {
     let mut server = start(bin, args, env);
@@ -175,9 +281,16 @@ fn banner_shows_both_limits_and_the_flag_wins() {
         let text = banner(bin, &[], &[]);
         assert!(text.contains("Eval timeout: 20 s"), "{bin}: {text}");
         assert!(
-            text.contains(
-                "Eval budget: 256 MiB per evaluation, up to about 256 MiB with 1 threads"
-            ),
+            text.contains("Eval budget: 256 MiB per evaluation, request variables included"),
+            "{bin}: {text}"
+        );
+        // ADR-0011 amendment 5: 2 × 256 + 160 (1 MiB request) + 64 (JS) + 10 (parse cache)
+        // per thread, plus the HTTP result cache (1000 × 64 KiB).
+        let total = if bin == HTTP { "809 MiB" } else { "746 MiB" };
+        assert!(
+            text.contains(&format!(
+                "Worst-case memory: about {total} with 1 threads (per thread: 2 x 256 MiB evaluation, 160 MiB to read a 1 MiB request"
+            )),
             "{bin}: {text}"
         );
 

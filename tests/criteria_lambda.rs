@@ -47,16 +47,25 @@ fn lambda_criteria_ignore_an_outer_x() {
 }
 
 #[test]
-fn lambda_criteria_that_return_a_number_still_fail_with_an_outer_x() {
+fn lambda_criteria_that_return_a_number_ignore_an_outer_x() {
+    // A number is a condition, non-zero TRUE (ADR-0029 amendment 1, BL-089).
+    let n = |v: f64| Ok(Value::Number(v));
+    same_with_outer_x("COUNTIF([5, 0, 1], :x)", n(2.0));
+    same_with_outer_x("COUNTIF([1, 2, 3, 4], :x % 2)", n(2.0));
+    same_with_outer_x("SUMIF([5, 0, 1], :x)", n(6.0));
+    same_with_outer_x("AVERAGEIF([5, 0, 1], :x * 1)", n(3.0));
+}
+
+#[test]
+fn lambda_criteria_that_return_text_still_fail_with_an_outer_x() {
     let err = |f: &str| {
         Err(format!(
-            "{f} criteria expression must return TRUE or FALSE, got number"
+            "{f} condition must be TRUE, FALSE or a number, got string (#VALUE!)"
         ))
     };
-    same_with_outer_x("COUNTIF([5, 5, 1], :x)", err("COUNTIF"));
-    same_with_outer_x("COUNTIF([1, 2, 3, 4], :x % 2)", err("COUNTIF"));
-    same_with_outer_x("SUMIF([5, 5, 1], :x)", err("SUMIF"));
-    same_with_outer_x("AVERAGEIF([5, 5, 1], :x * 1)", err("AVERAGEIF"));
+    same_with_outer_x("COUNTIF([5, 5, 1], :x & '')", err("COUNTIF"));
+    same_with_outer_x("SUMIF([5, 5, 1], :x & '')", err("SUMIF"));
+    same_with_outer_x("AVERAGEIF([5, 5, 1], :x & '')", err("AVERAGEIF"));
 }
 
 #[test]
@@ -120,7 +129,7 @@ fn sk_json_lambda_criteria_ignore_an_outer_x() {
             assert_eq!(sk_json(expr, json), want, "{expr} with {json}");
         }
     }
-    let without = sk_json("=COUNTIF([5, 5, 1], :x)", "{}");
-    assert!(without.contains("must return TRUE or FALSE"), "{without}");
-    assert_eq!(sk_json("=COUNTIF([5, 5, 1], :x)", r#"{"x": 5}"#), without);
+    let without = sk_json("=COUNTIF([5, 0, 1], :x)", "{}");
+    assert_eq!(without, "Number(2.0)");
+    assert_eq!(sk_json("=COUNTIF([5, 0, 1], :x)", r#"{"x": 5}"#), without);
 }
