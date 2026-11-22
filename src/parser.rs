@@ -394,11 +394,7 @@ impl<'a> Parser<'a> {
         let mut max_child = None;
         if !matches!(self.lookahead, Token::RParen) {
             loop {
-                let (arg, d) = if let Token::Ellipsis = self.lookahead {
-                    self.parse_spread()?
-                } else {
-                    self.parse_expr()?
-                };
+                let (arg, d) = self.parse_element()?;
                 args.push(arg);
                 max_child = max_child.max(Some(d));
                 match self.lookahead {
@@ -414,7 +410,16 @@ impl<'a> Parser<'a> {
         Ok((args, max_child))
     }
 
-    /// `...expr` in an argument list.
+    /// One argument-list or array-literal element: `'...' expr | expr`.
+    fn parse_element(&mut self) -> Parsed {
+        if let Token::Ellipsis = self.lookahead {
+            self.parse_spread()
+        } else {
+            self.parse_expr()
+        }
+    }
+
+    /// `...expr` in an argument list or an array literal (ADR-0005 amendment 1).
     #[inline(never)]
     fn parse_spread(&mut self) -> Parsed {
         self.bump()?;
@@ -546,7 +551,7 @@ impl<'a> Parser<'a> {
         let mut max_child = None;
         if !matches!(self.lookahead, Token::RBracket) {
             loop {
-                let (item, d) = self.parse_expr()?;
+                let (item, d) = self.parse_element()?;
                 items.push(item);
                 max_child = max_child.max(Some(d));
                 match self.lookahead {

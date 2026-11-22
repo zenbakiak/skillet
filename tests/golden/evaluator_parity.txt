@@ -225,6 +225,26 @@ vars "SUM(...[1, 2, 3])" => Ok Number(6.0)
 custom "SUM(...[1, 2, 3])" => Ok Number(6.0)
 assign "SUM(...[1, 2, 3])" => Ok Number(6.0)
 context "SUM(...[1, 2, 3])" => Ok Number(6.0) | money=Some(Number(19.99))
+eval "[0, ...[1, 2, 3], 4]" => Ok Array([Number(0.0), Number(1.0), Number(2.0), Number(3.0), Number(4.0)])
+vars "[0, ...[1, 2, 3], 4]" => Ok Array([Number(0.0), Number(1.0), Number(2.0), Number(3.0), Number(4.0)])
+custom "[0, ...[1, 2, 3], 4]" => Ok Array([Number(0.0), Number(1.0), Number(2.0), Number(3.0), Number(4.0)])
+assign "[0, ...[1, 2, 3], 4]" => Ok Array([Number(0.0), Number(1.0), Number(2.0), Number(3.0), Number(4.0)])
+context "[0, ...[1, 2, 3], 4]" => Ok Array([Number(0.0), Number(1.0), Number(2.0), Number(3.0), Number(4.0)]) | money=Some(Number(19.99))
+eval "[...[]]" => Ok Array([])
+vars "[...[]]" => Ok Array([])
+custom "[...[]]" => Ok Array([])
+assign "[...[]]" => Ok Array([])
+context "[...[]]" => Ok Array([]) | money=Some(Number(19.99))
+eval "[...[1, [2, 3]]]" => Ok Array([Number(1.0), Array([Number(2.0), Number(3.0)])])
+vars "[...[1, [2, 3]]]" => Ok Array([Number(1.0), Array([Number(2.0), Number(3.0)])])
+custom "[...[1, [2, 3]]]" => Ok Array([Number(1.0), Array([Number(2.0), Number(3.0)])])
+assign "[...[1, [2, 3]]]" => Ok Array([Number(1.0), Array([Number(2.0), Number(3.0)])])
+context "[...[1, [2, 3]]]" => Ok Array([Number(1.0), Array([Number(2.0), Number(3.0)])]) | money=Some(Number(19.99))
+eval "[...[1], ...['a', NULL]].length()" => Ok Number(3.0)
+vars "[...[1], ...['a', NULL]].length()" => Ok Number(3.0)
+custom "[...[1], ...['a', NULL]].length()" => Ok Number(3.0)
+assign "[...[1], ...['a', NULL]].length()" => Ok Number(3.0)
+context "[...[1], ...['a', NULL]].length()" => Ok Number(3.0) | money=Some(Number(19.99))
 eval "{\"a\": 1, \"b\": \"x\"}" => Ok Json("{\"a\":1.0,\"b\":\"x\"}")
 vars "{\"a\": 1, \"b\": \"x\"}" => Ok Json("{\"a\":1.0,\"b\":\"x\"}")
 custom "{\"a\": 1, \"b\": \"x\"}" => Ok Json("{\"a\":1.0,\"b\":\"x\"}")
@@ -813,6 +833,22 @@ vars "MAX(...:arr, 100)" => Ok Number(100.0)
 custom "MAX(...:arr, 100)" => Ok Number(100.0)
 assign "MAX(...:arr, 100)" => Ok Number(100.0)
 context "MAX(...:arr, 100)" => Ok Number(100.0) | money=Some(Number(19.99))
+vars "[0, ...:arr, 6]" => Ok Array([Number(0.0), Number(1.0), Number(2.0), Number(3.0), Number(4.0), Number(5.0), Number(6.0)])
+custom "[0, ...:arr, 6]" => Ok Array([Number(0.0), Number(1.0), Number(2.0), Number(3.0), Number(4.0), Number(5.0), Number(6.0)])
+assign "[0, ...:arr, 6]" => Ok Array([Number(0.0), Number(1.0), Number(2.0), Number(3.0), Number(4.0), Number(5.0), Number(6.0)])
+context "[0, ...:arr, 6]" => Ok Array([Number(0.0), Number(1.0), Number(2.0), Number(3.0), Number(4.0), Number(5.0), Number(6.0)]) | money=Some(Number(19.99))
+vars "[...:empty, ...:words]" => Ok Array([String("b"), String("a"), String("c")])
+custom "[...:empty, ...:words]" => Ok Array([String("b"), String("a"), String("c")])
+assign "[...:empty, ...:words]" => Ok Array([String("b"), String("a"), String("c")])
+context "[...:empty, ...:words]" => Ok Array([String("b"), String("a"), String("c")]) | money=Some(Number(19.99))
+vars "[...:arr.map(:x * 2)].sum()" => Ok Number(30.0)
+custom "[...:arr.map(:x * 2)].sum()" => Ok Number(30.0)
+assign "[...:arr.map(:x * 2)].sum()" => Ok Number(30.0)
+context "[...:arr.map(:x * 2)].sum()" => Ok Number(30.0) | money=Some(Number(19.99))
+vars "[...:nil.to_a(), 1]" => Ok Array([Number(1.0)])
+custom "[...:nil.to_a(), 1]" => Ok Array([Number(1.0)])
+assign "[...:nil.to_a(), 1]" => Ok Array([Number(1.0)])
+context "[...:nil.to_a(), 1]" => Ok Array([Number(1.0)]) | money=Some(Number(19.99))
 vars ":s.upper()" => Ok String("HELLO WORLD")
 custom ":s.upper()" => Ok String("HELLO WORLD")
 assign ":s.upper()" => Ok String("HELLO WORLD")
@@ -1135,6 +1171,8 @@ custom "TRIPLE()" => Err "TRIPLE expects at least 1 arguments, got 0"
 custom "TRIPLE(1, 2)" => Err "TRIPLE expects at most 1 arguments, got 2"
 custom "TRIPLE(TRIPLE(2))" => Ok Number(18.0)
 custom "UPPER(GREET('x'))" => Ok String("HI X")
+custom "[...[TRIPLE(1)], TRIPLE(2)]" => Ok Array([Number(3.0), Number(6.0)])
+custom "TRIPLE(...[4])" => Ok Number(12.0)
 eval "UNKNOWNFN(1)" => Err "Unknown function: UNKNOWNFN"
 vars "UNKNOWNFN(1)" => Err "Unknown function: UNKNOWNFN"
 custom "UNKNOWNFN(1)" => Err "Unknown function: UNKNOWNFN"
@@ -1190,3 +1228,18 @@ vars "{\"a\": 1}.missing" => Err "Property 'missing' not found in JSON object"
 custom "{\"a\": 1}.missing" => Err "Property 'missing' not found in JSON object"
 assign "{\"a\": 1}.missing" => Err "Property 'missing' not found in JSON object"
 context "{\"a\": 1}.missing" => Err "Property 'missing' not found in JSON object"
+eval "[...NULL]" => Err "Spread expects array"
+vars "[...NULL]" => Err "Spread expects array"
+custom "[...NULL]" => Err "Spread expects array"
+assign "[...NULL]" => Err "Spread expects array"
+context "[...NULL]" => Err "Spread expects array"
+eval "[...5]" => Err "Spread expects array"
+vars "[...5]" => Err "Spread expects array"
+custom "[...5]" => Err "Spread expects array"
+assign "[...5]" => Err "Spread expects array"
+context "[...5]" => Err "Spread expects array"
+eval "[...'ab']" => Err "Spread expects array"
+vars "[...'ab']" => Err "Spread expects array"
+custom "[...'ab']" => Err "Spread expects array"
+assign "[...'ab']" => Err "Spread expects array"
+context "[...'ab']" => Err "Spread expects array"

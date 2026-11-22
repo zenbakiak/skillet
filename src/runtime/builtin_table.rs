@@ -512,6 +512,7 @@ mod tests {
             "DATE()",
             "TIME()",
             "DATE(...:parts)",
+            "[...[NOW()]]",
             "[1, 2][0:DAY(TODAY())]",
             "(TODAY())::String",
             ":u&.f(NOW())",
@@ -525,6 +526,7 @@ mod tests {
             "TIME(14, 30, 0)",
             "[1, 2].map(:x * 2).sum()",
             "MYHOOK(1)",
+            "[...[1, 2], ...:a]",
             ":x.now",
             "'NOW()'",
         ] {
