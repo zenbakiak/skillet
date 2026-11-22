@@ -30,12 +30,12 @@
 | | Count | Functions |
 |---|---|---|
 | yes | 47 | `SUM`, `AVERAGE`, `MIN`, `MAX`, `ROUND`, `CEILING`, `FLOOR`, `ABS`, `SQRT`, `POWER`, `MOD`, `INT`, `UPPER`, `LOWER`, `TRIM`, `SUBSTITUTE`, `ISNUMBER`, `ISTEXT`, `LEN`, `TEXTJOIN`, `COUNT`, `COUNTA`, `COUNTIF`, `SUMIF`, `AVERAGEIF`, `FIND`, `DATE`, `TIME`, `PMT`, `IPMT`, `PPMT`, `PV`, `NPV`, `MEDIAN`, `MODE.SNGL`, `STDEV.P`, `STDEV.S`, `VAR.P`, `VAR.S`, `PERCENTILE.INC`, `QUARTILE.INC`, `IF`, `IFS`, `AND`, `OR`, `NOT`, `XOR` |
-| edges | 10 | `PRODUCT`, `CONCAT`, `LEFT`, `RIGHT`, `MID`, `REPLACE`, `YEAR`, `MONTH`, `DAY`, `FV` |
+| edges | 11 | `PRODUCT`, `CONCAT`, `LEFT`, `RIGHT`, `MID`, `REPLACE`, `YEAR`, `MONTH`, `DAY`, `DATEDIF`, `FV` |
 | differs | 9 | `ISBLANK`, `UNIQUE`, `SORT`, `FILTER`, `MAP`, `REDUCE`, `TODAY`, `NOW`, `DB` |
 | Skillet-only | 23 (+8 alias spellings) | `AVG`, `CEIL`, `POW`, `MULTIPLY`, `BETWEEN`, `LENGTH`, `SUBSTRING`, `SPLIT`, `SUBSTITUTEM`, `INCLUDES`, `ARRAY`, `FLATTEN`, `FIRST`, `LAST`, `CONTAINS`, `IN`, `JOIN`, `MERGE`, `REVERSE`, `DIG`, `JQ`, `DATEADD`, `DATEDIFF`; spellings `MODESNGL`, `MODE_SNGL`, `STDEV_P`, `VAR_P`, `PERCENTILEINC`, `PERCENTILE_INC`, `QUARTILEINC`, `QUARTILE_INC` |
 
-66 functions share a name with Excel (56 in the v0.6.3 audit, plus the 10 added under D-9 and
-D-3). 47 match, 10 match on valid inputs, and 9 give a different result for ordinary inputs;
+67 functions share a name with Excel (56 in the v0.6.3 audit, plus the 10 added under D-9 and
+D-3, and `DATEDIF` from B-15). 47 match, 11 match on valid inputs, and 9 give a different result for ordinary inputs;
 6 of those 9 are deliberate. Legacy and alias names count with their function: `STDEVP`,
 `STDEV` and `VARP`, `VAR` with `STDEV.P`/`STDEV.S` and `VAR.P`/`VAR.S`; `MODE`, `PERCENTILE`,
 `QUARTILE` with the `.SNGL`/`.INC` names; `AVGIF` with `AVERAGEIF`. In v0.6.3 the counts were
@@ -140,8 +140,9 @@ Skillet's `DateTime` is a count of Unix seconds (UTC). Excel stores dates as ser
 | `TODAY` / `NOW` | `TODAY()` → today at 00:00:00 UTC (`TODAY() == DATE()` → `true`); `NOW()` → `DateTime(…)` (UTC, whole seconds) | Serial number, local time | differs | `TODAY` implemented D-9 (#83). **Deliberate** (ADR-0018): UTC gives the same result on every server |
 | `TIME` | `TIME(14,30,0)` → `0.6041666666666666`; `TIME(12,0,0)` → `0.5`; `TIME(0,90,0)` → `0.0625`; `TIME(25,0,0)` → `0.041666666666666664`; `TIME(-1,0,0)` → `Error: TIME hour must not be negative (#NUM!)`; `TIME(1)` → error | A fraction of a day, with rollover | yes | implemented D-2 (B-1: #61, fraction of a day: #84). `TIME()` returns the current local time in the same unit (extension) |
 | `YEAR` / `MONTH` / `DAY` | `YEAR(DATE(2026,3,4))` → `2026`; `MONTH(...)` → `3`; `YEAR(46000)` → `Error: YEAR expects datetime`; `YEAR("2026-01-01")` → same error | Also accept serial numbers and date text | edges | **deliberate** (ADR-0018): `DateTime` is a real type, not a serial number. All components are UTC. Strings would work after the cast proposal below |
-| `DATEADD` | `DATEADD(DATE(2026,1,31),1,"months")` → 2026-02-28 (clamped); `DATEADD(DATE(2024,2,29),1,"years")` → 2025-02-28; `DATEADD(DATE(2026,1,1),1.9,"days")` → +1 day (truncated); `DATEADD(DATE(2026,1,1), 1, "m")` → +1 minute | No Excel function; the closest are `EDATE` and `date + n` | Skillet-only | keep. Open (B-15): `"m"` means minutes; in Excel's `DATEDIF` it means months |
-| `DATEDIFF` | `DATEDIFF(DATE(2026,1,1), DATE(2026,3,1), "days")` → `59`; `DATEDIFF(DATE(2026,1,31), DATE(2026,2,1), "months")` → `1`; `DATEDIFF(DATE(2025,12,31), DATE(2026,1,1), "years")` → `1`; without a unit → `Error: DATEDIFF expects date1, date2, unit` | Excel's `DATEDIF` counts **complete** units ("m" → 0, "y" → 0 here) and returns `#NUM!` when start > end | Skillet-only | keep. Months and years count calendar boundaries (like SQL `DATEDIFF`). Add `DATEDIF` with Excel semantics if users ask |
+| `DATEADD` | `DATEADD(DATE(2026,1,31),1,"m")` → 2026-02-28 (clamped to the month end); `DATEADD(DATE(2024,1,31),1,"months")` → 2024-02-29; `DATEADD(DATE(2024,2,29),1,"yyyy")` → 2025-02-28; `DATEADD(DATE(2026,1,1),1.9,"days")` → +1 day (truncated); `DATEADD(DATE(2026,1,1),1,"n")` → +1 minute; `DATEADD(DATE(2026,1,1),1,"eons")` → `Error: … (#VALUE!)` | No worksheet function; VBA `DateAdd` takes the same codes (`yyyy`, `q`, `m`, `y`, `d`, `w`, `ww`, `h`, `n`, `s`) and clamps the same way | Skillet-only | implemented B-15: VBA `DateAdd` codes, any case, plus Skillet's long words (`"months"`, `"minutes"`, …) |
+| `DATEDIFF` | `DATEDIFF(DATE(2026,1,1), DATE(2026,3,1), "days")` → `59`; `DATEDIFF(DATE(2026,1,31), DATE(2026,2,1), "m")` → `1`; `DATEDIFF(DATE(2025,12,31), DATE(2026,1,1), "yyyy")` → `1`; `DATEDIFF(DATE(2026,1,3), DATE(2026,1,4), "ww")` → `1` (one Sunday); without a unit → `Error: DATEDIFF expects date1, date2, unit` | VBA `DateDiff` takes the same codes and counts boundaries for every unit; Skillet counts boundaries for `yyyy`, `q`, `m`, `ww` and whole elapsed units for `d`, `y`, `w`, `h`, `n`, `s` (the same for dates at midnight) | Skillet-only | implemented B-15: VBA `DateDiff` codes, any case, plus the long words. Unknown unit → `#VALUE!` |
+| `DATEDIF` | `DATEDIF(DATE(2001,1,1), DATE(2003,1,1), "Y")` → `2`; `DATEDIF(DATE(2001,6,1), DATE(2002,8,15), "D")` → `440`; `… "YD")` → `75`; `… "YM")` → `2`; `… "MD")` → `14`; `DATEDIF(DATE(2011,1,31), DATE(2011,3,1), "md")` → `-2`; start after end or unit `"q"` → `Error: … (#NUM!)` | Complete units; `#NUM!` for start > end or an unknown unit; accepts serial numbers and date text | edges | implemented B-15: Excel's codes and `"md"`/`"ym"`/`"yd"` rules. Takes `DateTime` values only; times are ignored |
 
 Date arithmetic (D-5, #83; comparison BL-059, #88): `DATE(2026,1,2) - DATE(2026,1,1)` → `1`;
 `DATE(2026,1,1) + 1` and `1 + DATE(2026,1,1)` → 2026-01-02; `DATE(2026,1,1) - 1` → 2025-12-31;
@@ -150,7 +151,7 @@ Date arithmetic (D-5, #83; comparison BL-059, #88): `DATE(2026,1,2) - DATE(2026,
 `DATE(2026,1,1) == DATE(2026,1,1)` → `true`; `DATE(2026,1,1) < DATE(2026,1,2)` → `true`;
 `DATE(2026,1,1) == 0` → `false`. Open (BL-070): `DATE(2026,1,1) + "1"` and `DATE(...) + NULL` are
 errors, where Excel returns a date. Excel date functions that still return `Unknown function`
-(checked): `WEEKDAY`, `EDATE`, `EOMONTH`, `DATEDIF`, `DATEVALUE`, `NETWORKDAYS`.
+(checked): `WEEKDAY`, `EDATE`, `EOMONTH`, `DATEVALUE`, `NETWORKDAYS`.
 
 ## Financial
 
@@ -218,7 +219,7 @@ result as the builtin of the same name. The pairs that differ:
 | B-12 | Low | `SORT([3,1,2], -1)` | `[3,2,1]` | fixed (#84) |
 | B-13 | Low | `ROUND(10::Currency, 1)`; `SUM(10::Currency, 5)` | `Currency(10)`; `Number(15)` | `ROUND` fixed (#84); `SUM` **open** (should stay `Currency`, ADR-0003) |
 | B-14 | Low | `(-3.7).int()` vs `INT(-3.7)` | `-3` vs `-4` | closed: deliberate (ADR-0018) |
-| B-15 | Low | `DATEADD(DATE(2026,1,1), 1, "m")` | +1 minute | **open**: document it or reject bare `"m"` |
+| B-15 | Low | `DATEADD(DATE(2026,1,1), 1, "m")` | +1 minute | fixed (2026-11-21): units follow Excel, `"m"` is months, `"n"` minutes; `DATEDIF` added |
 | B-16 | Low | `SUBSTITUTE("abc", "", "x")` | `"abc"` | fixed (#84) |
 | B-17 | Low | `COUNTIF([1,2,3], :x)` (lambda returns a non-boolean) | `Error: COUNTIF criteria expression must return TRUE or FALSE, got number` | fixed (#84) |
 | B-18 | Medium | `IF("x", 1, 2)`; `IFS(FALSE, 1)` | `#VALUE!` error; `#N/A` error | fixed (ADR-0029, BL-073); were `2` and `false` |

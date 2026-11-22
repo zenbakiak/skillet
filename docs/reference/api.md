@@ -694,19 +694,58 @@ MONTH(DATE(2023, 6, 15))     # 6
 DAY(DATE(2023, 6, 15))       # 15
 ```
 
+#### Date units (B-15)
+Unit codes follow Excel and ignore case. `DATEADD` and `DATEDIFF` take the codes of VBA's
+`DateAdd` and `DateDiff`, the closest Excel functions; `DATEDIF` takes the codes of Excel's
+worksheet `DATEDIF`. `"m"` is **months** everywhere; minutes are `"n"`.
+
+| Unit | `DATEADD` / `DATEDIFF` (VBA) | Long word (Skillet) | `DATEDIF` (worksheet) |
+|---|---|---|---|
+| years | `"yyyy"` | `"years"`, `"year"` | `"y"` |
+| quarters | `"q"` | | |
+| months | `"m"` | `"months"`, `"month"` | `"m"` |
+| days | `"d"`, `"y"` (day of year), `"w"` (weekday: adds days; `DATEDIFF` counts whole weeks) | `"days"`, `"day"` | `"d"` |
+| weeks | `"ww"` (`DATEDIFF` counts Sundays) | `"weeks"`, `"week"` (whole weeks) | |
+| hours, minutes, seconds | `"h"`, `"n"`, `"s"` | `"hours"`, `"minutes"`, `"seconds"` (and singular) | |
+| ignoring larger units | | | `"md"`, `"ym"`, `"yd"` |
+
+An unknown unit is an error: `#VALUE!` in `DATEADD` and `DATEDIFF` (VBA rejects it), `#NUM!` in
+`DATEDIF` (as Excel).
+
 #### `DATEADD(date, amount, unit)`
-Add time to date.
+Add `amount` units to a date, like VBA `DateAdd`. `amount` is truncated. Months, quarters and
+years keep the day, clamped to the end of a shorter month. A result out of range is `#NUM!`.
 ```bash
-DATEADD(NOW(), 30, "days")     # 30 days from now
-DATEADD(NOW(), 2, "months")    # 2 months from now
-DATEADD(NOW(), 1, "years")     # 1 year from now
+DATEADD(NOW(), 30, "days")              # 30 days from now
+DATEADD(DATE(2024, 1, 31), 1, "m")      # 2024-02-29 (months; clamped)
+DATEADD(DATE(2026, 1, 1), 90, "n")      # 2026-01-01 01:30 (minutes)
+DATEADD(DATE(2026, 1, 1), 1, "q")       # 2026-04-01
+DATEADD(NOW(), 1, "yyyy")               # 1 year from now
 ```
 
-#### `DATEDIFF(date1, date2, [unit])`
-Difference between dates.
+#### `DATEDIFF(date1, date2, unit)`
+`date2 - date1` in VBA `DateDiff` units. `"yyyy"`, `"q"` and `"m"` count calendar boundaries, as
+in VBA (`DATEDIFF(DATE(2025, 12, 31), DATE(2026, 1, 1), "yyyy")` is `1`), and `"ww"` counts the
+Sundays after `date1` up to `date2`. The other units count whole elapsed units (VBA counts day,
+hour, minute and second boundaries; for dates at midnight the result is the same).
 ```bash
-DATEDIFF(NOW(), DATEADD(NOW(), 7, "days"), "days")  # 7
+DATEDIFF(NOW(), DATEADD(NOW(), 7, "days"), "days")          # 7
+DATEDIFF(DATE(2026, 1, 31), DATE(2026, 2, 1), "m")          # 1
 ```
+
+#### `DATEDIF(start_date, end_date, unit)`
+Excel's `DATEDIF`: the number of **complete** units from `start_date` to `end_date`. Times are
+ignored. `start_date` after `end_date` is `#NUM!`.
+```bash
+DATEDIF(DATE(2001, 1, 1), DATE(2003, 1, 1), "Y")     # 2
+DATEDIF(DATE(2001, 6, 1), DATE(2002, 8, 15), "D")    # 440
+DATEDIF(DATE(2001, 6, 1), DATE(2002, 8, 15), "YD")   # 75 (days, ignoring years)
+DATEDIF(DATE(2001, 6, 1), DATE(2002, 8, 15), "YM")   # 2 (months, ignoring years)
+DATEDIF(DATE(2001, 6, 1), DATE(2002, 8, 15), "MD")   # 14 (days, ignoring months and years)
+DATEDIF(DATE(2026, 1, 31), DATE(2026, 2, 1), "m")    # 0 (DATEDIFF gives 1)
+```
+Like Excel, `"md"` is `end_date - DATE(YEAR(end_date), MONTH(end_date) - 1, DAY(start_date))`,
+which can be negative: `DATEDIF(DATE(2011, 1, 31), DATE(2011, 3, 1), "md")` is `-2`.
 
 ### Array Functions
 

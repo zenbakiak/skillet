@@ -179,8 +179,9 @@ pub(crate) static BUILTINS: &[Builtin] = &[
     f("YEAR", DateTime, 1, n(1), "datetime", "Year (UTC).", "YEAR(DATE(2024, 3, 9))"),
     f("MONTH", DateTime, 1, n(1), "datetime", "Month 1-12 (UTC).", "MONTH(DATE(2024, 3, 9))"),
     f("DAY", DateTime, 1, n(1), "datetime", "Day of the month (UTC).", "DAY(DATE(2024, 3, 9))"),
-    f("DATEADD", DateTime, 3, n(3), "datetime, amount, unit", "Add `amount` units: days, hours, minutes, seconds, weeks, months, years (or d, h, m, s, w, y).", "DATEADD(DATE(2024, 1, 31), 1, 'days')"),
-    f("DATEDIFF", DateTime, 3, n(3), "date1, date2, unit", "`date2 - date1` in the given unit (same units as `DATEADD`).", "DATEDIFF(DATE(2024, 1, 1), DATE(2024, 3, 1), 'days')"),
+    f("DATEADD", DateTime, 3, n(3), "datetime, amount, unit", "Add `amount` units. Units are VBA `DateAdd` codes, any case: yyyy, q, m (months), y or d (days), w (days), ww (weeks), h, n (minutes), s; or years, months, weeks, days, hours, minutes, seconds. Months clamp to the month end.", "DATEADD(DATE(2024, 1, 31), 1, 'm')"),
+    f("DATEDIFF", DateTime, 3, n(3), "date1, date2, unit", "`date2 - date1` in VBA `DateDiff` units (the `DATEADD` units): yyyy, q, m and ww count calendar boundaries, the others whole elapsed units.", "DATEDIFF(DATE(2024, 1, 1), DATE(2024, 3, 1), 'days')"),
+    f("DATEDIF", DateTime, 3, n(3), "start_date, end_date, unit", "Excel `DATEDIF`: complete units between the dates, unit y, m, d, md, ym or yd (any case); `#NUM!` when start_date > end_date.", "DATEDIF(DATE(2001, 6, 1), DATE(2002, 8, 15), 'yd')"),
     // Financial
     f("PMT", Financial, 3, n(5), "rate, nper, pv, [fv], [type]", "Payment per period of a loan (Excel `PMT`).", "PMT(0.05 / 12, 360, 200000)"),
     f("DB", Financial, 4, n(5), "cost, salvage, life, period, [month]", "Fixed-declining-balance depreciation for a period (Excel `DB`: rate rounded to 3 decimals; period `life + 1` when `month` < 12).", "DB(1000000, 100000, 6, 7, 7)"),

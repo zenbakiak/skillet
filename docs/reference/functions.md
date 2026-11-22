@@ -99,8 +99,9 @@ Methods (`:arr.sum()`), operators and the rest of the language: [api.md](api.md)
 | `YEAR` | `YEAR(datetime)` | 1 | Year (UTC). | `YEAR(DATE(2024, 3, 9))` | `2024` |
 | `MONTH` | `MONTH(datetime)` | 1 | Month 1-12 (UTC). | `MONTH(DATE(2024, 3, 9))` | `3` |
 | `DAY` | `DAY(datetime)` | 1 | Day of the month (UTC). | `DAY(DATE(2024, 3, 9))` | `9` |
-| `DATEADD` | `DATEADD(datetime, amount, unit)` | 3 | Add `amount` units: days, hours, minutes, seconds, weeks, months, years (or d, h, m, s, w, y). | `DATEADD(DATE(2024, 1, 31), 1, 'days')` | `2024-02-01T00:00:00Z` |
-| `DATEDIFF` | `DATEDIFF(date1, date2, unit)` | 3 | `date2 - date1` in the given unit (same units as `DATEADD`). | `DATEDIFF(DATE(2024, 1, 1), DATE(2024, 3, 1), 'days')` | `60` |
+| `DATEADD` | `DATEADD(datetime, amount, unit)` | 3 | Add `amount` units. Units are VBA `DateAdd` codes, any case: yyyy, q, m (months), y or d (days), w (days), ww (weeks), h, n (minutes), s; or years, months, weeks, days, hours, minutes, seconds. Months clamp to the month end. | `DATEADD(DATE(2024, 1, 31), 1, 'm')` | `2024-02-29T00:00:00Z` |
+| `DATEDIFF` | `DATEDIFF(date1, date2, unit)` | 3 | `date2 - date1` in VBA `DateDiff` units (the `DATEADD` units): yyyy, q, m and ww count calendar boundaries, the others whole elapsed units. | `DATEDIFF(DATE(2024, 1, 1), DATE(2024, 3, 1), 'days')` | `60` |
+| `DATEDIF` | `DATEDIF(start_date, end_date, unit)` | 3 | Excel `DATEDIF`: complete units between the dates, unit y, m, d, md, ym or yd (any case); `#NUM!` when start_date > end_date. | `DATEDIF(DATE(2001, 6, 1), DATE(2002, 8, 15), 'yd')` | `75` |
 
 ## Financial
 
