@@ -158,3 +158,66 @@ fn len_and_find_on_a_date_stay_errors() {
     );
     assert_eq!(eval("LEN(DATE(2026,1,1)::String)"), Value::Number(20.0));
 }
+
+// ---- A5. SUMIF / AVERAGEIF keep Currency -----------------------------------------------------
+
+#[test]
+fn sumif_returns_currency_when_a_summed_value_is_currency() {
+    let c = Value::Currency;
+    assert_eq!(eval("SUMIF([1,2::Currency,3], \">1\")"), c(5.0));
+    assert_eq!(eval("SUMIF([1::Currency,2::Currency], \">0\")"), c(3.0));
+    assert_eq!(
+        eval("SUMIF([1,2,3], \">1\", [10, 20::Currency, 30])"),
+        c(50.0)
+    );
+    assert_eq!(eval("SUMIF([1, 2], :x > 1, [10, 20::Currency])"), c(20.0));
+    assert_eq!(eval("SUMIF([1::Currency, \"a\", 2], \">0\")"), c(3.0));
+}
+
+#[test]
+fn sumif_stays_a_number_when_no_summed_value_is_currency() {
+    let n = Value::Number;
+    // The Currency is not matched.
+    assert_eq!(eval("SUMIF([1::Currency,2,3], \">1\")"), n(5.0));
+    assert_eq!(eval("SUMIF([1,2,3], \">1\")"), n(5.0));
+    // 10 is not summed.
+    assert_eq!(
+        eval("SUMIF([1,2,3], \">1\", [10::Currency, 20, 30])"),
+        n(50.0)
+    );
+    // Currency only in the criteria range.
+    assert_eq!(
+        eval("SUMIF([1::Currency,2,3], \">0\", [10, 20, 30])"),
+        n(60.0)
+    );
+    assert_eq!(eval("SUMIF([1::Currency], \">5\")"), n(0.0));
+    assert_eq!(eval("SUMIF([], \">0\")"), n(0.0));
+}
+
+#[test]
+fn averageif_follows_the_same_rule() {
+    let (c, n) = (Value::Currency, Value::Number);
+    assert_eq!(eval("AVERAGEIF([1,2::Currency,3], \">1\")"), c(2.5));
+    assert_eq!(eval("AVERAGEIF([1::Currency,2::Currency], \">0\")"), c(1.5));
+    assert_eq!(eval("AVERAGEIF([1::Currency,2,3], \">1\")"), n(2.5));
+    assert_eq!(
+        eval("AVERAGEIF([1,2,3], \">1\", [10::Currency, 20, 30])"),
+        n(25.0)
+    );
+    assert_eq!(
+        eval("AVERAGEIF([1,2,3], \">1\", [10, 20::Currency, 30])"),
+        c(25.0)
+    );
+    assert_eq!(
+        err("AVERAGEIF([1,2,3], \">5\", [1::Currency,2,3])").message,
+        "AVERAGEIF: no matching numbers (#DIV/0!)"
+    );
+}
+
+#[test]
+fn countif_is_always_a_number() {
+    assert_eq!(
+        eval("COUNTIF([1::Currency,2::Currency], \">1\")"),
+        Value::Number(1.0)
+    );
+}
