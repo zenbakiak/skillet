@@ -1,0 +1,80 @@
+name: Fuzz
+
+# Scheduled fuzzing of the parser and evaluator (BL-019, ADR-0028).
+# Not a required check: it never runs on push or pull_request.
+on:
+  schedule:
+    - cron: "17 3 * * 1" # Mondays 03:17 UTC
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: "Minutes per target"
+        required: false
+        default: "10"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuzz-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # cargo-fuzz needs nightly (sanitizer flags). Pinned so a nightly regression cannot turn the
+  # job red on its own; bump it on purpose.
+  FUZZ_TOOLCHAIN: "nightly-2025-08-04"
+  CARGO_FUZZ_VERSION: "0.13.2"
+
+jobs:
+  fuzz:
+    name: fuzz ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    # Build plus the fuzz time; keep `minutes` below ~75.
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [parse, evaluate, json_vars]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust ${{ env.FUZZ_TOOLCHAIN }}
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.FUZZ_TOOLCHAIN }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz
+          key: fuzz
+
+      - name: Install cargo-fuzz
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz@${{ env.CARGO_FUZZ_VERSION }}
+
+      # cargo-fuzz has no --locked; this fails if fuzz/Cargo.lock is missing or out of date.
+      - name: Fetch dependencies (locked)
+        run: cargo +${{ env.FUZZ_TOOLCHAIN }} fetch --locked --manifest-path fuzz/Cargo.toml
+
+      - name: Build
+        run: cargo +${{ env.FUZZ_TOOLCHAIN }} fuzz build -a ${{ matrix.target }}
+
+      - name: Fuzz for ${{ inputs.minutes || '10' }} minutes
+        env:
+          MINUTES: ${{ inputs.minutes || '10' }}
+        run: |
+          mkdir -p fuzz/corpus/${{ matrix.target }}
+          cargo +${{ env.FUZZ_TOOLCHAIN }} fuzz run -a ${{ matrix.target }} \
+            fuzz/corpus/${{ matrix.target }} fuzz/seeds/${{ matrix.target }} -- \
+            -max_total_time=$((MINUTES * 60)) -timeout=10 -max_len=4096 -rss_limit_mb=2048
+
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-artifacts-${{ matrix.target }}
+          path: fuzz/artifacts/${{ matrix.target }}/
+          if-no-files-found: ignore
+          retention-days: 30
