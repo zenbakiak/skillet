@@ -10,7 +10,7 @@ use std::time::Instant;
 use super::auth::check_authentication;
 use super::cache::{clear_cache, evaluate_cached, get_cache_stats};
 use super::eval_limits::server_limits;
-use super::json_keys::sanitize_json_key;
+use super::json_keys::{check_json_keys, sanitize_json_key};
 use super::parse_cache;
 use super::response_size;
 use super::stats::ServerStats;
@@ -224,6 +224,16 @@ fn process_eval_request(
     // Convert JSON variables to Skillet values with key sanitization
     let vars = match req.arguments {
         Some(json_vars) => {
+            if let Err(e) = check_json_keys(json_vars.keys().map(String::as_str)) {
+                return EvalResponse {
+                    success: false,
+                    result: None,
+                    variables: None,
+                    error: Some(e),
+                    execution_time_ms: start_time.elapsed().as_secs_f64() * 1000.0,
+                    request_id,
+                };
+            }
             // Pre-allocate HashMap with known size + 1 for "arguments"
             let mut result = HashMap::with_capacity(json_vars.len() + 1);
 

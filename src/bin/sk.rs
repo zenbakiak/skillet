@@ -111,6 +111,10 @@ fn main() {
             };
             let vars = match json_value {
                 serde_json::Value::Object(map) => {
+                    if let Err(e) = json_keys::check_json_keys(map.keys().map(String::as_str)) {
+                        eprintln!("Error: {}", e);
+                        std::process::exit(1);
+                    }
                     let mut result = HashMap::new();
                     for (key, value) in map {
                         let skillet_value = match skillet::json_to_value(value) {

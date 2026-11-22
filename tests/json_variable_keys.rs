@@ -1,7 +1,8 @@
 //! BL-077 (threat model 2.2): variables built from JSON keys, in the library `*_json*` entry
 //! points and `sk --json` (both its plain and its `:=`/`;` path). The whole object is the
 //! reserved `:arguments`; a key named `arguments` does not replace it and is read as
-//! `:arguments.arguments`.
+//! `:arguments.arguments`. Two keys that sanitize to the same variable (`a-b`, `a_b`) are an
+//! error instead of one silently replacing the other.
 
 use skillet::{evaluate_with_json, evaluate_with_json_custom, Value};
 use std::process::Command;
@@ -62,4 +63,42 @@ fn sk_json_keeps_the_reserved_arguments_variable() {
     // With `:=`, sk builds the variables itself.
     let (out, err, code) = sk_json("=:v := :arguments.arguments.a; :v + :x", WITH_ARGUMENTS_KEY);
     assert_eq!((out.as_str(), code), ("Number(3.0)", 0), "{err}");
+}
+
+const KEY_COLLISION: &str = r#"JSON keys "a-b" and "a_b" both map to variable :a_b"#;
+
+#[test]
+fn library_rejects_keys_that_map_to_the_same_variable() {
+    for eval in [evaluate_with_json, evaluate_with_json_custom] {
+        let err = eval(":a_b", r#"{"a_b": 1, "a-b": 2}"#).unwrap_err();
+        assert_eq!(err.message, KEY_COLLISION);
+        assert_eq!(err.position, None);
+        let err = eval("1", r#"{"x.y": 1, "x y": 2}"#).unwrap_err();
+        assert_eq!(
+            err.message,
+            r#"JSON keys "x y" and "x.y" both map to variable :x_y"#
+        );
+    }
+}
+
+#[test]
+fn library_keys_that_stay_distinct_after_sanitizing_still_work() {
+    let json = r#"{"first-name": "Ada", "last_name": "L", "arguments": 1}"#;
+    assert_eq!(
+        evaluate_with_json(":first_name & :last_name", json).unwrap(),
+        Value::String("AdaL".into())
+    );
+}
+
+#[test]
+fn sk_json_rejects_keys_that_map_to_the_same_variable() {
+    let json = r#"{"a_b": 1, "a-b": 2}"#;
+    // Library path: an evaluation error, exit code 2.
+    let (out, err, code) = sk_json("=:a_b", json);
+    assert_eq!((out.as_str(), code), ("", 2), "{err}");
+    assert_eq!(err, format!("Error: {KEY_COLLISION}"));
+    // `:=` path: rejected while building the variables, exit code 1 (like invalid JSON there).
+    let (out, err, code) = sk_json("=:v := :a_b; :v", json);
+    assert_eq!((out.as_str(), code), ("", 1), "{err}");
+    assert_eq!(err, format!("Error: {KEY_COLLISION}"));
 }

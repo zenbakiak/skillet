@@ -83,6 +83,7 @@ fn json_vars_to_map(json_vars: &str) -> Result<HashMap<String, Value>, Error> {
         ));
     };
 
+    json_keys::check_json_keys(map.keys().map(String::as_str)).map_err(|e| Error::new(e, None))?;
     let mut vars = HashMap::with_capacity(map.len() + 1);
     for (key, value) in map {
         vars.insert(json_keys::sanitize_json_key(&key), json_to_value(value)?);
@@ -183,7 +184,8 @@ pub fn evaluate_with(input: &str, vars: &HashMap<String, Value>) -> Result<Value
 /// than letters, digits and `_` in a key are replaced by `_`, so `"first-name"` is read as
 /// `:first_name`. The whole JSON text is also available as `:arguments`, for `JQ`. That name is
 /// reserved: a key named `arguments` does not replace it, and its value is read as
-/// `:arguments.arguments`.
+/// `:arguments.arguments`. Two keys that give the same variable (`"a-b"` and `"a_b"`) are an
+/// error.
 ///
 /// The input must be a JSON object; anything else is an error.
 ///
@@ -202,6 +204,10 @@ pub fn evaluate_with(input: &str, vars: &HashMap<String, Value>) -> Result<Value
 /// assert_eq!(
 ///     evaluate_with_json(":arguments.arguments", r#"{"arguments": 5}"#).unwrap(),
 ///     Value::Number(5.0)
+/// );
+/// assert_eq!(
+///     evaluate_with_json("1", r#"{"a-b": 1, "a_b": 2}"#).unwrap_err().message,
+///     r#"JSON keys "a-b" and "a_b" both map to variable :a_b"#
 /// );
 /// assert_eq!(
 ///     evaluate_with_json("1", "[1, 2]").unwrap_err().message,

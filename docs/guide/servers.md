@@ -308,8 +308,17 @@ POST /eval {"expression": "=:arguments.arguments", "arguments": {"x": 1, "argume
 200 {"success":true,"result":{"a":2},…}
 ```
 
-`sk_server` does not build `:arguments`; there a variable named `arguments` is an ordinary
-variable.
+A key becomes a variable by replacing each character other than a letter, a digit or `_` with
+`_` (`first-name` is `:first_name`). Two keys that give the same variable are rejected like an
+invalid variable, with HTTP 400:
+
+```console
+POST /eval {"expression": "=:a_b", "arguments": {"a-b": 1, "a_b": 2}}
+400 {"success":false,"result":null,"error":"JSON keys \"a-b\" and \"a_b\" both map to variable :a_b",…}
+```
+
+`sk_server` does not build `:arguments` and uses keys as written; there a variable named
+`arguments` is an ordinary variable, and `a-b` and `a_b` are two variables.
 
 ### JavaScript hook files (`sk_http_server`)
 
