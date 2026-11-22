@@ -1,5 +1,6 @@
-//! Variable names from JSON keys, shared by the library's `*_json*` entry points, `sk --json`
-//! and `sk_http_server` (the binaries include this file with `#[path]`, so it is not public API).
+//! Variable names from JSON keys, shared by the library's `*_json*` entry points, `sk --json`,
+//! `sk_http_server` and `sk_server` (the binaries include this file with `#[path]`, so it is not
+//! public API).
 //!
 //! A key becomes a variable by replacing every character other than a letter, a digit or `_`
 //! with `_`. Two different keys that give the same name (`a-b` and `a_b`) are an error instead

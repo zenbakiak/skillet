@@ -57,6 +57,13 @@ The server accepts JSON requests over TCP, one request per line:
 }
 ```
 
+Each key of `variables` becomes a variable, with the same rule as `sk --json` and
+`sk_http_server`: characters other than letters, digits and `_` become `_`, so
+`{"first-name": "Ada"}` is read as `:first_name`. Two keys that give the same variable are an
+error, answered like any failed request (`"success": false`), for example
+`"error": "JSON keys \"a-b\" and \"a_b\" both map to variable :a_b"`; rename one key.
+`sk_server` builds no `:arguments`: a key named `arguments` is an ordinary variable.
+
 ### Response Format
 
 ```json

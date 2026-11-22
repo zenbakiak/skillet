@@ -2,8 +2,8 @@
 //! `:arguments` for `JQ`. A variable named `arguments` must not replace it; its value stays
 //! reachable inside the object. `sk_server` builds no `:arguments`, so there the key is an
 //! ordinary variable. Two keys that sanitize to the same variable (`a-b`, `a_b`) are rejected
-//! by `sk_http_server` like an invalid variable; `sk_server` does not sanitize keys, so there
-//! they stay two variables. Servers run on 127.0.0.1 with one worker.
+//! by `sk_http_server` and `sk_server` like an invalid variable (`sk_server` since BL-096).
+//! Servers run on 127.0.0.1 with one worker.
 
 mod common;
 
@@ -170,12 +170,28 @@ fn http_keys_that_stay_distinct_after_sanitizing_still_work() {
     assert_eq!(r["result"], "Ada21", "{r}");
 }
 
-/// `sk_server` uses keys as written, so `a-b` and `a_b` are two variables.
+/// BL-096: `sk_server` sanitizes keys like the other surfaces, so `first-name` is `:first_name`.
 #[test]
-fn sk_server_does_not_sanitize_keys_so_they_do_not_collide() {
+fn sk_server_sanitizes_keys() {
+    let server = sk_server();
+    let body = serde_json::json!({
+        "expression": "=:first_name & :last_name",
+        "variables": { "first-name": "Ada", "last_name": "L" }
+    });
+    let r = sk_server_eval(&server, body);
+    assert_eq!(r["success"], true, "{r}");
+    assert_eq!(r["result"], "AdaL", "{r}");
+}
+
+/// BL-096: colliding keys get the same error as the other surfaces, in the response shape of a
+/// variable that fails to convert.
+#[test]
+fn sk_server_rejects_keys_that_map_to_the_same_variable() {
     let server = sk_server();
     let body = serde_json::json!({ "expression": "=:a_b", "variables": { "a-b": 1, "a_b": 2 } });
     let r = sk_server_eval(&server, body);
-    assert_eq!(r["success"], true, "{r}");
-    assert_eq!(r["result"].as_f64(), Some(2.0), "{r}");
+    assert_eq!(r["success"], false, "{r}");
+    assert_eq!(r["result"], serde_json::Value::Null, "{r}");
+    assert_eq!(r["error"], KEY_COLLISION, "{r}");
+    assert!(r["request_id"].is_u64(), "{r}");
 }
