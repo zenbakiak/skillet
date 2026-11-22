@@ -1,10 +1,12 @@
 use skillet::js_plugin::JavaScriptFunction;
 use skillet::{CustomFunction, JSPluginLoader, Value};
+use std::collections::HashSet;
 use std::fs;
 use std::net::TcpStream;
 use std::sync::Arc;
 
 use super::auth::check_admin_authentication;
+use super::cache::clear_cache;
 use super::multipart::{
     extract_boundary_from_content_type, is_multipart_request, parse_multipart_data,
 };
@@ -334,9 +336,8 @@ pub fn handle_reload_hooks(
     }
 
     let hooks_dir = std::env::var("SKILLET_HOOKS_DIR").unwrap_or_else(|_| "hooks".to_string());
-    let js_loader = JSPluginLoader::new(hooks_dir);
 
-    match js_loader.auto_register() {
+    match reload_hooks(hooks_dir) {
         Ok(count) => {
             let response = ReloadHooksResponse {
                 success: true,
@@ -358,6 +359,27 @@ pub fn handle_reload_hooks(
             send_http_response(stream, 500, "application/json", &json);
         }
     }
+}
+
+/// Makes the registry match the hooks on disk (BL-077). Every custom function in this server
+/// comes from a hook, so a registered name that no longer loads from a file is removed. A
+/// directory that cannot be read changes nothing; new versions replace old ones before stale
+/// names go, so a hook still on disk is never missing. Cached results may name either, so the
+/// result cache is cleared.
+fn reload_hooks(hooks_dir: String) -> Result<usize, skillet::Error> {
+    let functions = JSPluginLoader::new(hooks_dir).load_functions()?;
+    let count = functions.len();
+    let loaded: HashSet<String> = functions.iter().map(|f| f.name().to_uppercase()).collect();
+    for function in functions {
+        skillet::register_function(function)?;
+    }
+    for name in skillet::list_custom_functions() {
+        if !loaded.contains(&name) {
+            skillet::unregister_function(&name);
+        }
+    }
+    clear_cache();
+    Ok(count)
 }
 
 /// Parse and test a hook. The error is `(message, error)` for the 400 response.
