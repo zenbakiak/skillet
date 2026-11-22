@@ -32,7 +32,7 @@ left-associative.
 Like Excel, the arithmetic operators and the scalar math builtins now convert numeric text and
 booleans to numbers, and the operators read `NULL` as `0`. Text that is not a number is a
 `#VALUE!` error. Scientific notation is a number literal. Aggregates over arrays (`SUM`,
-`AVERAGE`, …) still skip text, and `DateTime` arithmetic is unchanged.
+`AVERAGE`, …) still skip text. Date and currency operands follow ADR-0027 (below).
 
 | Expression | 0.6 | 0.7 |
 |---|---|---|
@@ -47,7 +47,7 @@ booleans to numbers, and the operators read `NULL` as `0`. Text that is not a nu
 | `ABS("x")` | `0` | `Error: ABS: cannot convert "x" to a number (#VALUE!)` |
 | `PMT("0.05", 10, 1000)`, `DATE("2026", 1, 1)` | `Error` | the same as with numbers |
 | `SUM([1, "2", TRUE])` | `1` | unchanged |
-| `ABS(NULL)`, `DATE(2026, 1, NULL)`, `DATE(2026, 1, 1) + NULL` | `Error` | unchanged |
+| `ABS(NULL)`, `DATE(2026, 1, NULL)` | `Error` | unchanged |
 
 Use `&` to join text: `"a" & "b"` is `"ab"`.
 
@@ -103,7 +103,25 @@ The methods keep Ruby semantics and do not change: `"  a   b  ".trim()` is still
 | `DATE(26, 1, 1)` | year 26 | 1926-01-01 (years 0–1899 get 1900 added) |
 | `DATE(2026, 1, 1) + 1` | `Error` | 2026-01-02 (numbers count days) |
 | `DATE(2026, 1, 2) - DATE(2026, 1, 1)` | `Error` | `1` |
+| `DATE(2026, 1, 1) + NULL` (ADR-0027) | `Error` | 2026-01-01 (`NULL` is 0 days) |
+| `DATE(2026, 1, 1) + "1"`, `"1" + DATE(2026, 1, 1)`, `DATE(2026, 1, 1) + TRUE` | `Error` | 2026-01-02 |
+| `DATE(2026, 1, 1) + "x"` | `Error: Arithmetic op on non-number` | `Error: Cannot convert "x" to a number (#VALUE!)` |
 | `"2026-02-30"::DateTime` | `Error` | `Error` (casts never roll over) |
+
+### Currency in arithmetic (ADR-0027)
+Currency now works in the arithmetic operators instead of failing. The other operand converts as
+for a number (numeric text, booleans, `NULL` as 0). Results are not rounded (Currency is an
+`f64`, ADR-0003); use `ROUND(x, 2)`.
+
+| Expression | 0.6 | 0.7 |
+|---|---|---|
+| `1::Currency + 1`, `3 * 10::Currency`, `10::Currency / 4` | `Error` | `Currency(2)`, `Currency(30)`, `Currency(2.5)` |
+| `10::Currency / 4::Currency` | `Error` | `2.5` (Number, a ratio) |
+| `2::Currency ^ 2`, `7::Currency % 4` | `Error` | `4`, `3` (Number) |
+| `-(5::Currency)`, `+(5::Currency)` | `Error` | `Currency(-5)`, `Currency(5)` |
+| `10::Currency + "2"`, `10::Currency + NULL` | `Error` | `Currency(12)`, `Currency(10)` |
+| `1::Currency / 0` | `Error` | `Error: Division by zero (#DIV/0!)` |
+| `DATE(2026, 1, 1) + 1::Currency`, `1 == 1::Currency` | `Error`, `false` | unchanged |
 
 ### New names (additive)
 These used to fail with `Unknown function` or a parse error: `STDEV.P`, `STDEV.S`, `STDEV`,

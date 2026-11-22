@@ -112,6 +112,11 @@ impl<'a> Parser<'a> {
             max_depth = max_depth.max(d);
         }
 
+        // Everything must be consumed: `1 2` is an error, not `1` (BL-069).
+        if !matches!(self.lookahead, Token::Eof) {
+            return self.err_here("Unexpected token after end of expression");
+        }
+
         // If only one expression, return it directly; otherwise wrap in sequence
         if exprs.len() == 1 {
             exprs
@@ -750,6 +755,10 @@ fn binary_op(tok: &Token) -> Option<(Option<BinaryOp>, u8)> {
     let (op, prec) = match tok {
         Token::Or | Token::OrOr => (BinaryOp::Or, 1),
         Token::And | Token::AndAnd => (BinaryOp::And, 2),
+        // The lexer reads `AND`/`OR` as names; after an operand they are the operators, before
+        // one they stay the `AND(...)`/`OR(...)` builtins.
+        Token::Identifier(name) if name.eq_ignore_ascii_case("OR") => (BinaryOp::Or, 1),
+        Token::Identifier(name) if name.eq_ignore_ascii_case("AND") => (BinaryOp::And, 2),
         Token::EqEq => (BinaryOp::Eq, 3),
         Token::NotEq => (BinaryOp::Ne, 3),
         Token::Greater => (BinaryOp::Gt, 4),

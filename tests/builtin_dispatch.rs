@@ -312,7 +312,8 @@ const CASES: &[(&str, &str)] = &[
     ("DATEADD(DATE(2024, 1, 31), 1, 'months')", "Ok(DateTime(1709078400))"),
     ("DATEDIFF(DATE(2024, 1, 1), DATE(2024, 3, 1), 'days')", "Ok(Number(60.0))"),
     ("PMT(0.05 / 12, 360, 200000)", "Ok(Number(-1073.6432460242797))"),
-    ("DB(10000, 1000, 5, 2)", "Ok(Number(2328.5017392669597))"),
+    // BL-072: Excel rounds the rate to 3 decimals (B-8); was "Ok(Number(2328.5017392669597))".
+    ("DB(10000, 1000, 5, 2)", "Ok(Number(2328.39))"),
     ("FV(0.05, 10, -100)", "Ok(Number(1257.789253554884))"),
     // BL-054: Excel sign convention (Microsoft example: -66.67), was "Ok(Number(66.66666666666667))".
     ("IPMT(0.1 / 12, 1, 36, 8000)", "Ok(Number(-66.66666666666667))"),
@@ -346,7 +347,8 @@ const CASES: &[(&str, &str)] = &[
     ("BETWEEN(1, 'b', 5)", "Err(Error { message: \"BETWEEN max must be a number\", position: None })"),
     ("BETWEEN(1, 10, 'c')", "Err(Error { message: \"BETWEEN value must be a number\", position: None })"),
     ("NOPE(1)", "Err(Error { message: \"Unknown function: NOPE\", position: None })"),
-    ("REVERSE('abc')", "Err(Error { message: \"REVERSE expects array\", position: None })"),
+    // BL-072: REVERSE reverses a string (B-11); was "Err(... \"REVERSE expects array\" ...)".
+    ("REVERSE('abc')", "Ok(String(\"cba\"))"),
     // BL-054: COUNT is variadic (Excel); was "COUNT expects 1 argument: array".
     ("COUNT()", "Err(Error { message: \"COUNT expects at least 1 argument\", position: None })"),
     ("IN([1])", "Err(Error { message: \"IN expects 2 arguments: array, value\", position: None })"),

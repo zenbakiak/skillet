@@ -1,248 +1,262 @@
 # Excel compatibility audit (BL-020)
 
-- Status: research, decided. The maintainer decided D-1…D-10 on 2026-11-21 in
-  [ADR-0018](../adr/0018-excel-compatibility.md): Excel is the contract for UPPERCASE builtins and
-  operators. The Skillet column below still shows the audited v0.6.3 output; the fixes ship in 0.7.0.
-- Scope: every builtin registered in `src/runtime/function_dispatch.rs`, plus the functions the
-  evaluator handles itself (`FILTER`, `FIND`, `MAP`, `REDUCE`, `SUMIF`, `AVGIF`, `COUNTIF`, `JQ`).
-- Skillet column: real output of the release build (`./target/release/sk "<expr>"`, v0.6.3,
-  `develop` at `d3e6a5d`). Output is shown the way `sk` prints it, shortened (`3` means `Number(3.0)`).
+- Status: decided and implemented. The audit (v0.6.3) listed ten decisions, D-1 to D-10. The
+  maintainer decided all of them on 2026-11-21 in [ADR-0018](../adr/0018-excel-compatibility.md),
+  amended by [ADR-0023](../adr/0023-excel-equality-and-coercion.md): UPPERCASE builtins and
+  operators follow Excel, except for the deliberate differences listed below. They are
+  implemented in PRs #82, #83, #84, #88 and #89 and ship in 0.7.0. Each row names its PR.
+  Two decided items are not implemented yet (B-18). The old v0.6.3 results are in the
+  [0.7 migration guide](../guide/migration-0.7.md).
+- Scope: every builtin in `src/runtime/builtin_table.rs`, including the functions the evaluator
+  handles itself (`IF`, `IFS`, `FILTER`, `FIND`, `MAP`, `REDUCE`, `SUMIF`, `AVERAGEIF`,
+  `COUNTIF`, `JQ`).
+- Skillet column: real output of `cargo run -q --bin sk -- '=…'` on `develop` at `824df14`
+  (2026-11-21). Output is shortened (`3` means `Number(3.0)`).
 - Excel column: Excel's documented behavior for the function (Microsoft 365). Values marked
   **verify in Excel** come from the documented rule, but nobody has checked the exact number
   in a workbook yet.
 - Match values: **yes**; **edges** (same result for valid, ordinary inputs; differs only on
   empty, text, wrong-type or out-of-range inputs); **differs** (different result for ordinary
   inputs, or the signature is different); **Skillet-only** (no Excel function by that name).
-
-QA can turn each table row into a characterization test (pins current behavior) or an
-acceptance test (pins the proposed behavior once a fix is accepted).
+  The deliberate cross-cutting differences X-3, X-7 and X-9 are explained once below and are not
+  counted again in each row.
+- Status values: **implemented (#n)**: decided and in the code; **deliberate**: differs from
+  Excel on purpose, with the reason; **open**: still differs, and under ADR-0018 a difference that
+  is not deliberate is a bug.
 
 ## Summary
 
 | | Count | Functions |
 |---|---|---|
-| yes | 2 | `ISNUMBER`, `ISTEXT` |
-| edges | 32 | most aggregates, math, text slicing, `PMT`, `FV`, statistics |
-| differs | 22 | `ROUND`, `CEILING`, `FLOOR`, `MOD`, `IF`, `XOR`, `TRIM`, `SUBSTITUTE`, `ISBLANK`, `COUNT`, `COUNTIF`, `UNIQUE`, `SORT`, `FILTER`, `MAP`, `REDUCE`, `FIND`, `DATE`, `NOW`, `TIME`, `IPMT`, `DB` |
-| Skillet-only | 24 (+8 alias spellings) | `AVG`, `CEIL`, `POW`, `MULTIPLY`, `BETWEEN`, `LENGTH`, `SUBSTRING`, `SPLIT`, `SUBSTITUTEM`, `INCLUDES`, `ARRAY`, `FLATTEN`, `FIRST`, `LAST`, `CONTAINS`, `IN`, `JOIN`, `MERGE`, `REVERSE`, `AVGIF`, `DIG`, `JQ`, `DATEADD`, `DATEDIFF`; spellings `MODESNGL`, `MODE_SNGL`, `STDEV_P`, `VAR_P`, `PERCENTILEINC`, `PERCENTILE_INC`, `QUARTILEINC`, `QUARTILE_INC` |
+| yes | 41 | `SUM`, `AVERAGE`, `MIN`, `MAX`, `ROUND`, `CEILING`, `FLOOR`, `ABS`, `SQRT`, `POWER`, `MOD`, `INT`, `UPPER`, `LOWER`, `TRIM`, `SUBSTITUTE`, `ISNUMBER`, `ISTEXT`, `LEN`, `TEXTJOIN`, `COUNT`, `COUNTA`, `COUNTIF`, `SUMIF`, `AVERAGEIF`, `FIND`, `DATE`, `TIME`, `PMT`, `IPMT`, `PPMT`, `PV`, `NPV`, `MEDIAN`, `MODE.SNGL`, `STDEV.P`, `STDEV.S`, `VAR.P`, `VAR.S`, `PERCENTILE.INC`, `QUARTILE.INC` |
+| edges | 15 | `PRODUCT`, `IF`, `IFS`, `AND`, `OR`, `NOT`, `CONCAT`, `LEFT`, `RIGHT`, `MID`, `REPLACE`, `YEAR`, `MONTH`, `DAY`, `FV` |
+| differs | 10 | `XOR`, `ISBLANK`, `UNIQUE`, `SORT`, `FILTER`, `MAP`, `REDUCE`, `TODAY`, `NOW`, `DB` |
+| Skillet-only | 23 (+8 alias spellings) | `AVG`, `CEIL`, `POW`, `MULTIPLY`, `BETWEEN`, `LENGTH`, `SUBSTRING`, `SPLIT`, `SUBSTITUTEM`, `INCLUDES`, `ARRAY`, `FLATTEN`, `FIRST`, `LAST`, `CONTAINS`, `IN`, `JOIN`, `MERGE`, `REVERSE`, `DIG`, `JQ`, `DATEADD`, `DATEDIFF`; spellings `MODESNGL`, `MODE_SNGL`, `STDEV_P`, `VAR_P`, `PERCENTILEINC`, `PERCENTILE_INC`, `QUARTILEINC`, `QUARTILE_INC` |
 
-56 functions share a name with Excel. 2 match fully, 32 match on valid inputs, and 22 give a
-different result for ordinary inputs. `STDEVP` and `VARP` are Excel's legacy names, so they
-count with `STDEV.P` and `VAR.P`.
+66 functions share a name with Excel (56 in the v0.6.3 audit, plus the 10 added under D-9 and
+D-3). 41 match, 15 match on valid inputs, and 10 give a different result for ordinary inputs;
+6 of those 10 are deliberate. Legacy and alias names count with their function: `STDEVP`,
+`STDEV` and `VARP`, `VAR` with `STDEV.P`/`STDEV.S` and `VAR.P`/`VAR.S`; `MODE`, `PERCENTILE`,
+`QUARTILE` with the `.SNGL`/`.INC` names; `AVGIF` with `AVERAGEIF`. In v0.6.3 the counts were
+2 yes, 32 edges and 22 differs.
 
 ## Cross-cutting differences
 
 These patterns repeat across many rows. They are listed once here, and the tables refer to them by ID.
 
-| ID | Pattern | Skillet | Excel | Recommendation |
+| ID | Pattern | Skillet | Excel | Status |
 |---|---|---|---|---|
-| X-1 | **Errors become numbers** | Wrong-type arguments to the math functions are treated as `0` (`ABS("x")` → `0`, `SQRT("x")` → `0`, `FLOOR("3.7")` → `0`). Impossible math returns IEEE values: `SQRT(-1)` → `NaN`, `10 / 0` → `inf`, `0 / 0` → `NaN`, `MOD(5, 0)` → `NaN`, `POWER(0, -1)` → `inf` | `#VALUE!`, `#NUM!`, `#DIV/0!` | **fix** (ADR). Return `Error` (`"division by zero"`, `"SQRT of negative number"`). This follows the design rule "errors over silent coercion". `NaN` and `inf` also fail to serialize as JSON numbers on the servers |
-| X-2 | **Empty input becomes 0** | `AVERAGE()`, `MEDIAN()`, `STDEV_P()`, `VAR_P()`, `MODE_SNGL()`, `PERCENTILE_INC([], 0.5)`, `QUARTILE_INC([], 1)`, `AVGIF([1,2], :x > 5)` → `0` | `#DIV/0!` (AVERAGE, STDEV.P, VAR.P, AVERAGEIF), `#NUM!` (MEDIAN, PERCENTILE.INC, QUARTILE.INC), `#N/A` (MODE.SNGL) | **fix** (ADR). Return `Error`, or `Null` under ADR-0006 null rules. "Average of nothing is 0" silently corrupts business rules |
-| X-3 | **Direct text and boolean arguments** | Aggregates ignore them anywhere: `SUM(1, "2", TRUE)` → `1`, `MAX(-1, "5")` → `-1` | Values inside a range or array are ignored, which matches Skillet. Values typed directly as arguments are converted: `SUM(1,"2",TRUE)` = 4, `MAX(-1,"5")` = 5 (**verify in Excel**) | **document**. Skillet has no cell ranges, so treating every argument like a range is a reasonable and simpler rule |
-| X-4 | **Dotted Excel names do not parse** | `STDEV.P(1,2)` → `Error: Unexpected identifier (expected function call) at position 5`. The same happens for `VAR.P`, `MODE.SNGL`, `PERCENTILE.INC`, `QUARTILE.INC` (and `STDEV.S`, `VAR.S` if added). Dispatch registers the dotted names, but the lexer does not allow `.` in identifiers (`src/lexer.rs:164`) | `STDEV.P(...)` | **fix**. The lexer should accept `IDENT(.IDENT)*` when it is upper case and directly followed by `(`. Lower-case `.method` chains are not affected. Until then, document `STDEV_P` or the legacy `STDEVP` |
-| X-5 | **Arguments that are silently ignored** | `CEILING(n, sig)`, `FLOOR(n, sig)`, `SUBSTITUTE(..., instance_num)`, `SORT(arr, -1)`, `ROUND(n, "x")`, `PMT(..., fv="x")` accept the extra argument and do nothing with it | The argument is honored, or `#VALUE!` | **fix**: honor it, or return an error. Never ignore it |
-| X-6 | **Operators** | `2 ^ 3 ^ 2` → `512` (right-associative). `-2 ^ 2` → `-4`. `%` is modulo (`-10 % 3` → `-1`). `&` is a parse error. `"a" == "A"` → `false` | `=2^3^2` = 64 (left-associative). `=-2^2` = 4 (negation binds before `^`). `%` is the percent suffix (`10%` = 0.1). `&` joins text. Text comparison ignores case | **document**. PRD-001 FR-1 says "Excel precedence", which is not true for `^` and unary minus. Changing this is a breaking change to the grammar. Recommendation: keep the math convention and correct FR-1. **Decided otherwise** (D-10): Excel precedence |
-| X-7 | **Number to text** | `CONCAT(0.1 + 0.2)` → `"0.30000000000000004"` (Rust's shortest round-trip format) | Uses 15 significant digits, so `"0.3"` | **document**. Point users to `ROUND` first |
-| X-8 | **No lazy evaluation** | `IF(TRUE, 1, UPPER(1))` → `Error: UPPER expects string`. `IF(FALSE, FIRST([]), 0)` → error. The ternary `c ? a : b` is lazy: `ISBLANK(NULL) ? "" : UPPER(NULL)` → `""` | `IF` evaluates only the branch it picks, so `=IF(A1=0, 0, 1/A1)` is the standard guard | **fix**. Evaluate `IF` and `IFS` lazily, like `SUMIF` and `FILTER` already are in `evaluator.rs`. Results only change where an error used to be returned, so this is low risk |
+| X-1 | **Error cases and numeric text** | Impossible math is an error: `10 / 0` and `0 / 0` → `Error: Division by zero (#DIV/0!)`, `SQRT(-1)` → `Error: SQRT of a negative number (#NUM!)`, `MOD(5, 0)` → `Error: MOD divisor is 0 (#DIV/0!)`, `POWER(0, -1)` → `#DIV/0!` error, `1e308*10` → `Error: Result is not a finite number (#NUM!)`. Numeric text and booleans convert in the operators and the scalar math builtins: `ABS("-3")` → `3`, `"3" + 1` → `4`, `TRUE + 1` → `2`, `FLOOR("3.7")` → `3`. Other text is an error: `ABS("x")` → `Error: ABS: cannot convert "x" to a number (#VALUE!)`, `"abc" + 1` → `Error: Cannot convert "abc" to a number (#VALUE!)`. `NULL` is `0` in the operators (`1 + NULL` → `1`) | `#DIV/0!`, `#NUM!`, `#VALUE!`; numeric text and logical values convert in arithmetic; a blank cell is 0 | yes. **Implemented**: errors D-1 (ADR-0018, #84); coercion ADR-0023 §6 (#89). Open: `DB(0,0,5,1)` still returns `NaN` (B-8) |
+| X-2 | **Empty input** | `AVERAGE()` → `Error: AVERAGE of no numbers (#DIV/0!)`; `MEDIAN()`, `PERCENTILE_INC([], 0.5)`, `QUARTILE_INC([], 1)` → `#NUM!` errors; `STDEV_P()`, `VAR_P()`, `AVERAGEIF([1,2], ">5")` → `#DIV/0!` errors; `MODE_SNGL()` → `Error: MODE.SNGL: no value repeats (#N/A)`. `SUM()` → `0`, `MAX()` → `0`, `COUNT([])` → `0` | Same errors; `SUM`, `MAX` and `COUNT` of nothing are 0 | yes. **Implemented** D-1 (#84) |
+| X-3 | **Direct text and boolean arguments to aggregates** | Aggregates skip them anywhere: `SUM(1, "2", TRUE)` → `1`, `MAX(-1, "5")` → `-1`, `AVERAGE(1, "2")` → `1`, `COUNT(1, "2")` → `1` | Values inside a range or array are skipped (matches). Values typed directly as arguments convert: `SUM(1,"2",TRUE)` = 4, `MAX(-1,"5")` = 5 (**verify in Excel**) | **deliberate** (ADR-0018 "Deliberate differences", kept by ADR-0023 §6). Skillet has no cell ranges, so every argument is treated like a range value. Scalar math builtins do convert (X-1), so `ABS("2")` → `2` but `SUM("2")` → `0` |
+| X-4 | **Dotted Excel names** | `STDEV.P(1, 2)` → `0.5`. `VAR.P`, `VAR.S`, `STDEV.S`, `MODE.SNGL`, `PERCENTILE.INC`, `QUARTILE.INC` parse too; the underscore and legacy spellings stay | `STDEV.P(...)` | yes. **Implemented** D-4 (#82) |
+| X-5 | **Arguments that were silently ignored** | Honored: `CEILING(2.1, 0.5)` → `2.5`, `SUBSTITUTE("a-b-c","-","+",2)` → `"a-b+c"`, `SORT([3,1,2], -1)` → `[3,2,1]`. Errors: `ROUND(2.567, "x")` → `Error: ROUND num_digits: cannot convert "x" to a number (#VALUE!)`, `PMT(0.05,10,1000,"x")` → `Error: PMT fv: cannot convert "x" to a number (#VALUE!)` | Honored, or `#VALUE!` | yes. **Implemented** D-1 (#84) |
+| X-6 | **Operators** | `2 ^ 3 ^ 2` → `64`; `-2 ^ 2` → `4`; `2*-3^2` → `18`; `0-2^2` → `-4`. `50%` → `0.5`; `10%-3` and `10 % -3` → `-2.9` (percent before `+`/`-`). `%` followed directly by an operand is modulo: `10 % 3` → `1`, `-10 % 3` → `-1`. `"a" & 1` → `"a1"`. `"a" == "A"` → `false`. `1 == "1"` and `TRUE == 1` → `false`. `"10" < "9"` → `true`; `1 < "2"` → `Error: Comparison of incompatible types` | `=2^3^2` = 64, `=-2^2` = 4. `%` is only the percent suffix. `&` joins text. `=` ignores case for text, and does not convert (`=1="1"` is FALSE). Mixed types order numbers < text < logical | **Implemented**: Excel precedence D-10 and `&` (#82); `%` suffix (#82) and `%` before `+`/`-` (ADR-0023 §7, #89). **Deliberate**: `==` stays case-sensitive (ADR-0023 §1; use `LOWER(:a) == LOWER(:b)`), text orders by code point and mixed-type ordering is an error so a mistake is reported (ADR-0023 §4), and `%` with an operand after it stays a truncated remainder because changing it would break every existing `%` (ADR-0018). `MOD` is Excel's |
+| X-7 | **Number to text** | `CONCAT(0.1 + 0.2)` and `0.1 + 0.2 & ""` → `"0.30000000000000004"` (Rust's shortest round-trip format) | 15 significant digits, so `"0.3"` | **deliberate** (ADR-0018). Use `ROUND` first |
+| X-8 | **Lazy `IF`** | `IF(TRUE, 1, UPPER(1))` → `1`; `IF(FALSE, FIRST([]), 0)` → `0`; `IFS` stops at the first true condition | Only the chosen branch is evaluated | yes. **Implemented** D-8 (#82). Open: the text-condition and no-match errors of D-8 (B-18) |
+| X-9 | **Strict argument types where Excel converts** | Builtins refuse `NULL`: `ABS(NULL)` → `Error: ABS expects number, got null`, `ROUND(NULL)`, `SQRT(NULL)` likewise. Text builtins refuse numbers: `UPPER(1)` → `Error: UPPER expects string`, `LEFT(12345, 2)`, `TRIM(1)`, `SUBSTITUTE(123, "2", "x")` → errors. `LEN`, `CONCAT`, `TEXTJOIN` and `&` do convert numbers and booleans to text | A blank cell is 0 or `""`; numbers convert to text | **deliberate**. ADR-0023 §6 narrowed "errors over silent coercion" (ADR-0018) to this: text and booleans convert to numbers in arithmetic and scalar math, `NULL` is 0 in the operators only, and other conversions stay errors so a type mistake is reported instead of guessed |
 
 ## Arithmetic
 
-| Function | Skillet (expr → output) | Excel | Match? | Recommendation |
+| Function | Skillet (expr → output) | Excel | Match? | Status |
 |---|---|---|---|---|
-| `SUM` | `SUM(1,2,3)` → `6`; `SUM([1,2],3)` → `6`; `SUM()` → `0`; `SUM([1,"2",TRUE,NULL])` → `1`; `SUM(10::Currency, 5)` → `Number(15)` | `SUM(number1, ...)`. Text and logical values in arrays are ignored. Direct arguments are converted (X-3) | edges | keep and document X-3. The result loses the `Currency` type (B-13) |
-| `AVERAGE` (`AVG`) | `AVERAGE(1,2,3,4)` → `2.5`; `AVERAGE()` → `0`; `AVERAGE([1,"x",TRUE])` → `1`; `AVERAGE([1,NULL,3])` → `2` | No numbers → `#DIV/0!` | edges | fix X-2 |
-| `MIN` / `MAX` | `MIN(3,1,2)` → `1`; `MIN()` → `0`; `MIN(["a"])` → `0`; `MAX(-1,"5")` → `-1`. Method `[].max()` → `Null`; `["a",1].max()` → error | "If the arguments contain no numbers, MAX returns 0." Direct text is converted | edges | keep the function. The method differs from the function (see the parity table) |
-| `ROUND` | `ROUND(2.5)` → `3`; `ROUND(-2.5)` → `-3`; `ROUND(2.345,2)` → `2.35`; `ROUND(1.005,2)` → `1.0`; **`ROUND(1234.567,-2)` → `1235`**; **`ROUND(15,-1)` → `15`**; `ROUND(2.567,"x")` → `3`; `ROUND()` → `0`; `ROUND("2.5")` → error; `ROUND(10::Currency,1)` → `Error: ROUND expects number` | `ROUND(number, num_digits)`. Both arguments are required. Halves round away from zero. Negative `num_digits` rounds to the left of the decimal point: `ROUND(1234.567,-2)` = 1200, `ROUND(15,-1)` = 20. `ROUND(1.005,2)` = 1.01 (**verify in Excel**: Excel corrects binary representation error, Skillet's `(n*100).round()/100` does not) | differs | **fix**: negative digits (B-4), Currency input, and an error for non-numeric digits. Consider decimal-correct rounding (round half away from zero on the shortest decimal form) so `1.005` → `1.01`. Halves away from zero already match |
-| `CEILING` (`CEIL`) | `CEILING(2.1)` → `3`; **`CEILING(2.1,0.5)` → `3`**; **`CEILING(7,5)` → `7`**; `CEILING(-2.5)` → `-2`; `CEILING(-2.5,-2)` → `-2` | `CEILING(number, significance)`. Both are required. `CEILING(2.1,0.5)` = 2.5, `CEILING(7,5)` = 10, `CEILING(-2.5,-2)` = -4 | differs | **fix** B-5: honor `significance`, with default 1 so the 1-argument form keeps working. `CEIL` stays as a Skillet alias |
-| `FLOOR` | `FLOOR(2.9)` → `2`; **`FLOOR(7,5)` → `7`**; `FLOOR(-2.5)` → `-3`; `FLOOR("3.7")` → `0` | `FLOOR(number, significance)`: `FLOOR(7,5)` = 5 | differs | **fix** B-5, X-1 |
-| `ABS` | `ABS(-3)` → `3`; `ABS("x")` → `0`; `ABS()` → `0` | `#VALUE!` for text. 1 argument required | edges | fix X-1 |
-| `SQRT` | `SQRT(16)` → `4`; `SQRT(-1)` → `NaN`; `SQRT("x")` → `0` | Negative → `#NUM!` | edges | fix X-1 |
-| `POWER` (`POW`) | `POWER(2,10)` → `1024`; `POWER(0,0)` → `1`; `POWER(-8,1/3)` → `NaN`; `POWER(0,-1)` → `inf`; `POWER(2)` → `1` | `POWER(0,0)` → `#NUM!`; `POWER(-8,1/3)` → `#NUM!`; `POWER(0,-1)` → `#DIV/0!`. 2 arguments required | edges | fix X-1. Keep `0^0 = 1` only if documented as a deliberate difference (IEEE, Rust, JS and Python all give 1) |
-| `MOD` | `MOD(10,3)` → `1`; **`MOD(-10,3)` → `-1`**; **`MOD(10,-3)` → `1`**; `MOD(5,0)` → `NaN`; `MOD(5.5,2)` → `1.5`; `MOD(10)` → `0` | `MOD(n, d) = n - d*INT(n/d)`, so the result has the divisor's sign: `MOD(-10,3)` = 2, `MOD(10,-3)` = -2. `MOD(5,0)` → `#DIV/0!` | differs | **fix** (ADR; changes the result for negative inputs). Use `rem_euclid`-style floored modulo for `MOD`. The `%` operator can stay a truncated remainder and be documented (X-6) |
-| `INT` | `INT(3.7)` → `3`; `INT(-3.7)` → `-4`; `INT("x")` → `0`. Method `(-3.7).int()` → `-3` | Rounds down to the nearest integer: `INT(-3.7)` = -4 | edges | keep the function. **Fix the method** so it floors, or rename it `trunc` (B-14). `docs/reference/api.md` claims `INT(-3.9)` = -3, which is wrong |
-| `PRODUCT` (`MULTIPLY`) | `PRODUCT(2,3,4)` → `24`; `PRODUCT()` → `1`; `PRODUCT([2,"x",3])` → `6` | At least 1 argument required. A range with no numbers gives 0 (**verify in Excel**) | edges | document. `1` is the mathematically correct empty product |
+| `SUM` | `SUM(1,2,3)` → `6`; `SUM([1,2],3)` → `6`; `SUM()` → `0`; `SUM([1,"2",TRUE,NULL])` → `1`; `SUM(10::Currency, 5)` → `Number(15)` | `SUM(number1, ...)`. Text and logical values in arrays are ignored | yes | X-3 deliberate. Open: the result loses the `Currency` type (B-13) |
+| `AVERAGE` (`AVG`) | `AVERAGE(1,2,3,4)` → `2.5`; `AVERAGE()` → `Error: AVERAGE of no numbers (#DIV/0!)`; `AVERAGE([1,"x",TRUE])` → `1`; `AVERAGE([1,NULL,3])` → `2` | No numbers → `#DIV/0!` | yes | implemented (#84) |
+| `MIN` / `MAX` | `MIN(3,1,2)` → `1`; `MIN()` → `0`; `MIN(["a"])` → `0`; `MAX(-1,"5")` → `-1`. Method `[].max()` → `Null`; `["a",1].max()` → error | "If the arguments contain no numbers, MAX returns 0" | yes | X-3 deliberate. The method keeps its own rule (ADR-0018: methods are not bound to the builtin) |
+| `ROUND` | `ROUND(2.5)` → `3`; `ROUND(-2.5)` → `-3`; `ROUND(2.345,2)` → `2.35`; `ROUND(1.005,2)` → `1.01`; `ROUND(1234.567,-2)` → `1200`; `ROUND(15,-1)` → `20`; `ROUND(2.567,"x")` → error (X-5); `ROUND()` → `Error: ROUND expects (number, [num_digits])`; `ROUND("2.5")` → `3`; `ROUND(10::Currency,1)` → `Currency(10)` | `ROUND(number, num_digits)`. Halves away from zero; negative digits round left of the point; `ROUND(1.005,2)` = 1.01 | yes | implemented (#84, "Also decided"; `"2.5"` converts since #89). Leaving out `num_digits` (default 0) is a Skillet extension |
+| `CEILING` (`CEIL`) | `CEILING(2.1)` → `3`; `CEILING(2.1,0.5)` → `2.5`; `CEILING(7,5)` → `10`; `CEILING(-2.5)` → `-2`; `CEILING(-2.5,-2)` → `-4`; `CEILING(2.5,-1)` → `Error: CEILING: a positive number needs a positive significance (#NUM!)` | `CEILING(2.1,0.5)` = 2.5, `CEILING(7,5)` = 10, `CEILING(-2.5,-2)` = -4 | yes | implemented (#84). `CEIL` is an alias; significance defaults to 1 |
+| `FLOOR` | `FLOOR(2.9)` → `2`; `FLOOR(7,5)` → `5`; `FLOOR(-2.5)` → `-3`; `FLOOR("3.7")` → `3` | `FLOOR(7,5)` = 5 | yes | implemented (#84; text since #89) |
+| `ABS` | `ABS(-3)` → `3`; `ABS("-3")` → `3`; `ABS(" 4 ")` → `4`; `ABS(TRUE)` → `1`; `ABS("x")` → `Error: ABS: cannot convert "x" to a number (#VALUE!)`; `ABS()` → `Error: ABS expects (number)` | Numeric text converts; other text → `#VALUE!`. 1 argument required | yes | implemented (#84 errors, ADR-0023 §6 coercion #89). `ABS(NULL)` is an error (X-9, deliberate) |
+| `SQRT` | `SQRT(16)` → `4`; `SQRT(-1)` → `Error: SQRT of a negative number (#NUM!)`; `SQRT("x")` → `#VALUE!` error | Negative → `#NUM!` | yes | implemented (#84, #89) |
+| `POWER` (`POW`) | `POWER(2,10)` → `1024`; `POWER(0,0)` → `Error: POWER(0, 0) is undefined (#NUM!)`; `POWER(-8,1/3)` → `Error: POWER result is not a real number or is out of range (#NUM!)`; `POWER(0,-1)` → `Error: POWER: 0 to a negative power (#DIV/0!)`; `POWER(2)` → `Error: POWER expects (number, power)` | `POWER(0,0)` → `#NUM!`; `POWER(-8,1/3)` → `#NUM!`; `POWER(0,-1)` → `#DIV/0!`. 2 arguments required | yes | implemented (#84). The operator matches: `0^0` → `#NUM!` error, `0^-1` → `Division by zero (#DIV/0!)` (BL-060 checks how `^-` parses) |
+| `MOD` | `MOD(10,3)` → `1`; `MOD(-10,3)` → `2`; `MOD(10,-3)` → `-2`; `MOD(5,0)` → `Error: MOD divisor is 0 (#DIV/0!)`; `MOD(5.5,2)` → `1.5`; `MOD(10)` → `Error: MOD expects (number, divisor)` | `MOD(n, d) = n - d*INT(n/d)`: the divisor's sign | yes | implemented D-7 (#84). The `%` operator stays a truncated remainder (X-6, deliberate) |
+| `INT` | `INT(3.7)` → `3`; `INT(-3.7)` → `-4`; `INT("x")` → `#VALUE!` error. Method `(-3.7).int()` → `-3` | Rounds down: `INT(-3.7)` = -4 | yes | implemented (#84). `.int()` truncates on purpose, like Ruby's `to_i` (ADR-0018) |
+| `PRODUCT` (`MULTIPLY`) | `PRODUCT(2,3,4)` → `24`; `PRODUCT()` → `1`; `PRODUCT([2,"x",3])` → `6` | At least 1 argument required. A range with no numbers gives 0 (**verify in Excel**) | edges | open, low: `1` is the mathematically correct empty product; confirm Excel's value before changing it |
 
 ## Logical
 
-| Function | Skillet (expr → output) | Excel | Match? | Recommendation |
+| Function | Skillet (expr → output) | Excel | Match? | Status |
 |---|---|---|---|---|
-| `IF` | `IF(TRUE,1,2)` → `1`; `IF(FALSE,1)` → `false`; `IF(1,"a","b")` → `"a"`; `IF("x","a","b")` → `"b"`; `IF(NULL,"a","b")` → `"b"`; `IF(TRUE,1,UPPER(1))` → error | `IF(test, [value_if_true], [value_if_false])`. A missing false branch returns FALSE (matches). Text in `test` → `#VALUE!`. Only the chosen branch is evaluated | differs | **fix** X-8 (lazy). A text condition should return an error, not `false` |
-| `IFS` | `IFS(FALSE,1,TRUE,2)` → `2`; `IFS(FALSE,1)` → `false`; `IFS(TRUE)` → error | No true condition → `#N/A` | edges | fix: no match → `Error("IFS: no condition was true")`. Evaluate lazily (X-8) |
-| `AND` | `AND(TRUE,1,0)` → `false`; `AND()` → `true`; `AND(TRUE,"x")` → `false`; `AND(FALSE, UPPER(1))` → error | 1 to 255 arguments. Text typed as an argument → `#VALUE!` (**verify in Excel**). Excel also evaluates all arguments | edges | fix: text argument → error; `AND()` → error |
-| `OR` | `OR(FALSE,0)` → `false`; `OR()` → `false`; `OR(FALSE,"TRUE")` → `false` | Same rules as `AND` | edges | same as `AND` |
-| `NOT` | `NOT(0)` → `true`; `NOT("x")` → `true`; `NOT()` → `true` | Text → `#VALUE!`. 1 argument required | edges | fix: error for text and for no argument |
-| `XOR` | `XOR(TRUE,FALSE)` → `true`; `XOR(TRUE,TRUE,TRUE)` → `Error: XOR expects 2 arguments` | `XOR(logical1, [logical2], ...)`, 1 to 254 arguments. TRUE when an odd number of arguments are TRUE, so `XOR(TRUE,TRUE,TRUE)` = TRUE | differs | **fix**: accept 1..n arguments with the odd-count rule. Fully backward compatible |
-| `BETWEEN` | `BETWEEN(1,10,5)` → `Error: Unknown function: BETWEEN` | No Excel function | Skillet-only | **bug** B-10: implemented in `logical.rs` and documented, but not registered in dispatch |
+| `IF` | `IF(TRUE,1,2)` → `1`; `IF(FALSE,1)` → `false`; `IF(1,"a","b")` → `"a"`; `IF("x","a","b")` → `"b"`; `IF(NULL,"a","b")` → `"b"`; `IF(TRUE,1,UPPER(1))` → `1` | A missing false branch returns FALSE (matches). Text in `test` → `#VALUE!`. Only the chosen branch is evaluated | edges | lazy: implemented D-8 (#82). **Open** (B-18): D-8 decided that a text condition is an error, but `IF("x", 1, 2)` → `2`, and `tests/lazy_if.rs` pins that result |
+| `IFS` | `IFS(FALSE,1,TRUE,2)` → `2`; `IFS(FALSE,1)` → `false`; `IFS(TRUE)` → `Error: IFS expects pairs of condition,value arguments` | No true condition → `#N/A` | edges | lazy: implemented D-8 (#82). **Open** (B-18): D-8 decided that no true condition is an error, but `IFS(FALSE, 1)` → `false` |
+| `AND` | `AND(TRUE,1,0)` → `false`; `AND()` → `true`; `AND(TRUE,"x")` → `false`; `AND(FALSE, UPPER(1))` → error | 1 to 255 arguments. Text typed as an argument → `#VALUE!` (**verify in Excel**). Excel also evaluates all arguments | edges | open: text argument and `AND()` should be errors (ADR-0018 D-1 rule); no backlog item yet |
+| `OR` | `OR(FALSE,0)` → `false`; `OR()` → `false`; `OR(FALSE,"TRUE")` → `false` | Same rules as `AND` | edges | open, same as `AND` |
+| `NOT` | `NOT(0)` → `true`; `NOT("x")` → `true`; `NOT()` → `true` | Text → `#VALUE!`. 1 argument required | edges | open: error for text and for no argument |
+| `XOR` | `XOR(TRUE,FALSE)` → `true`; `XOR(TRUE,TRUE,TRUE)` → `Error: XOR expects 2 arguments`; `XOR(TRUE)` → same error | 1 to 254 arguments; TRUE when an odd number are TRUE, so `XOR(TRUE,TRUE,TRUE)` = TRUE | differs | open: accept 1..n arguments with the odd-count rule (backward compatible) |
+| `BETWEEN` | `BETWEEN(1,10,5)` → `true` (`min, max, value`); `BETWEEN(5,1,10)` → `false` | No Excel function | Skillet-only | fixed (B-10, #68) |
 
 ## Text
 
-| Function | Skillet (expr → output) | Excel | Match? | Recommendation |
+| Function | Skillet (expr → output) | Excel | Match? | Status |
 |---|---|---|---|---|
-| `CONCAT` | `CONCAT("a",1,TRUE,NULL)` → `"a1TRUE"`; `CONCAT("a",[1,2])` → `"a12"`; `CONCAT(1.5,2)` → `"1.52"`; `CONCAT()` → `""` | Accepts ranges. Booleans become `TRUE`/`FALSE`. Numbers use 15 significant digits (X-7) | edges | keep. Document X-7. Currency and DateTime values are dropped silently, which should become an error or a defined format |
-| `UPPER` / `LOWER` | `UPPER("abc")` → `"ABC"`; `UPPER(1)` → `Error: UPPER expects string` | `UPPER(1)` = "1" (the number is converted) | edges | keep strict (no silent coercion). Document it |
-| `TRIM` | `TRIM("  a   b  ")` → `"a   b"`; `TRIM(1)` → error | Removes leading and trailing spaces **and collapses inner runs to one space**: "a b" | differs | **fix** (ADR; changes results for strings with inner space runs), or document it and add `CLEAN`/`.squish()`. Recommendation: match Excel, because the name promises it. The `.trim()` method keeps Ruby semantics |
-| `LEFT` / `RIGHT` | `LEFT("hello")` → `"h"`; `LEFT("hello",2)` → `"he"`; `LEFT("hello",0)` → `""`; `LEFT("hello",-1)` → `""`; `LEFT("hello",10)` → `"hello"`; `LEFT("hello",2.9)` → `"he"`; `LEFT(12345,2)` → error; `RIGHT("héllo",4)` → `"éllo"` | `num_chars` defaults to 1 and is truncated. Negative → `#VALUE!`. Numbers are converted to text | edges | fix: negative → error. Keep the number rejection strict and document it |
-| `MID` | `MID("hello",2,3)` → `"ell"`; `MID("hello",0,2)` → `"he"`; `MID("hello",10,2)` → `""`; `MID("hello",2)` → `"ello"`; `MID("hello",2,-1)` → `""` | `MID(text, start_num, num_chars)`: all 3 are required. `start_num` < 1 → `#VALUE!`. Negative `num_chars` → `#VALUE!`. A start past the end gives "" (matches) | edges | fix: errors for `start` < 1 and negative length. Keep the optional third argument as a documented extension |
-| `REPLACE` | `REPLACE("abcdef",2,3,"X")` → `"aXef"`; `REPLACE("abcdef",0,1,"X")` → `"Xbcdef"`; `REPLACE("abc",10,1,"X")` → `"abcX"`; `REPLACE("abc",1,-1,"X")` → `"Xabc"` | Same signature. `start_num` < 1 or negative `num_chars` → `#VALUE!`. A start past the end appends (matches) | edges | fix: errors instead of clamping |
-| `SUBSTITUTE` | `SUBSTITUTE("a-b-c","-","+")` → `"a+b+c"`; **`SUBSTITUTE("a-b-c","-","+",2)` → `"a+b+c"`**; `SUBSTITUTE("abc","","x")` → `"xaxbxcx"`; `SUBSTITUTE("Hello","hello","x")` → `"Hello"`; `SUBSTITUTE(123,"2","x")` → error | `SUBSTITUTE(text, old, new, [instance_num])`: `instance_num` replaces only that occurrence: `"a-b+c"`. Case-sensitive (matches). An empty `old` returns the text unchanged (**verify in Excel**) | differs | **fix** B-6 (`instance_num`) and B-16 (empty `old`). Fully backward compatible for 3-argument calls |
-| `ISBLANK` | `ISBLANK(NULL)` → `true`; `ISBLANK("")` → `true`; `ISBLANK("  ")` → `true`; `ISBLANK([])` → `true`; `ISBLANK(0)` → `false`; `ISBLANK()` → `true` | TRUE only for an empty cell. `ISBLANK("")` = FALSE | differs | **document**. Skillet's ISBLANK is "null or whitespace or empty". That is more useful for JSON input, and ADR-0006 relies on it. Document it as deliberate |
-| `ISNUMBER` | `ISNUMBER(1)` → `true`; `ISNUMBER("1")` → `false`; `ISNUMBER(TRUE)` → `false`; `ISNUMBER(1::Currency)` → `true` | Same | yes | keep |
-| `ISTEXT` | `ISTEXT("a")` → `true`; `ISTEXT(1)` → `false` | Same | yes | keep |
-| `LENGTH` | `LENGTH("héllo")` → `5`; `LENGTH([1,2])` → `2`; `LENGTH(NULL)` → `0`; `LENGTH(123)` → error; **`LEN("abc")` → `Unknown function: LEN`** | Excel's name is `LEN` | Skillet-only | **add `LEN` as an alias**. `docs/reference/api.md` already documents `LEN` |
+| `CONCAT` | `CONCAT("a",1,TRUE,NULL)` → `"a1TRUE"`; `CONCAT("a",[1,2])` → `"a12"`; `CONCAT(1.5,2)` → `"1.52"`; `CONCAT()` → `""`; `CONCAT("a", 1::Currency, DATE(2026,1,1))` → `"a"` | Accepts ranges. Booleans become `TRUE`/`FALSE`. Numbers use 15 significant digits (X-7) | edges | open: `Currency` and `DateTime` values are dropped silently; they should be an error or a defined format. X-7 deliberate |
+| `UPPER` / `LOWER` | `UPPER("abc")` → `"ABC"`; `UPPER(1)` → `Error: UPPER expects string` | `UPPER(1)` = "1" | yes | X-9 deliberate |
+| `TRIM` | `TRIM("  a   b  ")` → `"a b"`; `TRIM(1)` → `Error: TRIM expects string` | Removes leading and trailing spaces and collapses inner runs to one | yes | implemented D-7 (#84). `.trim()` keeps Ruby `strip`: `"  a   b  ".trim()` → `"a   b"`. `TRIM(1)` is X-9 |
+| `LEFT` / `RIGHT` | `LEFT("hello")` → `"h"`; `LEFT("hello",-1)` → `""`; `LEFT("hello",10)` → `"hello"`; `LEFT("hello",2.9)` → `"he"`; `LEFT(12345,2)` → `Error: LEFT expects string as first argument`; `RIGHT("héllo",4)` → `"éllo"` | `num_chars` defaults to 1 and is truncated. Negative → `#VALUE!` | edges | open: negative length should be an error. `LEFT(12345,2)` is X-9 |
+| `MID` | `MID("hello",2,3)` → `"ell"`; `MID("hello",0,2)` → `"he"`; `MID("hello",10,2)` → `""`; `MID("hello",2)` → `"ello"`; `MID("hello",2,-1)` → `""` | All 3 arguments required. `start_num` < 1 → `#VALUE!`. Negative `num_chars` → `#VALUE!`. A start past the end gives "" (matches) | edges | open: errors for `start` < 1 and negative length. The optional third argument stays an extension |
+| `REPLACE` | `REPLACE("abcdef",2,3,"X")` → `"aXef"`; `REPLACE("abcdef",0,1,"X")` → `"Xbcdef"`; `REPLACE("abc",10,1,"X")` → `"abcX"`; `REPLACE("abc",1,-1,"X")` → `"Xabc"` | `start_num` < 1 or negative `num_chars` → `#VALUE!`. A start past the end appends (matches) | edges | open: errors instead of clamping |
+| `SUBSTITUTE` | `SUBSTITUTE("a-b-c","-","+")` → `"a+b+c"`; `SUBSTITUTE("a-b-c","-","+",2)` → `"a-b+c"`; `SUBSTITUTE("abc","","x")` → `"abc"`; `SUBSTITUTE("Hello","hello","x")` → `"Hello"`; `SUBSTITUTE(123,"2","x")` → error | `instance_num` replaces only that occurrence. Case-sensitive. An empty `old` returns the text unchanged (**verify in Excel**) | yes | implemented B-6, B-16 (#84). `SUBSTITUTE(123, …)` is X-9 |
+| `ISBLANK` | `ISBLANK(NULL)` → `true`; `ISBLANK("")` → `true`; `ISBLANK("  ")` → `true`; `ISBLANK([])` → `true`; `ISBLANK(0)` → `false`; `ISBLANK()` → `true` | TRUE only for an empty cell. `ISBLANK("")` = FALSE | differs | **deliberate** (ADR-0018): "null or whitespace or empty" suits JSON input, and ADR-0006 relies on it |
+| `ISNUMBER` | `ISNUMBER(1)` → `true`; `ISNUMBER("1")` → `false`; `ISNUMBER(TRUE)` → `false`; `ISNUMBER(1::Currency)` → `true` | Same | yes | unchanged |
+| `ISTEXT` | `ISTEXT("a")` → `true`; `ISTEXT(1)` → `false` | Same | yes | unchanged |
+| `LEN` | `LEN("héllo")` → `5`; `LEN(123)` → `3`; `LEN(TRUE)` → `4`; `LEN(NULL)` → `0`; `LEN([1,2])` → `Error: LEN expects text` | Number of characters; numbers and logical values count as their text | yes | implemented D-9 (#83) |
+| `TEXTJOIN` | `TEXTJOIN("-", TRUE, "a", "", "b")` → `"a-b"`; `TEXTJOIN("-", FALSE, "a", "", "b")` → `"a--b"`; `TEXTJOIN(",", TRUE, [1,NULL,"a"])` → `"1,a"` | `TEXTJOIN(delimiter, ignore_empty, text1, ...)` | yes | implemented D-9 (#83). `JOIN` is unchanged |
+| `LENGTH` | `LENGTH("héllo")` → `5`; `LENGTH([1,2])` → `2`; `LENGTH(NULL)` → `0`; `LENGTH(123)` → `Error: LENGTH expects array or string` | Excel's name is `LEN` (above) | Skillet-only | keep |
 | `SUBSTRING` | `SUBSTRING("hello",1,3)` → `"ell"` (0-based) | No Excel function (use `MID`, 1-based) | Skillet-only | keep. In docs, prefer `MID` for Excel users |
-| `SPLIT`, `SUBSTITUTEM`, `INCLUDES` | `SPLIT("a, b,c")` → `["a","b","c"]` (default `,`, trimmed); `SPLIT("abc","")` → `["","a","b","c",""]`; `INCLUDES("hello","ell")` → `true` | Excel has `TEXTSPLIT`, and `ISNUMBER(SEARCH())` for contains | Skillet-only | keep. `SUBSTITUTEM` is an exact duplicate of `SUBSTITUTE`: deprecate it once `SUBSTITUTE` honors `instance_num` |
-| `REVERSE` | `REVERSE("abc")` → `Error: REVERSE expects array`; `REVERSE([1,2,3])` → `[3,2,1]` | No Excel function | Skillet-only | **bug** B-11: the string version in `string.rs` can never be reached |
+| `SPLIT`, `SUBSTITUTEM`, `INCLUDES` | `SPLIT("a, b,c")` → `["a","b","c"]` (default `,`, trimmed); `INCLUDES("hello","ell")` → `true`; `SUBSTITUTEM("a-b-c","-","+")` → `"a+b+c"` | Excel has `TEXTSPLIT`, and `ISNUMBER(SEARCH())` for contains | Skillet-only | keep. `SUBSTITUTEM` takes 3 arguments and duplicates `SUBSTITUTE`, which now honors `instance_num`: a deprecation candidate (no backlog item yet) |
+| `REVERSE` | `REVERSE("abc")` → `Error: REVERSE expects array`; `REVERSE([1,2,3])` → `[3,2,1]` | No Excel function | Skillet-only | open bug B-11: the string version in `string.rs` can never be reached |
 
-Missing Excel text functions that users will try: `LEN`, `FIND` (name taken, see below),
-`SEARCH`, `EXACT`, `TEXT`, `VALUE`, `REPT`, `PROPER`, `TEXTJOIN`. All return `Unknown function`.
+Excel text functions that still return `Unknown function` (checked): `SEARCH`, `EXACT`, `TEXT`,
+`VALUE`, `REPT`, `PROPER`.
 
 ## Arrays, counting and conditional aggregates
 
-| Function | Skillet (expr → output) | Excel | Match? | Recommendation |
+| Function | Skillet (expr → output) | Excel | Match? | Status |
 |---|---|---|---|---|
-| `COUNT` | **`COUNT([1,"a",TRUE,NULL])` → `4`**; **`COUNT(1,2,3)` → `Error: COUNT expects 1 argument: array`**; `COUNT(5)` → error; `COUNT([])` → `0` | `COUNT(value1, ...)` counts **numbers only**: `COUNT({1,"a",TRUE})` = 1, `COUNT(1,2,3)` = 3. `COUNTA` counts non-empty values | differs | **fix** (ADR, breaking). Make `COUNT` variadic and numbers-only, add `COUNTA` for "non-null values", and keep `.length()`/`.count()` for array length. `api.md` already documents the Excel behavior (`COUNT(1,"hello",3,4)` = 3), which is not what the code does |
-| `COUNTIF` | `COUNTIF([1,2,3,4], :x > 2)` → `2`; **`COUNTIF([1,2,3,4], ">2")` → `0`**; **`COUNTIF([1,2,3], 2)` → `0`**; `COUNTIF([1,2,3], :x)` → `0` | `COUNTIF(range, criteria)`. Criteria are like `">2"`, `2` or `"a*"`. Case-insensitive | differs | **bug** B-3: Excel-style criteria silently give 0. Reuse `SUMIF`'s criteria parser. A lambda that returns a non-boolean should be an error |
-| `SUMIF` | `SUMIF([1,2,3,4],">2")` → `7`; `SUMIF([1,2,3],">=2",[10,20,30])` → `50`; `SUMIF([1,2,3],2)` → `2`; `SUMIF([1,2,3],"<>2")` → `4`; `SUMIF(["A","b"],"a",[1,2])` → `0`; `SUMIF(["apple","avocado"],"a*",[1,2])` → `0`; `SUMIF([1,2,3],">=x")` → `0`; lambda `SUMIF([1,2,3], :x > 1)` → `5` | Same argument order. Text criteria are case-insensitive (`"a"` matches `"A"`) and support the wildcards `*`, `?` and `~` | edges | fix: case-insensitive text matching and wildcards (ADR, changes results). Unparseable numeric criteria such as `">=x"` should be an error |
-| `AVGIF` | `AVGIF([1,2,3,4], :x > 2)` → `3.5`; `AVGIF([1,2], :x > 5)` → `0`; `AVERAGEIF(...)` → `Unknown function` | Excel's name is `AVERAGEIF(range, criteria, [average_range])`. No match → `#DIV/0!` | Skillet-only | add an `AVERAGEIF` alias that takes the same criteria as `SUMIF`. Fix X-2 |
-| `UNIQUE` | **`UNIQUE(["a","a",1])` → `[1]`**; `UNIQUE([3,1,3,2])` → `[3,1,2]`; method `["a","a",1].unique()` → `["a",1]` | `UNIQUE(array, [by_col], [exactly_once])`. Keeps values of every type, in first-seen order | differs | **bug** B-7: the function drops every non-number. Use the method's implementation |
-| `SORT` | `SORT([3,1,2])` → `[1,2,3]`; `SORT([3,1,2],"DESC")` → `[3,2,1]`; **`SORT([3,1,2],-1)` → `[1,2,3]`**; `SORT(["b","a"])` → `Error: SORT expects numeric array` | `SORT(array, [sort_index], [sort_order], [by_col])`. `sort_order` -1 means descending. Sorts text | differs | **fix**: accept `-1`/`1` as the order (B-12) and sort strings. Keep `"DESC"` as a documented extension |
-| `FILTER` | `FILTER([1,2,3], :x > 1)` → `[2,3]` | `FILTER(array, include, [if_empty])`, where `include` is a boolean array. No match → `#CALC!` | differs | **document**: same intent, lambda form. Optional: an `if_empty` third argument (today the third argument renames the lambda variable) |
-| `MAP` | `MAP([1,2], :x * 2)` → `[2,4]` | `MAP(array, LAMBDA(x, ...))` | differs | document (implicit `:x` replaces `LAMBDA`) |
-| `REDUCE` | `REDUCE([1,2,3], :acc + :x, 0)` → `6` | **`REDUCE([initial_value], array, LAMBDA(acc, value))`**: the initial value comes first | differs | **document** prominently. Arguments in a different order under the same name catch Excel users out. Changing it would break every existing `REDUCE` |
-| `FIND` | `FIND([1,2,3], :x > 1)` → `2`; `FIND("b","abc")` → `Error: FIND first arg must be array` | `FIND(find_text, within_text, [start_num])` returns a 1-based position. A **text** function | differs | **decide** (D-6): the name collides. Options: dispatch on the first argument's type (string → Excel FIND), or keep the array FIND and add `SEARCH`/`FINDTEXT` |
-| `ARRAY`, `FLATTEN`, `FIRST`, `LAST`, `CONTAINS`, `IN`, `JOIN`, `MERGE` | `FIRST([])` → `Error: FIRST on empty array`; `JOIN([1,"a",TRUE],"-")` → `"1-a-TRUE"`; `JOIN([1,2])` → `"1,2"`; `MERGE([1],[2],3)` → `[1,2,3]` | `JOIN` is like Excel's `TEXTJOIN(delimiter, ignore_empty, ...)`, which puts the delimiter first | Skillet-only | keep. Consider a `TEXTJOIN` alias |
+| `COUNT` | `COUNT([1,"a",TRUE,NULL])` → `1`; `COUNT(1,2,3)` → `3`; `COUNT(5)` → `1`; `COUNT([])` → `0` | `COUNT(value1, ...)` counts numbers only | yes | implemented D-3 (#84). `.length()`/`.count()` keep returning the array length. X-3 deliberate |
+| `COUNTA` | `COUNTA([1,"a",TRUE,NULL])` → `3`; `COUNTA([1,"",NULL])` → `2` | Counts non-empty values (`""` counts) | yes | implemented D-3 (#84) |
+| `COUNTIF` | `COUNTIF([1,2,3,4], ">2")` → `2`; `COUNTIF([1,2,3], 2)` → `1`; `COUNTIF(["a","A","b"], "a")` → `2`; `COUNTIF(["apple","Avocado","pear"], "a*")` → `2`; `COUNTIF([1,2,3], :x)` → `Error: COUNTIF criteria expression must return TRUE or FALSE, got number` | Criteria like `">2"`, `2`, `"a*"`; case-insensitive | yes | implemented D-2, B-3, B-17 (#84). The lambda form (`:x > 2`) is a Skillet extension |
+| `SUMIF` | `SUMIF([1,2,3,4],">2")` → `7`; `SUMIF([1,2,3],">=2",[10,20,30])` → `50`; `SUMIF([1,2,3],2)` → `2`; `SUMIF([1,2,3],"<>2")` → `4`; `SUMIF(["A","b"],"a",[1,2])` → `1`; `SUMIF(["apple","avocado"],"a*",[1,2])` → `3`; `SUMIF([1,2,3],">=x")` → `0`; `SUMIF([1,2,3], :x > 1)` → `5` | Text criteria are case-insensitive with `*`, `?`, `~`. `">=x"` compares text cells only, so numbers never match (0) | yes | implemented D-7 (#84) |
+| `AVERAGEIF` (`AVGIF`) | `AVERAGEIF([1,2,3,4], ">2")` → `3.5`; `AVGIF([1,2,3,4], :x > 2)` → `3.5`; `AVERAGEIF([1,2], ">5")` → `Error: AVERAGEIF: no matching numbers (#DIV/0!)` | `AVERAGEIF(range, criteria, [average_range])`. No match → `#DIV/0!` | yes | implemented D-9 (#84). `AVGIF` is an alias |
+| `UNIQUE` | `UNIQUE(["a","a",1])` → `[1]`; `UNIQUE([3,1,3,2])` → `[3,1,2]`; method `["a","a",1].unique()` → `["a",1]` | Keeps values of every type, in first-seen order | differs | open bug B-7: the function drops every non-number |
+| `SORT` | `SORT([3,1,2])` → `[1,2,3]`; `SORT([3,1,2],"DESC")` → `[3,2,1]`; `SORT([3,1,2],-1)` → `[3,2,1]`; `SORT(["b","a"])` → `Error: SORT expects numeric array` | `SORT(array, [sort_index], [sort_order], [by_col])`. Sorts text | differs | `-1`/`1` implemented (B-12, #84). Open: sorting text. `"DESC"` stays an extension |
+| `FILTER` | `FILTER([1,2,3], :x > 1)` → `[2,3]` | `FILTER(array, include, [if_empty])`, `include` is a boolean array | differs | **deliberate** (ADR-0018): Skillet lambda syntax (ADR-0005). Same intent |
+| `MAP` | `MAP([1,2], :x * 2)` → `[2,4]` | `MAP(array, LAMBDA(x, ...))` | differs | **deliberate** (ADR-0018): implicit `:x` replaces `LAMBDA` |
+| `REDUCE` | `REDUCE([1,2,3], :acc + :x, 0)` → `6` | `REDUCE([initial_value], array, LAMBDA(acc, value))`: the initial value comes first | differs | **deliberate** (ADR-0018). Document it prominently: same name, different argument order. Changing it would break every `REDUCE` |
+| `FIND` | `FIND("b","abc")` → `2`; `FIND("B","abc")` → `Error: FIND: find_text not found in within_text`; `FIND("b","abcb",3)` → `4`; `FIND("b","abc",9)` → `Error: FIND start_num must be between 1 and the length of within_text`; `FIND([1,2,3], :x > 1)` → `2`; `FIND(1, 2)` → `Error: FIND first arg must be array` | `FIND(find_text, within_text, [start_num])`: 1-based, case-sensitive | yes | implemented D-6 (#83): dispatch on the first argument's type. The array form is a Skillet extension |
+| `ARRAY`, `FLATTEN`, `FIRST`, `LAST`, `CONTAINS`, `IN`, `JOIN`, `MERGE` | `FIRST([])` → `Error: FIRST on empty array`; `JOIN([1,"a",TRUE],"-")` → `"1-a-TRUE"`; `JOIN([1,2])` → `"1,2"`; `MERGE([1],[2],3)` → `[1,2,3]` | `JOIN` is like `TEXTJOIN`, which puts the delimiter first | Skillet-only | keep. `TEXTJOIN` now exists (above) |
 | `DIG`, `JQ` | `DIG({"a":{"b":1}}, ["a","b"])` → `1` | none | Skillet-only | keep |
 
 ## Date and time
 
 Skillet's `DateTime` is a count of Unix seconds (UTC). Excel stores dates as serial day numbers
-(1 = 1900-01-01) with the time as a fraction of a day. This difference explains most of the rows below.
+(1 = 1900-01-01) with the time as a fraction of a day. Since D-5, a `Number` next to a
+`DateTime` counts days, so most Excel date formulas work, but the two types stay distinct.
 
-| Function | Skillet (expr → output) | Excel | Match? | Recommendation |
+| Function | Skillet (expr → output) | Excel | Match? | Status |
 |---|---|---|---|---|
-| `DATE` | `DATE(2026,1,15)` → `DateTime(1768435200)`; **`DATE(2026,13,1)`, `DATE(2026,2,30)`, `DATE(2026,0,1)`, `DATE(2026,1,0)` → `Error: Invalid date`**; `DATE(2026.9,1.9,1.9)` → 2026-01-01; `DATE(26,1,1)` → year 26 AD; `DATE()` → today, midnight UTC | Out-of-range months and days **roll over**: `DATE(2026,13,1)` = 2027-01-01, `DATE(2026,2,30)` = 2026-03-02, `DATE(2026,1,0)` = 2025-12-31. Years 0–1899 get 1900 added (`DATE(26,1,1)` = 1926-01-01). Arguments are truncated (matches). 3 arguments are required | differs | **decide** D-5. Recommendation: support rollover (Excel users rely on `DATE(y, m+1, 0)` to get the end of a month). Keep strict years, because adding 1900 is a 1900s-era quirk; document it. `DATE()` is a Skillet extension; add `TODAY()` as the Excel name |
-| `NOW` | `NOW()` → `DateTime(1795229354)` (UTC, whole seconds) | Serial number with the time as a fraction, in local time | differs | document. The representation is deliberate (ADR-0004 territory) |
-| `TIME` | **`TIME(14,30,0)` → `Number(74954)`**, which is the current local seconds since midnight. The arguments are ignored | `TIME(hour, minute, second)` returns a fraction of a day: 0.6041666… | differs | **bug** B-1 (high). `api.md` documents `TIME(14,30,0)` = 52200. Fix: return `h*3600 + m*60 + s` seconds (the documented Skillet contract), with Excel-style rollover. Give the no-argument "current time" a separate name |
-| `YEAR` / `MONTH` / `DAY` | `YEAR(DATE(2026,3,4))` → `2026`; `MONTH(...)` → `3`; `DAY(...)` → `4`; `YEAR(46000)` → `Error: YEAR expects datetime`; `YEAR("2026-01-01")` → error | Also accept serial numbers and date text | edges | keep strict. Strings work after the cast proposal below (`YEAR("2026-01-01"::DateTime)`). All components are UTC; document that |
-| `DATEADD` | `DATEADD(DATE(2026,1,31),1,"months")` → 2026-02-28 (clamped); `DATEADD(DATE(2024,2,29),1,"years")` → 2025-02-28; `DATEADD(DATE(2026,1,1),1.9,"days")` → +1 day (truncated); **`DATEADD(..., 1, "m")` → +1 minute** | No Excel function. The closest are `EDATE` (clamps the same way) and `date + n` | Skillet-only | keep. **Document** that `"m"` means minutes (B-15), and consider rejecting bare `"m"` (in Excel's `DATEDIF`, `"m"` means months) |
-| `DATEDIFF` | `DATEDIFF(DATE(2026,1,1), DATE(2026,3,1), "days")` → `59`; `DATEDIFF(DATE(2026,1,31), DATE(2026,2,1), "months")` → `1`; `DATEDIFF(DATE(2025,12,31), DATE(2026,1,1), "years")` → `1`; the unit is required | Excel's `DATEDIF(start, end, unit)` counts **complete** units: "m" → 0, "y" → 0 for those inputs. It also returns `#NUM!` when start > end, where Skillet returns a negative number | Skillet-only | **document** that months and years count calendar boundaries (like SQL `DATEDIFF`), not complete units. If Excel users ask for it, add `DATEDIF` with Excel semantics rather than changing this function. `api.md` shows `[unit]` as optional, but it is required |
+| `DATE` | `DATE(2026,1,15)` → `DateTime(1768435200)`; `DATE(2026,13,1)` → 2027-01-01; `DATE(2026,2,30)` → 2026-03-02; `DATE(2026,0,1)` → 2025-12-01; `DATE(2026,1,0)` → 2025-12-31; `DATE(26,1,1)` → 1926-01-01; `DATE(0,1,1)` → 1900-01-01; `DATE(10000,1,1)` → `Error: DATE year must be between 0 and 9999`; `DATE(2026.9,1.9,1.9)` → 2026-01-01; `DATE()` → today, midnight UTC | Months and days roll over; years 0–1899 get 1900 added; arguments are truncated | yes | implemented D-5 (#83). `DATE()` is a Skillet extension |
+| `TODAY` / `NOW` | `TODAY()` → today at 00:00:00 UTC (`TODAY() == DATE()` → `true`); `NOW()` → `DateTime(…)` (UTC, whole seconds) | Serial number, local time | differs | `TODAY` implemented D-9 (#83). **Deliberate** (ADR-0018): UTC gives the same result on every server |
+| `TIME` | `TIME(14,30,0)` → `0.6041666666666666`; `TIME(12,0,0)` → `0.5`; `TIME(0,90,0)` → `0.0625`; `TIME(25,0,0)` → `0.041666666666666664`; `TIME(-1,0,0)` → `Error: TIME hour must not be negative (#NUM!)`; `TIME(1)` → error | A fraction of a day, with rollover | yes | implemented D-2 (B-1: #61, fraction of a day: #84). `TIME()` returns the current local time in the same unit (extension) |
+| `YEAR` / `MONTH` / `DAY` | `YEAR(DATE(2026,3,4))` → `2026`; `MONTH(...)` → `3`; `YEAR(46000)` → `Error: YEAR expects datetime`; `YEAR("2026-01-01")` → same error | Also accept serial numbers and date text | edges | **deliberate** (ADR-0018): `DateTime` is a real type, not a serial number. All components are UTC. Strings would work after the cast proposal below |
+| `DATEADD` | `DATEADD(DATE(2026,1,31),1,"months")` → 2026-02-28 (clamped); `DATEADD(DATE(2024,2,29),1,"years")` → 2025-02-28; `DATEADD(DATE(2026,1,1),1.9,"days")` → +1 day (truncated); `DATEADD(DATE(2026,1,1), 1, "m")` → +1 minute | No Excel function; the closest are `EDATE` and `date + n` | Skillet-only | keep. Open (B-15): `"m"` means minutes; in Excel's `DATEDIF` it means months |
+| `DATEDIFF` | `DATEDIFF(DATE(2026,1,1), DATE(2026,3,1), "days")` → `59`; `DATEDIFF(DATE(2026,1,31), DATE(2026,2,1), "months")` → `1`; `DATEDIFF(DATE(2025,12,31), DATE(2026,1,1), "years")` → `1`; without a unit → `Error: DATEDIFF expects date1, date2, unit` | Excel's `DATEDIF` counts **complete** units ("m" → 0, "y" → 0 here) and returns `#NUM!` when start > end | Skillet-only | keep. Months and years count calendar boundaries (like SQL `DATEDIFF`). Add `DATEDIF` with Excel semantics if users ask |
 
-Date arithmetic: `DATE(2026,1,2) - DATE(2026,1,1)` → `Error: Arithmetic op on non-number`
-(Excel: 1). `DATE(2026,1,1) + 1` → error (Excel: the next day). Missing Excel functions: `TODAY`,
-`WEEKDAY`, `EDATE`, `EOMONTH`, `DATEDIF`, `DATEVALUE`, `NETWORKDAYS`.
+Date arithmetic (D-5, #83; comparison BL-059, #88): `DATE(2026,1,2) - DATE(2026,1,1)` → `1`;
+`DATE(2026,1,1) + 1` and `1 + DATE(2026,1,1)` → 2026-01-02; `DATE(2026,1,1) - 1` → 2025-12-31;
+`DATE(2026,1,1) + 0.5` and `DATE(2026,1,1) + TIME(12,0,0)` → 2026-01-01 12:00 UTC;
+`DATE(2026,1,1) + DATE(2026,1,1)` → `Error: Arithmetic op on non-number`;
+`DATE(2026,1,1) == DATE(2026,1,1)` → `true`; `DATE(2026,1,1) < DATE(2026,1,2)` → `true`;
+`DATE(2026,1,1) == 0` → `false`. Open (BL-070): `DATE(2026,1,1) + "1"` and `DATE(...) + NULL` are
+errors, where Excel returns a date. Excel date functions that still return `Unknown function`
+(checked): `WEEKDAY`, `EDATE`, `EOMONTH`, `DATEDIF`, `DATEVALUE`, `NETWORKDAYS`.
 
 ## Financial
 
-Skillet follows Excel's cash-flow sign convention in `PMT` and `FV`: money you receive is
-positive, money you pay is negative.
+Skillet follows Excel's cash-flow sign convention: money you receive is positive, money you pay is
+negative.
 
-| Function | Skillet (expr → output) | Excel | Match? | Recommendation |
+| Function | Skillet (expr → output) | Excel | Match? | Status |
 |---|---|---|---|---|
-| `PMT` | `PMT(0.05/12,360,100000)` → `-536.8216230121399`; `PMT(0,10,1000)` → `-100`; `PMT(0.1,2,1000,0,1)` → `-523.8095238095234`; `PMT(0.06/12,120,0,50000)` → `-305.1025097082559`; `PMT(0.05,0,1000)` → error; `PMT(0.05,10,1000,"x")` → `-129.50457496545664` (`fv` treated as 0) | `PMT(rate, nper, pv, [fv], [type])`: -536.82, -100, -523.81, -305.10. Non-numeric `fv` → `#VALUE!` | edges | keep. Fix X-5 (non-numeric optional arguments). `api.md` shows positive results ("$536.82"), which should be shown as negative |
-| `FV` | `FV(0.05,10,-100)` → `1257.789253554884`; `FV(0.05,10,-100,-1000)` → `2886.683880332326`; `FV(0.05,10,-100,0,1)` → `1320.6787162326282`; `FV(0,10,-100,-1000)` → `2000`; `FV(0.05,-1,-100)` → `Error: FV nper must be non-negative` | `FV(rate, nper, pmt, [pv], [type])`: 1257.79, 2886.68, 1320.68, 2000. A negative `nper` is computed, not rejected (**verify in Excel**) | edges | keep. Consider allowing a negative `nper` |
-| `IPMT` | `IPMT(0.1,1,3,1000)` → **`100`**; `IPMT(0.1,2,3,1000)` → **`49.78851963746227`**; `IPMT(0.1,3,3,1000)` → **`4.59818731117831`**; `IPMT(0.1,1,3,1000,0,1)` → `0`; `IPMT(0.1,2,3,1000,0,1)` → **`54.35319967042025`**; `IPMT(0,1,3,1000)` → `0`; `IPMT(0.1,4,3,1000)` → error | `IPMT(rate, per, nper, pv, [fv], [type])`. The interest is **negative** for a positive `pv`, and the balance rolls forward as `balance*(1+r) + pmt`: per 1 → -100.00; per 2 → -69.79; per 3 → -36.56; type 1: per 1 → 0, per 2 → -63.44 (computed from Excel's documented formula, **verify in Excel**) | differs | **bug** B-2 (high). The sign is inverted, and from period 2 on the result is wrong because the principal is added with the wrong sign. Fix it and make it consistent with PMT's sign. Add `PPMT` so that `PMT = IPMT + PPMT` can be tested |
-| `DB` | `DB(1000000,100000,6,1,7)` → `185912.95971618922`; `(...,2,7)` → `259455.9962155814`; **`(...,6,7)` → `23290.87494931791`**; **`(...,7,7)` → `0`**; `DB(10000,1000,5,1)` → `3690.4265551980675`; **`DB(10000,1000,5,0)` → `2328.50…`**; `DB(10000,1000,5,2.5)` → same as period 2; `DB(0,0,5,1)` → `NaN` | Microsoft's documented example (cost 1,000,000, salvage 100,000, life 6, month 7): periods 1–7 = 186,083.33; 259,639.42; 176,814.44; 120,410.64; 81,999.64; **55,841.76**; **15,845.10**. Excel **rounds the rate to 3 decimal places** (0.319). The partial first year is balanced by a partial period `life + 1`. Period 0 → `#NUM!` | differs | **bug** B-8. (1) Round the rate to 3 decimals. (2) Apply the remaining-months formula to period `life + 1`, not `life`, and allow `period <= life + 1` when `month < 12`. (3) Return an error when `period` < 1, and for a cost of 0 |
+| `PMT` | `PMT(0.05/12,360,100000)` → `-536.8216230121399`; `PMT(0,10,1000)` → `-100`; `PMT(0.1,2,1000,0,1)` → `-523.8095238095234`; `PMT(0.06/12,120,0,50000)` → `-305.1025097082559`; `PMT(0.05,0,1000)` → `Error: PMT nper must be positive`; `PMT(0.05,10,1000,"x")` → `#VALUE!` error; `PMT(0,10,1000,"0")` → `-100` | -536.82, -100, -523.81, -305.10. Non-numeric `fv` → `#VALUE!` | yes | implemented X-5 (#84; numeric text #89) |
+| `FV` | `FV(0.05,10,-100)` → `1257.789253554884`; `FV(0.05,10,-100,-1000)` → `2886.683880332326`; `FV(0.05,10,-100,0,1)` → `1320.6787162326282`; `FV(0,10,-100,-1000)` → `2000`; `FV(0.05,-1,-100)` → `Error: FV nper must be non-negative` | 1257.79, 2886.68, 1320.68, 2000. A negative `nper` is computed, not rejected (**verify in Excel**) | edges | open, low: confirm Excel's negative-`nper` result first |
+| `IPMT` | `IPMT(0.1,1,3,1000)` → `-100`; `IPMT(0.1,2,3,1000)` → `-69.78851963746224`; `IPMT(0.1,3,3,1000)` → `-36.55589123867071`; `IPMT(0.1,1,3,1000,0,1)` → `0`; `IPMT(0.1,2,3,1000,0,1)` → `-63.44410876132931`; `IPMT(0.1,4,3,1000)` → `Error: IPMT period must be between 1 and nper` | -100.00; -69.79; -36.56; type 1: 0, -63.44 | yes | implemented D-2, B-2 (#84) |
+| `PPMT` | `PPMT(0.1,1,3,1000)` → `-302.1148036253773`; `PPMT(0.1,1,3,1000) + IPMT(0.1,1,3,1000) - PMT(0.1,3,1000)` → `0` | `PMT = IPMT + PPMT` | yes | implemented D-9 (#83) |
+| `PV` | `PV(0.05,10,-100)` → `772.1734929184817` | 772.17 | yes | implemented D-9 (#83) |
+| `NPV` | `NPV(0.1,100,100)` → `173.55371900826447`; `NPV(0.1,[100,100])` → same | 173.55 | yes | implemented D-9 (#83) |
+| `DB` | `DB(1000000,100000,6,1,7)` → `185912.95971618922`; `DB(1000000,100000,6,6,7)` → `23290.87494931791`; `DB(1000000,100000,6,7,7)` → `0`; `DB(10000,1000,5,0)` → `2328.5017392669597`; `DB(0,0,5,1)` → `NaN` | Microsoft's example (1,000,000, 100,000, life 6, month 7): periods 1–7 = 186,083.33; 259,639.42; 176,814.44; 120,410.64; 81,999.64; 55,841.76; 15,845.10. The rate is rounded to 3 decimals (0.319). Period 0 → `#NUM!` | differs | open bug B-8: round the rate to 3 decimals, apply the remaining-months formula to period `life + 1`, error for period < 1 and for a cost of 0. `NaN` also breaks D-1 |
 
-Missing Excel financial functions: `PV`, `NPV`, `NPER`, `RATE`, `PPMT`, `IRR`, `SLN`, `DDB`.
+Excel financial functions that still return `Unknown function` (checked): `NPER`, `RATE`, `IRR`,
+`SLN`, `DDB`.
 
 ## Statistical
 
-All of these hit X-4 (the dotted name does not parse) and X-2 (empty input gives 0). The numbers
-themselves match Excel.
+All of these parse with the dotted name (X-4) and return an error on empty input (X-2).
 
-| Function | Skillet (expr → output) | Excel | Match? | Recommendation |
+| Function | Skillet (expr → output) | Excel | Match? | Status |
 |---|---|---|---|---|
-| `MEDIAN` | `MEDIAN(1,3,2)` → `2`; `MEDIAN([1,2,3,4])` → `2.5`; `MEDIAN()` → `0`; `MEDIAN([1,"9",TRUE])` → `1` | Same. No numbers → `#NUM!` | edges | fix X-2 |
-| `MODE.SNGL` (`MODE_SNGL`, `MODESNGL`) | `MODE_SNGL(1,2,2,3)` → `2`; `MODE_SNGL(3,1,1,3)` → `3` (first value seen wins a tie); **`MODE_SNGL(1,2,3)` → `1`**; `MODE_SNGL()` → `0`; `MODE.SNGL(...)` → parse error | Same tie rule. **No repeated value → `#N/A`** | edges | fix: no repeated value → `Error`. Fix X-4. Consider the legacy alias `MODE` |
-| `STDEV.P` (`STDEVP`, `STDEV_P`) | `STDEV_P(2,4,4,4,5,5,7,9)` → `2`; `STDEVP(2,4,4,4,5,5,7,9)` → `2`; `STDEV_P(5)` → `0`; `STDEV_P()` → `0` | Population standard deviation (divides by n): 2. Empty → `#DIV/0!` | edges | fix X-2 and X-4. **Add `STDEV.S`/`STDEV`** (sample, divides by n-1). It is the function analysts use most, and `STDEV(1,2)` → `Unknown function` today |
-| `VAR.P` (`VARP`, `VAR_P`) | `VAR_P(2,4,4,4,5,5,7,9)` → `4`; `VARP(1,3)` → `1`; `VAR_P()` → `0` | Population variance: 4 | edges | same as above. Add `VAR.S`/`VAR` |
-| `PERCENTILE.INC` (`PERCENTILE_INC`, `PERCENTILEINC`) | `PERCENTILE_INC([1,2,3,4],0.25)` → `1.75`; `(...,0.4)` → `2.2`; `(...,1.5)` → `Error: Percentile must be between 0 and 1`; `PERCENTILE_INC([],0.5)` → `0`; `PERCENTILE_INC(1,2,3,4,0.5)` → `2.5` (variadic; the last argument is k); `PERCENTILE_INC([3,1,"x",2],0.5)` → `2` | Inclusive interpolation, rank = k·(n−1): 1.75 and 2.2 (matches). k outside 0..1 → `#NUM!` (matches as an error). Empty → `#NUM!` | edges | fix X-2 and X-4. Add the legacy alias `PERCENTILE` (same as .INC) |
-| `QUARTILE.INC` (`QUARTILE_INC`, `QUARTILEINC`) | `QUARTILE_INC([1..8],1)` → `2.75`; `QUARTILE_INC([1,2,3,4],1.9)` → `1.75` (truncated); `(...,0)` → `1`; `(...,4)` → `4`; `(...,5)` → `Error: Quartile must be 0-4`; `(...,-0.5)` → `1` | Same. A non-integer quart is truncated. quart < 0 or > 4 → `#NUM!`. For -0.5, check the result after truncation (**verify in Excel**) | edges | fix X-2 and X-4. Add the legacy alias `QUARTILE` |
+| `MEDIAN` | `MEDIAN(1,3,2)` → `2`; `MEDIAN([1,2,3,4])` → `2.5`; `MEDIAN()` → `Error: MEDIAN of no numbers (#NUM!)`; `MEDIAN([1,"9",TRUE])` → `1` | Same. No numbers → `#NUM!` | yes | implemented (#84). X-3 deliberate |
+| `MODE.SNGL` (`MODE_SNGL`, `MODESNGL`, `MODE`) | `MODE.SNGL(1,2,2)` → `2`; `MODE_SNGL(3,1,1,3)` → `3` (first value seen wins a tie); `MODE_SNGL(1,2,3)` → `Error: MODE.SNGL: no value repeats (#N/A)`; `MODE(1,2,2)` → `2` | Same tie rule. No repeated value → `#N/A` | yes | implemented (#84; `MODE` #83) |
+| `STDEV.P` (`STDEVP`, `STDEV_P`) | `STDEV.P(1,2)` → `0.5`; `STDEV_P(2,4,4,4,5,5,7,9)` → `2`; `STDEVP(2,4,4,4,5,5,7,9)` → `2`; `STDEV_P(5)` → `0`; `STDEV_P()` → `#DIV/0!` error | Population standard deviation (divides by n) | yes | implemented (#82, #84) |
+| `STDEV.S` (`STDEV`, `STDEV_S`) | `STDEV.S(2,4,4,4,5,5,7,9)` → `2.138089935299395`; `STDEV(…)` → same; `STDEV.S(1)` → `Error: STDEV.S needs at least two numbers` | Sample standard deviation (divides by n − 1) | yes | implemented D-9 (#82) |
+| `VAR.P` (`VARP`, `VAR_P`) | `VAR.P(2,4,4,4,5,5,7,9)` → `4`; `VARP(1,3)` → `1`; `VAR_P()` → `#DIV/0!` error | Population variance | yes | implemented (#82, #84) |
+| `VAR.S` (`VAR`, `VAR_S`) | `VAR.S(2,4,4,4,5,5,7,9)` → `4.571428571428571`; `VAR(1)` → `Error: VAR needs at least two numbers` | Sample variance | yes | implemented D-9 (#82) |
+| `PERCENTILE.INC` (`PERCENTILE_INC`, `PERCENTILEINC`, `PERCENTILE`) | `PERCENTILE.INC([1,2,3,4],0.25)` → `1.75`; `PERCENTILE_INC([1,2,3,4],0.4)` → `2.2`; `(…,1.5)` → `Error: Percentile must be between 0 and 1 (#NUM!)`; `PERCENTILE_INC([],0.5)` → `#NUM!` error; `PERCENTILE_INC(1,2,3,4,0.5)` → `2.5` (variadic; the last argument is k); `PERCENTILE_INC([3,1,"x",2],0.5)` → `2`; `PERCENTILE([1,2,3,4],0.25)` → `1.75` | Rank = k·(n−1); k outside 0..1 → `#NUM!`; empty → `#NUM!` | yes | implemented (#82, #84; `PERCENTILE` #83) |
+| `QUARTILE.INC` (`QUARTILE_INC`, `QUARTILEINC`, `QUARTILE`) | `QUARTILE.INC([1..8],1)` → `2.75`; `QUARTILE_INC([1,2,3,4],1.9)` → `1.75` (truncated); `(…,0)` → `1`; `(…,4)` → `4`; `(…,5)` and `(…,-0.5)` → `Error: Quartile must be 0-4 (#NUM!)` | A non-integer quart is truncated; quart < 0 or > 4 → `#NUM!`. For -0.5, check the result after truncation (**verify in Excel**) | yes | implemented (#82, #84; `QUARTILE` #83) |
 
 ## Function and method parity
 
-These are prerequisites for the canonical-form proposal: today the same name gives different
-results depending on how you call it.
+ADR-0018 decided that lowercase methods keep Ruby semantics and do not have to give the same
+result as the builtin of the same name. The pairs that differ:
 
-| Pair | Function | Method | Proposed rule |
+| Pair | Function | Method | Status |
 |---|---|---|---|
-| `INT` / `.int()` | `INT(-3.7)` → `-4` | `(-3.7).int()` → `-3` | Both floor (Excel). Add `.trunc()` if truncation is needed |
-| `ROUND` / `.round()` | `ROUND(1234.567,-2)` → `1235` | `(1234.567).round(-2)` → `1200` | Both support negative digits |
-| `MAX`/`MIN` on empty | `MAX()` → `0` | `[].max()` → `Null`, `[].min()` → `Null` | One rule for both (D-2) |
-| `SUM` with text | `SUM([1,"2",3])` → `4` | `[1,"2",3].sum()` → `Error: sum method expects numeric array` | One rule for both. Recommendation: the method's strictness |
-| `UNIQUE` | `UNIQUE(["a","a",1])` → `[1]` | `.unique()` → `["a",1]` | The method's behavior |
-| `TRIM` | inner spaces kept | `.trim()` same | If `TRIM` adopts Excel's behavior, keep `.trim()` Ruby-like and document it |
-| Coverage | `MEDIAN`, `STDEV_P`, `PERCENTILE_INC`, `LEFT`, `MOD` exist | `.median()`, `.stdev()`, `.percentile()`, `.left()`, `.mod()` → `Unknown ... method` | Generate the method set from the function set, or document which forms exist |
+| `INT` / `.int()` | `INT(-3.7)` → `-4` | `(-3.7).int()` → `-3` | **deliberate** (ADR-0018): `.int()` truncates like Ruby's `to_i` |
+| `ROUND` / `.round()` | `ROUND(1234.567,-2)` → `1200` | `(1234.567).round(-2)` → `1200` | same result since #84 |
+| `MAX`/`MIN` on empty | `MAX([])` → `0` | `[].max()` → `Null`, `[].min()` → `Null` | **deliberate** (ADR-0018 methods rule) |
+| `SUM` with text | `SUM([1,"2",3])` → `4` | `[1,"2",3].sum()` → `Error: sum method expects numeric array` | **deliberate** (ADR-0018 methods rule; BL-070 lists methods staying strict) |
+| `UNIQUE` | `UNIQUE(["a","a",1])` → `[1]` | `["a","a",1].unique()` → `["a",1]` | open: the function is wrong (B-7) |
+| `TRIM` | `TRIM("  a   b  ")` → `"a b"` | `"  a   b  ".trim()` → `"a   b"` | **deliberate** (ADR-0018 D-7) |
+| Coverage | `MEDIAN`, `STDEV_P`, `PERCENTILE_INC`, `LEFT`, `MOD` exist | `[1,2].median()` → `Unknown array method: median`; `(5).mod(2)` → `Unknown number method: mod` | open: document which forms exist |
 
 ## Bugs (separate from deliberate differences)
 
-| ID | Severity | Repro | Actual | Expected |
+| ID | Severity | Repro | Now | Status |
 |---|---|---|---|---|
-| B-1 | High | `TIME(14, 30, 0)` | Current local seconds since midnight (`74954` at audit time). The arguments are ignored and the result is not deterministic | `52200` (as documented in api.md) |
-| B-2 | High | `IPMT(0.1, 2, 3, 1000)` | `49.79` | `-69.79` (Excel). Wrong for every `per` ≥ 2, and the sign is inverted for `per` 1 |
-| B-3 | High | `COUNTIF([1,2,3,4], ">2")`, `COUNTIF([1,2,3], 2)` | `0`, `0` | `2`, `1`. `SUMIF` accepts the same criteria |
-| B-4 | Medium | `ROUND(1234.567, -2)` | `1235` (negative digits clamped to 0) | `1200` |
-| B-5 | Medium | `CEILING(2.1, 0.5)`, `FLOOR(7, 5)` | `3`, `7` (significance ignored) | `2.5`, `5` |
-| B-6 | Medium | `SUBSTITUTE("a-b-c", "-", "+", 2)` | `"a+b+c"` (`instance_num` ignored) | `"a-b+c"` |
-| B-7 | Medium | `UNIQUE(["a", "a", 1])` | `[1]` (strings dropped) | `["a", 1]` |
-| B-8 | Medium | `DB(1000000,100000,6,6,7)`; `DB(1000000,100000,6,7,7)`; `DB(10000,1000,5,0)` | `23290.87`; `0`; `2328.50` | `55841.76`; `15845.10`; error |
-| B-9 | Medium | `STDEV.P(1, 2)` (any dotted name) | Parse error | `0.5`. The names are registered and documented but cannot be parsed (X-4) |
-| B-10 | Low | `BETWEEN(1, 10, 5)` | `Unknown function: BETWEEN` | `true` (as documented; implemented in `logical.rs` but not dispatched) |
-| B-11 | Low | `REVERSE("abc")` | `Error: REVERSE expects array` | `"cba"` (the string implementation can never be reached) |
-| B-12 | Low | `SORT([3,1,2], -1)` | `[1,2,3]` | `[3,2,1]`, or an error |
-| B-13 | Low | `ROUND(10::Currency, 1)`; `SUM(10::Currency, 5)` | Error; `Number(15)` | Currency accepted and kept as Currency (ADR-0003) |
-| B-14 | Low | `(-3.7).int()` vs `INT(-3.7)` | `-3` vs `-4` | Same result |
-| B-15 | Low | `DATEADD(DATE(2026,1,1), 1, "m")` | +1 minute | Ambiguous; Excel's `DATEDIF` uses `"m"` for months. Document it or reject it |
-| B-16 | Low | `SUBSTITUTE("abc", "", "x")` | `"xaxbxcx"` | `"abc"` |
-| B-17 | Low | `COUNTIF([1,2,3], :x)`, `AVGIF(...)`, `SUMIF(...)` with a lambda that returns a non-boolean | Treated as false (silently 0) | `Error` |
+| B-1 | High | `TIME(14, 30, 0)` | `0.6041666666666666` | fixed (#61; Excel unit #84) |
+| B-2 | High | `IPMT(0.1, 2, 3, 1000)` | `-69.78851963746224` | fixed (#84) |
+| B-3 | High | `COUNTIF([1,2,3,4], ">2")`, `COUNTIF([1,2,3], 2)` | `2`, `1` | fixed (#84) |
+| B-4 | Medium | `ROUND(1234.567, -2)` | `1200` | fixed (#84) |
+| B-5 | Medium | `CEILING(2.1, 0.5)`, `FLOOR(7, 5)` | `2.5`, `5` | fixed (#84) |
+| B-6 | Medium | `SUBSTITUTE("a-b-c", "-", "+", 2)` | `"a-b+c"` | fixed (#84) |
+| B-7 | Medium | `UNIQUE(["a", "a", 1])` | `[1]` (strings dropped) | **open**; expected `["a", 1]` |
+| B-8 | Medium | `DB(1000000,100000,6,6,7)`; `DB(1000000,100000,6,7,7)`; `DB(10000,1000,5,0)`; `DB(0,0,5,1)` | `23290.87`; `0`; `2328.50`; `NaN` | **open**; expected `55841.76`; `15845.10`; error; error |
+| B-9 | Medium | `STDEV.P(1, 2)` | `0.5` | fixed (#82) |
+| B-10 | Low | `BETWEEN(1, 10, 5)` | `true` | fixed (#68) |
+| B-11 | Low | `REVERSE("abc")` | `Error: REVERSE expects array` | **open**; expected `"cba"` |
+| B-12 | Low | `SORT([3,1,2], -1)` | `[3,2,1]` | fixed (#84) |
+| B-13 | Low | `ROUND(10::Currency, 1)`; `SUM(10::Currency, 5)` | `Currency(10)`; `Number(15)` | `ROUND` fixed (#84); `SUM` **open** (should stay `Currency`, ADR-0003) |
+| B-14 | Low | `(-3.7).int()` vs `INT(-3.7)` | `-3` vs `-4` | closed: deliberate (ADR-0018) |
+| B-15 | Low | `DATEADD(DATE(2026,1,1), 1, "m")` | +1 minute | **open**: document it or reject bare `"m"` |
+| B-16 | Low | `SUBSTITUTE("abc", "", "x")` | `"abc"` | fixed (#84) |
+| B-17 | Low | `COUNTIF([1,2,3], :x)` (lambda returns a non-boolean) | `Error: COUNTIF criteria expression must return TRUE or FALSE, got number` | fixed (#84) |
+| B-18 | Medium | `IF("x", 1, 2)`; `IFS(FALSE, 1)` | `2`; `false` | **open**: ADR-0018 D-8 decided `Error` for both, and the changelog and migration guide say so, but the code and `tests/lazy_if.rs` keep the old results |
 
-Doc defects found along the way, for the docs lane. These are not fixed here because lane F owns
-`docs/reference/api.md`: `LEN` is documented but does not exist; the `COUNT` description and
-example are wrong; `TIME(14,30,0)` = 52200 does not match the code; `INT(-3.9)` = -3 is wrong (it is -4);
-`DATEDIFF`'s `[unit]` is required; `COMPACT(array)` is documented as a function but only the
-`.compact()` method exists; the `PMT` examples drop the minus sign; the statistical section's
-headings use dotted names that do not parse.
+Doc defects in `docs/reference/api.md` that are still there: `COMPACT(array)` is documented as a
+function but only the `.compact()` method exists (`COMPACT([1,NULL])` → `Unknown function`); the
+`PMT` examples show positive amounts ("$536.82") where the result is negative. The other defects
+from the audit (`LEN`, `COUNT`, `TIME`, `INT(-3.9)`, dotted headings) are fixed.
 
 ## Decisions for the maintainer (ranked by user impact)
 
-1. **D-1: Errors versus silent defaults** (X-1, X-2, X-5, B-17). This decision affects the most
-   rows. Proposal: one ADR that says Excel's `#DIV/0!`, `#NUM!` and `#VALUE!` cases return a
-   Skillet `Error`, and that ignored or wrong-typed arguments are errors. Exception: functions
-   ADR-0006 explicitly makes null-tolerant. This is a breaking change for anyone relying on
-   `AVERAGE([])` being `0`, so it needs a minor-version note.
-   - **Decided 2026-11-21** ([ADR-0018](../adr/0018-excel-compatibility.md)): match Excel's errors; `Null` stays tolerated under ADR-0006. Not implemented yet.
-2. **D-2: Fix the high-severity bugs now** (B-1 `TIME`, B-2 `IPMT`, B-3 `COUNTIF`). They return
-   wrong numbers silently, so no ADR is needed to restore documented or Excel behavior. Send each
-   to the Rust Engineer with the expected values above as tests.
-   - **Decided 2026-11-21** ([ADR-0018](../adr/0018-excel-compatibility.md)): fix all three; `TIME` returns a fraction of a day, as in Excel. Not implemented yet.
-3. **D-3: `COUNT` semantics.** Make it variadic and numbers-only like Excel, and add `COUNTA`.
-   This is breaking: `COUNT([1,"a"])` goes from 2 to 1. The current docs already promise the
-   Excel behavior. Alternative: keep it as "length" and fix the docs. Recommendation: match Excel.
-   - **Decided 2026-11-21** ([ADR-0018](../adr/0018-excel-compatibility.md)): match Excel (`COUNT` numbers-only and variadic), add `COUNTA`. Not implemented yet.
-4. **D-4: Dotted names** (X-4/B-9). Allow `NAME.NAME(` in the lexer. Purely additive, but it is
-   a grammar change, so it needs a short ADR. Check that it cannot conflict with `:var.method`
-   (variables always start with `:`, and methods are lower case).
-   - **Decided 2026-11-21** ([ADR-0018](../adr/0018-excel-compatibility.md)): allow `NAME.NAME(`. Not implemented yet.
-5. **D-5: `DATE` rollover and date arithmetic.** Rollover is additive (it replaces errors).
-   `DateTime ± Number` (in days, Excel-like) and `DateTime - DateTime` are new semantics that
-   need an ADR, together with ADR-0004 and the cast proposal below.
-   - **Decided 2026-11-21** ([ADR-0018](../adr/0018-excel-compatibility.md)): rollover, Excel's 0–1899 year rule (not strict years), date arithmetic in days; string casts stay strict. Not implemented yet.
-6. **D-6: The `FIND` name collision.** Decide whether `FIND(text, text)` dispatches to an
-   Excel-compatible text search.
-   - **Decided 2026-11-21** ([ADR-0018](../adr/0018-excel-compatibility.md)): dispatch on the first argument's type. Not implemented yet.
-7. **D-7: `MOD` sign, `TRIM` inner spaces, `SUMIF` case-insensitivity and wildcards.** Each one
-   changes results for existing inputs. Recommendation: match Excel for the UPPER_CASE functions
-   (the name is the promise) and keep Ruby semantics on the lowercase methods.
-   - **Decided 2026-11-21** ([ADR-0018](../adr/0018-excel-compatibility.md)): Excel `MOD`, `TRIM` and `SUMIF` for the functions, Ruby semantics for the methods. Not implemented yet.
-8. **D-8: Lazy `IF`/`IFS`** (X-8). Results only change where an error used to be returned.
-   Recommendation: do it.
-   - **Decided 2026-11-21** ([ADR-0018](../adr/0018-excel-compatibility.md)): lazy `IF`/`IFS`. Not implemented yet.
-9. **D-9: Fill the gaps** with Excel aliases that cost little: `LEN`, `AVERAGEIF`, `STDEV.S`/`STDEV`,
-   `VAR.S`/`VAR`, `TODAY`, `PPMT`, `PV`, `NPV`, `TEXTJOIN`, `PERCENTILE`, `QUARTILE`, `MODE`.
-   - **Decided 2026-11-21** ([ADR-0018](../adr/0018-excel-compatibility.md)): add all of them. Not implemented yet.
-10. **D-10: Operators** (X-6). Keep `^` right-associative and unary minus binding looser than
-    `^` (the math convention), and correct PRD-001 FR-1, which says "Excel precedence".
-    - **Decided 2026-11-21** ([ADR-0018](../adr/0018-excel-compatibility.md)): **Excel precedence**, against the recommendation above: `-2^2` = 4, `2^3^2` = 64. Not implemented yet.
+All ten are decided in [ADR-0018](../adr/0018-excel-compatibility.md) (2026-11-21).
+
+1. **D-1: Errors versus silent defaults** (X-1, X-2, X-5, B-17). Excel's error cases return
+   `Error`; `Null` stays tolerated where ADR-0006 and blank cells agree. **Implemented** in #84.
+   ADR-0023 §6 (#89) added Excel's conversion of numeric text and booleans in arithmetic; other
+   text is still an error. Left over: `DB(0,0,5,1)` → `NaN` (B-8).
+2. **D-2: Fix `TIME`, `IPMT` and `COUNTIF`** (B-1, B-2, B-3). `TIME` returns a fraction of a day.
+   **Implemented** in #84 (`TIME` arguments first fixed in #61).
+3. **D-3: `COUNT` semantics.** Numbers only and variadic, plus `COUNTA`. **Implemented** in #84.
+4. **D-4: Dotted names** (X-4, B-9). `NAME.NAME(` parses. **Implemented** in #82.
+5. **D-5: `DATE` rollover and date arithmetic.** Rollover, Excel's 0–1899 year rule, date
+   arithmetic in days; string casts stay strict. **Implemented** in #83; DateTime comparison
+   in #88 (BL-059).
+6. **D-6: The `FIND` name collision.** Dispatch on the first argument's type. **Implemented** in #83.
+7. **D-7: `MOD` sign, `TRIM` inner spaces, `SUMIF` case and wildcards.** Excel for the
+   functions, Ruby for the methods. **Implemented** in #84.
+8. **D-8: Lazy `IF`/`IFS`** (X-8). **Implemented** in #82. Not implemented: the errors for a text
+   condition and for `IFS` with no true condition (B-18).
+9. **D-9: Excel names** `LEN`, `AVERAGEIF`, `STDEV.S`/`STDEV`, `VAR.S`/`VAR`, `TODAY`, `PPMT`,
+   `PV`, `NPV`, `TEXTJOIN`, `PERCENTILE`, `QUARTILE`, `MODE`. **Implemented**: `STDEV.S` and
+   `VAR.S` in #82; `LEN`, `TEXTJOIN`, `TODAY`, `PPMT`, `PV`, `NPV` and the legacy aliases in #83;
+   `AVERAGEIF` (and `COUNTA`, D-3) in #84.
+10. **D-10: Operators** (X-6). Excel precedence (`-2^2` = 4, `2^3^2` = 64), the `%` suffix and
+    `&` text join. **Implemented** in #82. ADR-0023 (#89) made `%` before `+`/`-` the percent
+    suffix (`10%-3` = -2.9) and kept `==` case-sensitive (#88).
+
+Also decided in ADR-0018 and implemented in #84: `ROUND` negative digits and decimal-correct
+halves, `INT` errors, `CEILING`/`FLOOR` significance.
 
 ## Proposal: canonical form (`SUM(:a)` vs `:a.sum()`)
 
@@ -263,16 +277,17 @@ spreadsheet. Pipelines read left to right only as method chains. Nested function
 main reason Excel formulas are hard to read. The rule is easy to apply: is it a single call? Use
 the function. Is it chained? Use methods.
 
-**Prerequisite:** the function and the method must give the same result (see the parity table).
-Otherwise the canonical form decides the answer, not just the spelling. Proposed invariant for
-the ADR: *for every name that exists as both a function and a method, `F(x, args...)` and
-`x.f(args...)` return the same `Value` or the same error*, enforced by a parity test file
-(`tests/function_method_parity.rs`, for QA).
+**Note since ADR-0018:** this proposal assumed that a function and the method of the same name
+give the same result. ADR-0018 decided the opposite (methods keep Ruby semantics; see the parity
+table), so the canonical form can change the answer, not only the spelling. An ADR for this
+proposal must say that docs show the function form wherever Excel semantics are meant.
 
 ## Proposal: string to DateTime cast formats
 
-Not a decision. Today `"2026-01-01"::DateTime` → `Error: Cannot cast String to DateTime`, and
-only numeric strings work (`"1767225600"::DateTime` → `DateTime(1767225600)`).
+Not a decision and not implemented. Today `"2026-01-01"::DateTime` →
+`Error: Cannot cast String to DateTime`, and only numeric strings work
+(`"1767225600"::DateTime` → `DateTime(1767225600)`). ADR-0018 D-5 decided that casts stay strict
+(no rollover, no format guessing) and left the accepted formats to this proposal.
 
 **Accepted inputs** (a subset of ISO 8601 / RFC 3339, so the result does not depend on locale):
 
@@ -286,7 +301,7 @@ only numeric strings work (`"1767225600"::DateTime` → `DateTime(1767225600)`).
 | `"2026-01-01T10:30:00.987Z"::DateTime` | `DateTime(1767263400)` | Fractional seconds truncated (`DateTime` is whole seconds) |
 | `"1767225600"::DateTime` | `DateTime(1767225600)` | Existing behavior, **kept** (integer string = Unix seconds) |
 | `"01/02/2026"::DateTime` | `Error: Cannot cast "01/02/2026" to DateTime (expected YYYY-MM-DD or RFC 3339)` | Ambiguous between MM/DD and DD/MM, so rejected on purpose |
-| `"2026-02-30"::DateTime` | `Error: ... invalid date` | No rollover in casts, even if `DATE` gets rollover (D-5) |
+| `"2026-02-30"::DateTime` | `Error: ... invalid date` | No rollover in casts, although `DATE` rolls over (D-5) |
 | `"2026-1-5"::DateTime` | `Error` | Zero-padded fields only; keeps the parser strict and predictable |
 
 Compatibility: this only turns current errors into values. No expression that currently returns
