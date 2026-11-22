@@ -416,9 +416,16 @@ pub(crate) fn datetime_text(ts: i64) -> String {
 /// ISO 8601 UTC form `write_datetime` writes. Strict: no other offsets, no fractions, no
 /// rollover (`"2026-02-30T00:00:00Z"` is `None`).
 pub(crate) fn parse_datetime_text(s: &str) -> Option<i64> {
-    if let Ok(ts) = s.parse::<i64>() {
-        return Some(ts);
+    match s.parse::<i64>() {
+        Ok(ts) => Some(ts),
+        Err(_) => parse_iso_datetime(s),
     }
+}
+
+/// The ISO 8601 UTC part of `parse_datetime_text`, without Unix seconds:
+/// `<year>-MM-DDTHH:MM:SSZ`, the year with an optional sign and at least 4 digits. Criteria read
+/// dates with it (ADR-0031 amendment 2, B8), where integer text is a number.
+pub(crate) fn parse_iso_datetime(s: &str) -> Option<i64> {
     // "<year>-MM-DDTHH:MM:SSZ": a fixed 16-byte tail after the year.
     let split = s.len().checked_sub(16)?;
     let (year, tail) = (s.get(..split)?, s.get(split..)?.as_bytes());
@@ -439,7 +446,7 @@ pub(crate) fn parse_datetime_text(s: &str) -> Option<i64> {
 
 #[cfg(test)]
 mod text_tests {
-    use super::{datetime_text, parse_datetime_text};
+    use super::{datetime_text, parse_datetime_text, parse_iso_datetime};
 
     #[test]
     fn iso_text_round_trips() {
@@ -476,6 +483,22 @@ mod text_tests {
             "héllo-01-01T00:00:00Z",
         ] {
             assert_eq!(parse_datetime_text(s), None, "{s}");
+            assert_eq!(parse_iso_datetime(s), None, "{s}");
         }
+    }
+
+    #[test]
+    fn iso_parser_reads_only_the_iso_form() {
+        assert_eq!(parse_iso_datetime("1767225600"), None);
+        assert_eq!(parse_iso_datetime("-5"), None);
+        assert_eq!(parse_datetime_text("1767225600"), Some(1_767_225_600));
+        assert_eq!(
+            parse_iso_datetime("2026-01-01T00:00:00Z"),
+            Some(1_767_225_600)
+        );
+        assert_eq!(
+            parse_iso_datetime(&datetime_text(253_402_300_800)),
+            Some(253_402_300_800)
+        );
     }
 }
