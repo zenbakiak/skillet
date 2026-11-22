@@ -64,6 +64,9 @@ limits return an ordinary `Error`, never abort the process.
     budget (ADR-0011). Tests: `c6_timeout`, `bl027c_*_meet_the_deadline`,
     `f3_servers_reject_responses_larger_than_the_budget` in `tests/eval_budget.rs`.
   - Lambdas share the parent scope (BL-030), so formulas over big variables are no longer O(n·m).
+  - Weekly coverage-guided fuzzing of `parse`, `evaluate` and `evaluate_with_json`
+    (`fuzz/`, `.github/workflows/fuzz.yml`, ADR-0028). Found inputs are pinned in
+    [`tests/fuzz_regressions.rs`](../../tests/fuzz_regressions.rs).
   - Operators and builtins return an error instead of `NaN` or infinity (ADR-0018 D-1), so
     results serialize as JSON numbers.
   - JS hooks cannot replace a builtin: a hook whose `@name` is a builtin name or alias (any case)
@@ -74,7 +77,6 @@ limits return an ordinary `Error`, never abort the process.
     borrowed reads can still cost O(n²) CPU there; embedders must use `with_limits`.
   - A single builtin runs to completion before the next deadline check; small cost-model
     undercounts (BL-035). Shared values would remove the read copies (BL-036).
-  - No fuzzing yet (BL-019; `cargo fuzz` over `parse` + `evaluate_with_json`).
 
 ### 2.2 JSON variables (`--json`, HTTP `arguments`, `sk_server` `variables`)
 - **Attacker controls:** any JSON (HTTP: within the 1 MB request).
@@ -225,11 +227,10 @@ Endpoints: `POST /upload-js`, `PUT /update-js`, `DELETE /delete-js`, `GET /list-
 
 | # | Risk | Severity | Tracking |
 |---|---|---|---|
-| 1 | Development mode: without a token, both servers accept evaluation, and `sk_http_server` accepts JS management, from any non-browser client that reaches the port. The default bind is `127.0.0.1` and the Docker image refuses to start without tokens, so this needs an operator to bind elsewhere without tokens | Medium | by design (ADR-0019); `sk_http_server` warns at start-up, `sk_server` only reports when auth is on |
+| 1 | Development mode: without a token, both servers accept evaluation, and `sk_http_server` accepts JS management, from any non-browser client that reaches the port. The default bind is `127.0.0.1` and the Docker image refuses to start without tokens, so this needs an operator to bind elsewhere without tokens | Medium | accepted risk (maintainer, 2026-11-21); ADR-0019; `sk_http_server` warns at start-up, `sk_server` only reports when auth is on |
 | 2 | Worker-pool exhaustion: the per-IP limit is off by default, so one client can hold every worker until the 30 s read deadline; many addresses are not stopped at all | Medium | ADR-0025 (opt-in limit); proxy or firewall in front |
 | 3 | No deadline in the library and `sk` by default, and one builtin runs to completion between deadline checks | Medium (embedders) | ADR-0011 (`with_limits`), BL-035, BL-036 |
-| 4 | No fuzzing of `parse` and `evaluate_with_json` | Medium | BL-019 |
-| 5 | Release and image integrity: no signatures or provenance, Actions not pinned by SHA, Docker image not built in CI | Low | BL-062, BL-065 |
+| 4 | Release and image integrity: no signatures or provenance (Actions are pinned by SHA, the Docker image is built and smoke-tested in CI) | Low | BL-062, BL-065 done; signing not tracked yet |
 
 Next in line (all Low): the `arguments` key collision (2.2, no backlog item yet), `/reload-hooks`
 keeps deleted functions (2.5), the relative `hooks` default (2.6, BL-057), real 408/413 codes

@@ -122,7 +122,7 @@ pub fn clamp_index(len: usize, idx: isize) -> Option<usize> {
             None
         }
     } else {
-        let neg = (-idx) as usize; // idx is negative
+        let neg = idx.unsigned_abs(); // `-idx` overflows for isize::MIN (`[1][-1e300]`)
         if neg <= len {
             Some(len - neg)
         } else {
