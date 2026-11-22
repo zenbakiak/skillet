@@ -11,7 +11,7 @@ release workflow; see [installation](../guide/installation.md).
 
 | File | Purpose |
 |---|---|
-| `Dockerfile.alpine-builder` | Multi-stage build: `builder` (Debian `rust:latest` + `musl-tools`), `binaries` (scratch image with `/binaries/sk*`), `runtime-test` (`ruby:3.4.8-alpine` with the binaries) |
+| `Dockerfile.alpine-builder` | Multi-stage build: `builder` (Debian `rust:1.89.0-bookworm` + `musl-tools`), `binaries` (scratch image with `/binaries/sk*`), `runtime-test` (`ruby:3.4.8-alpine` with the binaries) |
 | `scripts/build_alpine_binaries.sh` | Builds the `binaries` stage for aarch64 and x86_64 and copies the binaries to `dist/alpine/<arch>/` |
 | `.dockerignore.alpine` | Docker context used by the script (swapped in for `.dockerignore` during the build) |
 | `examples/Dockerfile.ruby-alpine-example` | Full Rails + Skillet example |
@@ -458,5 +458,5 @@ CMD ["sk_http_server", "5074", "--host", "0.0.0.0"]
 - The CLI starts a new process (and loads JS plugins) for every call; for many evaluations use the
   HTTP or TCP server instead of shelling out.
 - No latency numbers are published yet; the measured baseline is BL-005 (`benches/BASELINE.md`).
-- Server limits (10 s deadline, 256 MiB budget per evaluation) and memory sizing:
+- Server limits (20 s deadline and 256 MiB budget per evaluation by default, both configurable) and memory sizing:
   [limits](../guide/limits.md).

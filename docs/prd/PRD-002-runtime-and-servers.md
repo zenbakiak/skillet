@@ -13,7 +13,7 @@ with low per-evaluation overhead.
 |---|---|---|
 | FR-1 | Library API: `parse`, `evaluate`, `evaluate_with`, `evaluate_with_json`, `*_custom`, `*_assignments*` | `src/lib.rs`, `tests/*` |
 | FR-2 | Custom Rust functions via `CustomFunction` + global registry | `tests/custom_functions.rs` |
-| FR-3 | JS functions loaded from `SKILLET_HOOKS_DIR` (default `hooks/`) | `hook_examples/rust_tests/` |
+| FR-3 | JS functions loaded from `SKILLET_HOOKS_DIR` (default `hooks/`) | `tests/hook_files.rs`, `tests/js_limits.rs`, `src/js_plugin.rs` unit tests |
 | FR-4 | CLI `sk "<expr>" [:k=v ...]`, `--json` vars, JSON output | `tests/cli_integration.rs` |
 | FR-5 | TCP server `sk_server` + `sk_client` with thread pool | `tests/sk_concurrency.rs` |
 | FR-6 | HTTP server: `GET/POST /eval`, `/health`, `/` (docs), `/cache`, JS mgmt (`/upload-js`, `/update-js`, `/delete-js`, `/list-js`, `/reload-hooks`) | `openapi.yml`, `tests/http_server_jsonpath.rs` |

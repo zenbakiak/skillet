@@ -118,9 +118,12 @@ pub enum Value {
     Null,             // Explicit null type
     Currency(f64),    // Deprecated in 0.7 (ADR-0033), read as a Number; removed in 0.8
     DateTime(i64),    // Unix timestamp
-    Json(String),     // JSON object as string
+    Json(String),     // JSON object as string; deprecated in 0.7 (ADR-0030), Value::Object in 0.8
 }
 ```
+
+`Value` is `#[non_exhaustive]` (BL-092), as are `lexer::Token`, `ast::Expr`, `ast::BinaryOp`,
+`ast::UnaryOp` and `ast::TypeName`: a `match` outside the crate needs a `_` arm.
 
 **Type Coercion Rules:**
 1. Numbers coerce to strings in concatenation
