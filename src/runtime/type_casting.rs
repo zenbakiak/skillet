@@ -1,5 +1,6 @@
 use crate::ast::TypeName;
 use crate::error::Error;
+use crate::runtime::datetime::{datetime_text, parse_datetime_text};
 use crate::types::Value;
 
 pub fn cast_value(v: Value, ty: &TypeName) -> Result<Value, Error> {
@@ -50,7 +51,7 @@ pub fn cast_value(v: Value, ty: &TypeName) -> Result<Value, Error> {
                 Value::String(format!("{:?}", items))
             }
             Value::Currency(n) => Value::String(format!("{:.4}", n)),
-            Value::DateTime(ts) => Value::String(ts.to_string()),
+            Value::DateTime(ts) => Value::String(datetime_text(ts)),
             Value::Json(s) => Value::String(s),
         },
         TypeName::Boolean => match v {
@@ -82,8 +83,8 @@ pub fn cast_value(v: Value, ty: &TypeName) -> Result<Value, Error> {
             Value::DateTime(ts) => Value::DateTime(ts),
             Value::Number(n) => Value::DateTime(n as i64),
             Value::String(s) => Value::DateTime(
-                s.parse::<i64>()
-                    .map_err(|_| Error::new("Cannot cast String to DateTime", None))?,
+                parse_datetime_text(&s)
+                    .ok_or_else(|| Error::new("Cannot cast String to DateTime", None))?,
             ),
             _ => return Err(Error::new("Cannot cast to DateTime", None)),
         },
