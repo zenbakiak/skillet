@@ -14,7 +14,7 @@ pub fn exec_arithmetic(name: &str, args: &[Value]) -> Result<Value, Error> {
         "AVG" | "AVERAGE" => average(args),
         "MIN" => Ok(extreme(args, f64::min)),
         "MAX" => Ok(extreme(args, f64::max)),
-        "ROUND" => round(args),
+        "ROUND" => round(name, args),
         "CEIL" | "CEILING" => ceiling(name, args),
         "FLOOR" => floor(args),
         "ABS" => unary(name, args, |n| Ok(n.abs())),
@@ -93,17 +93,24 @@ fn unary(
 /// `ROUND(number, [num_digits])`: half away from zero, on the number's 15-significant-digit
 /// decimal form (so `ROUND(1.005, 2)` is 1.01, as in Excel). Negative digits round to the left
 /// of the decimal point. `num_digits` is truncated and defaults to 0 (a Skillet extension; Excel
-/// requires it).
-fn round(args: &[Value]) -> Result<Value, Error> {
-    arity("ROUND", args, 1, 2, "number, [num_digits]")?;
-    let n = number_arg("ROUND", args, 0, "number")?;
-    let digits = optional_number_arg("ROUND", args, 1, "num_digits", 0.0)?;
+/// requires it). `.round([digits])` is the same function (BL-088); `name` is the form named in
+/// errors.
+pub(crate) fn round(name: &str, args: &[Value]) -> Result<Value, Error> {
+    arity(name, args, 1, 2, "number, [num_digits]")?;
+    let n = number_arg(name, args, 0, "number")?;
+    let digits = optional_number_arg(name, args, 1, "num_digits", 0.0)?;
     if digits.is_nan() {
-        return Err(Error::new("ROUND num_digits is not a number (#NUM!)", None));
+        return Err(Error::new(
+            format!("{name} num_digits is not a number (#NUM!)"),
+            None,
+        ));
     }
     let r = round_half_away(n, digits.trunc().clamp(-400.0, 400.0) as i32);
     if n.is_finite() && !r.is_finite() {
-        return Err(Error::new("ROUND result is out of range (#NUM!)", None));
+        return Err(Error::new(
+            format!("{name} result is out of range (#NUM!)"),
+            None,
+        ));
     }
     Ok(Value::Number(r))
 }

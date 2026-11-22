@@ -22,6 +22,9 @@ Check these first. They change results without an error:
    `"2.5000"`). Responses say `"type": "Number"` (was `"Currency"`).
 11. **`filter`, `find`, `FILTER`, `FIND` with a lambda that returns a number** now keep or find the
    items where it is non-zero (ADR-0029 Amendment 1): `[0, 1, 2].filter(:x)` is `[1, 2]` (was `[]`).
+12. **`.round(digits)`** is now `ROUND` (BL-088): halves round away from zero on the number's
+   15-digit decimal form, so `1.005.round(2)` is `1.01` (was `1.0`). About 3 in 100 two-decimal
+   halves change; see the table below.
 
 ## Expressions
 
@@ -106,6 +109,10 @@ To keep a default, test first: `IF(:n == 0, 0, :total / :n)` (now lazy, see belo
 | `TRIM("  a   b  ")` | `"a   b"` | `"a b"` |
 | `ROUND(1234.567, -2)`, `ROUND(15, -1)` | `1235`, `15` | `1200`, `20` |
 | `ROUND(1.005, 2)` | `1.0` | `1.01` |
+| `1.005.round(2)`, `0.285.round(2)`, `1.015.round(2)`, `0.145.round(2)` (BL-088) | `1.0`, `0.28`, `1.01`, `0.14` | `1.01`, `0.29`, `1.02`, `0.15` (as `ROUND`) |
+| `0.49999999999999994.round()`, `1e307.round(5)` (BL-088) | `0`, `inf` | `1`, `1e307` (as `ROUND`) |
+| `(2.5).round(NULL)`, `(2.5).round("1")` (BL-088) | `Error: round precision must be number` | `3`, `2.5` (as `ROUND`) |
+| `(2.5).round(1, 2)` (BL-088) | `2.5` (extra argument ignored) | `Error: round expects ([num_digits])` |
 | `CEILING(2.1, 0.5)`, `CEILING(7, 5)` | `3`, `7` | `2.5`, `10` |
 | `FLOOR(7, 5)` | `7` | `5` |
 | `TIME(14, 30, 0)` | current time (0.6.3) | `0.6041666666666666` (fraction of a day) |
@@ -116,8 +123,9 @@ To keep a default, test first: `IF(:n == 0, 0, :total / :n)` (now lazy, see belo
 | `SORT(["b", "a"])` (#96) | `Error` | `["a", "b"]` (text ignores case) |
 | `UNIQUE(["a", "a", 1])`, `REVERSE("abc")` (#96) | `[1]`, `Error` | `["a", 1]`, `"cba"` |
 
-The methods keep Ruby semantics and do not change: `"  a   b  ".trim()` is still `"a   b"`, and
-`(-3.7).int()` is still `-3` (while `INT(-3.7)` is `-4`).
+The other methods keep Ruby semantics and do not change: `"  a   b  ".trim()` is still `"a   b"`,
+and `(-3.7).int()` is still `-3` (while `INT(-3.7)` is `-4`). `.round()` is the exception: it is
+`ROUND` (BL-088, maintainer decision).
 
 ### Logical functions and operators (ADR-0018 D-8, ADR-0029)
 Every condition follows one rule, the `IF` rule (ADR-0029 Amendment 1): `TRUE`/`FALSE` as they
