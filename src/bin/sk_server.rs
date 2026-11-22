@@ -78,6 +78,10 @@ use token_eq::tokens_match;
 mod parse_cache;
 use parse_cache::parsed;
 
+#[path = "http_server/conn_limit.rs"]
+mod conn_limit;
+use conn_limit::{Admission, ConnLimiter};
+
 #[path = "http_server/pid_file.rs"]
 mod pid_file;
 use pid_file::write_pid_file;
@@ -480,6 +484,10 @@ fn main() {
         eprintln!("  --pid-file <file>    Write PID to file (default: skillet-server.pid)");
         eprintln!("  --log-file <file>    Write logs to file (daemon mode only)");
         eprintln!("  --token <value>      Require token for requests (or set SKILLET_AUTH_TOKEN)");
+        eprintln!("  --max-connections-per-ip <n>");
+        eprintln!("                       Open connections allowed from one IP address; more get");
+        eprintln!("                       an error line (or set SKILLET_MAX_CONNECTIONS_PER_IP;");
+        eprintln!("                       the flag wins). Default: no limit");
         eprintln!();
         eprintln!("Examples:");
         eprintln!("  sk_server 8080              # Start server on port 8080");
@@ -507,6 +515,7 @@ fn main() {
     let mut daemon_mode = false;
     let mut pid_file = "skillet-server.pid".to_string();
     let mut _log_file: Option<String> = None;
+    let mut max_conns_flag: Option<String> = None;
     let mut i = 2;
 
     while i < args.len() {
@@ -550,6 +559,15 @@ fn main() {
                     std::process::exit(1);
                 }
             }
+            conn_limit::FLAG => {
+                if i + 1 < args.len() {
+                    max_conns_flag = Some(args[i + 1].clone());
+                    i += 1;
+                } else {
+                    eprintln!("Error: {} requires a number", conn_limit::FLAG);
+                    std::process::exit(1);
+                }
+            }
             arg => {
                 // Try to parse as thread count if it's a number
                 if let Ok(threads) = arg.parse::<usize>() {
@@ -569,6 +587,13 @@ fn main() {
         eprintln!("Error: the auth token is empty (--token or SKILLET_AUTH_TOKEN); give a non-empty token or unset it");
         std::process::exit(1);
     }
+
+    // The flag wins over the env var; 0, empty or non-numeric is an error (ADR-0025).
+    let max_conns_per_ip = conn_limit::resolve(max_conns_flag.as_deref()).unwrap_or_else(|e| {
+        eprintln!("Error: {e}");
+        std::process::exit(1);
+    });
+    let limiter = max_conns_per_ip.map(ConnLimiter::new);
 
     // Handle daemon mode before any output
     if daemon_mode {
@@ -642,6 +667,9 @@ fn main() {
         if auth_token.is_some() {
             eprintln!("🔒 Token auth: enabled");
         }
+        if let Some(max) = max_conns_per_ip {
+            eprintln!("🚦 Max connections per IP: {}", max);
+        }
         eprintln!("🔧 Ready for high-throughput expression evaluation");
         eprintln!();
     }
@@ -661,10 +689,21 @@ fn main() {
                 // The listener is non-blocking; on macOS/BSD accepted sockets inherit that, and
                 // a read that finds no data yet would end the connection instead of waiting.
                 let _ = stream.set_nonblocking(false);
+                // Counted before the connection is queued, so a rejected one never reaches a
+                // worker (ADR-0025).
+                let guard = match conn_limit::admit(limiter.as_ref(), &stream) {
+                    Admission::Accept(guard) => guard,
+                    Admission::Reject(max) => {
+                        let line = format!("{}\n", conn_limit::rejection_json(max));
+                        conn_limit::reject(stream, line.as_bytes());
+                        continue;
+                    }
+                };
                 let stats = Arc::clone(&stats);
                 let request_counter = Arc::clone(&request_counter);
                 let server_token = Arc::clone(&server_token);
                 pool.execute(move || {
+                    let _guard = guard; // released when the connection is closed
                     handle_client(stream, stats, request_counter, server_token);
                 });
             }
