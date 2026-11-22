@@ -125,8 +125,9 @@ Errors go to stderr and `sk` exits with code 2.
 
 ### Limits
 
-Every evaluation is limited: nesting depth 128, a 256 MiB budget of values created, and (servers
-only) a 10 s deadline. Going over a limit returns an error such as
+Every evaluation is limited: nesting depth 128, a 256 MiB budget of values created (1 GiB on the
+servers by default), and (servers only) a 60 s deadline by default; the servers' values are set
+with `--max-eval-bytes` and `--eval-timeout`. Going over a limit returns an error such as
 `Expression nested too deeply (max 128)` or `Evaluation budget exceeded (max 256 MB)`.
 See [limits.md](limits.md) for the cost model, the server behaviour, the
 `EvalLimits`/`with_limits` API, and how to rewrite formulas that hit the budget.

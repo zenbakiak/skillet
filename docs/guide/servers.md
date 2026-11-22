@@ -88,7 +88,8 @@ Pooled connections (see [Connection Pooling](#1-connection-pooling-python)) that
 The write deadline is a total for the whole response, on both servers. A client that reads a
 large result more slowly than that gets a truncated response with no error message: on
 `sk_server` a JSON line without its trailing `\n`, on `sk_http_server` a body shorter than
-`Content-Length`. Sending the largest possible result (256 MiB) within 10 s needs about 25 MB/s.
+`Content-Length`. Sending the largest possible result (the budget, 1 GiB by default) within 10 s
+needs about 100 MB/s.
 Details and measurements: [limits](limits.md#response-write-deadline-10-s).
 
 `sk_http_server` answers an oversized request (headers + body over 1 MB, or a `Content-Length`
@@ -96,8 +97,8 @@ over 1 MB) with HTTP status **413** and a request that takes more than 30 s to a
 **408**, for example `{"error":"Request body too large (max 1MB)","success":false}` or
 `{"error":"Request read timed out (max 30 s)","success":false}` (both were 400 before 0.7.0).
 It reads the rest of the rejected request before closing, so the client gets the error rather
-than a connection reset. Evaluation limits (depth, budget, the 10 s
-evaluation deadline) are separate; see [limits](limits.md#server-request-limits-1-mb-30-s-10-s)
+than a connection reset. Evaluation limits (depth, budget, the evaluation deadline; see
+[Evaluation deadline and budget](#evaluation-deadline-and-budget)) are separate; see [limits](limits.md#server-request-limits-1-mb-30-s-10-s)
 for both, with captured output.
 
 ### Connections and authentication
@@ -202,6 +203,53 @@ The slot is given back when the connection closes. With the limit set, the banne
 Behind a reverse proxy or load balancer every client has the proxy's address, so the server would
 limit all clients together. Set the limit at the proxy instead and leave this setting unset.
 
+### Evaluation deadline and budget
+
+Both servers run every evaluation under a wall-clock deadline and a budget of values created
+([ADR-0011](../adr/0011-evaluation-budget.md) amendment 4). Skillet is used on large data, so the
+server defaults are higher than the library's, and both can be changed at start-up:
+
+| Setting | Meaning | Default |
+|---|---|---|
+| `--eval-timeout <seconds>` or `SKILLET_EVAL_TIMEOUT` (flag wins) | wall-clock limit for one evaluation, a whole number of seconds from 1 to 86400 | `60` |
+| `--max-eval-bytes <bytes>` or `SKILLET_MAX_EVAL_BYTES` (flag wins) | budget for one evaluation; a whole number of bytes, or with a suffix `K`, `M` or `G` (KiB, MiB, GiB, either case): `1073741824`, `1048576K`, `1024M` and `1G` are the same | `1G` |
+
+The library and the `sk` CLI do not read these settings. They keep a 256 MiB budget
+(`skillet::MAX_EVAL_BYTES`) and no deadline; an embedder sets its own with `with_limits`
+([limits](limits.md#library-api-evallimits-and-with_limits)).
+
+`0`, an empty value or anything else that is not a valid number is refused at start-up with exit
+code 1:
+
+```console
+$ sk_http_server 5793 --eval-timeout 0
+Error: --eval-timeout must be a whole number of seconds from 1 to 86400 (got "0")
+$ SKILLET_MAX_EVAL_BYTES=1.5G sk_server 5794
+Error: SKILLET_MAX_EVAL_BYTES must be a whole number of bytes greater than 0, optionally followed by K, M or G (KiB, MiB, GiB) (got "1.5G")
+$ SKILLET_EVAL_TIMEOUT= sk_http_server 5795
+Error: SKILLET_EVAL_TIMEOUT must not be empty; give a number of seconds greater than 0 or unset it
+```
+
+The banner shows both values and the worst case they allow (captured from a debug build):
+
+```console
+$ sk_server 5792 8 --eval-timeout 120 --max-eval-bytes 512M
+🚀 Skillet Server started on 127.0.0.1:5792
+📊 Worker threads: 8
+⏱️  Eval timeout: 120 s (--eval-timeout or SKILLET_EVAL_TIMEOUT)
+💾 Eval budget: 512 MiB per evaluation, up to about 4 GiB with 8 threads (--max-eval-bytes or SKILLET_MAX_EVAL_BYTES)
+🔧 Ready for high-throughput expression evaluation
+```
+
+**Size the machine for it.** Each worker thread can run one evaluation at the full budget, so
+the budget alone can take `threads × max-eval-bytes` of memory: 8 threads × 1 GiB = 8 GiB with
+the defaults. Live memory per evaluation can reach about twice the budget (see
+[limits](limits.md#sizing-a-server)). Lower `--threads` or `--max-eval-bytes` if the host has less.
+
+The other time limits do not change with the deadline: a request must still arrive within 30 s,
+a response must be written within 10 s, and a JavaScript plugin call stops after 10 s or at the
+evaluation deadline, whichever comes first.
+
 ### Cross-origin requests and request bodies (`sk_http_server`)
 
 Browsers only let a page read a response from another origin when the response allows it
@@ -286,7 +334,8 @@ DELETE /delete-js {"filename": "math/double_it.js"}
 Uploading or updating a hook runs its `@example` once to validate it, under the same limits as any
 plugin call (64 MiB, 10 s per call; see [Limits](limits.md#javascript-plugins-64-mib-10-s-256-kib)).
 An example that loops answers after 10 s with the timeout in `validation_results.example_error`.
-During `/eval` a plugin is also stopped by the 10 s request deadline.
+During `/eval` a plugin is also stopped by the evaluation deadline if that comes first (it only
+does when `--eval-timeout` is below 10).
 
 A hook cannot replace a builtin ([ADR-0024](../adr/0024-hooks-cannot-override-builtins.md)). An
 `@name` that is a builtin name or alias, in any case (`SUM`, `sum`, `STDEV.P`, `IF`, `FILTER`,
@@ -482,7 +531,7 @@ sk_eval() {
 ### 1. Connection Pooling (Python)
 
 For high-throughput applications, reuse connections. Each response is one `\n`-terminated JSON
-line of any length (up to the 256 MiB budget), so read whole lines; a single `recv(4096)` cuts
+line of any length (up to the evaluation budget, 1 GiB by default), so read whole lines; a single `recv(4096)` cuts
 large results short and leaves the rest to be read as the next response:
 
 ```python
@@ -622,7 +671,7 @@ echo '{"expression": "=2+3*4", "variables": null}' | nc 127.0.0.1 8080
 
 `sk_server` and `sk_http_server` parse an expression once per worker thread and reuse the parsed
 form when the same text comes again, with any variables. Each request still runs under its own
-budget and 10 s deadline, and the result is the same as without the cache. This saves the parse
+budget and deadline, and the result is the same as without the cache. This saves the parse
 on every repeated request: for a 1.8 KB formula over HTTP, one connection at a time, 190 µs →
 140 µs per request; for short formulas the parse is too small to measure
 ([`benches/BASELINE.md`](../../benches/BASELINE.md#bl-012-parse-cache)).
@@ -742,8 +791,8 @@ ping localhost
 echo '{"expression": "=your_expression", "variables": null}' | nc localhost 8080
 ```
 
-`Expression nested too deeply (max 128)`, `Evaluation budget exceeded (max 256 MB)` and
-`Evaluation timed out (max 10 s)` are limit errors, not bugs. See
+`Expression nested too deeply (max 128)`, `Evaluation budget exceeded (max 1024 MB)` and
+`Evaluation timed out (max 60 s)` (the numbers are the configured limits) are limit errors, not bugs. See
 [limits](limits.md) for what they mean and how to rewrite the formula.
 
 This server architecture provides a foundation for building high-performance applications that require fast mathematical and logical expression evaluation at scale.
