@@ -18,6 +18,18 @@ Planned as 0.7.0. It contains breaking changes, marked **BREAKING** below; the
 [migration guide](docs/guide/migration-0.7.md) lists each one with the old and the new result.
 
 ### Added
+- `DATEDIF(start, end, unit)` with Excel's worksheet codes `y m d md ym yd`; `#NUM!` when start is
+  after end or the unit is unknown (BL-074, #103).
+- `NOT` prefix keyword, any case, with the same result as `NOT(x)` (ADR-0029, #102).
+- `/health` reports `parse_cache` (hits, misses, hit rate, entries) over all workers, and
+  `DELETE /cache` now clears every worker's parse cache too (BL-067, #99).
+- Fuzzing: a `fuzz/` crate with cargo-fuzz targets `parse`, `evaluate` and `json_vars`, and a
+  weekly `fuzz.yml` workflow; the root crate and the gate are unchanged (ADR-0028, BL-019, #98).
+- CI builds and smoke-tests the Docker image (`scripts/docker_smoke.sh`): exit 64 without tokens,
+  healthy with both, 401 without a token, no token in the log. Not a required check yet
+  (BL-062, #92).
+- The Alpine builder builds x86_64 as well as aarch64, `--locked`, on a pinned
+  `rust:1.89.0-bookworm` image (BL-065, #95).
 - `sk_http_server` and `sk_server`: optional limit on concurrent connections per IP address,
   `--max-connections-per-ip N` or `SKILLET_MAX_CONNECTIONS_PER_IP` (flag wins; no limit when unset).
   Connections over the limit get HTTP 429 or a JSON error line (ADR-0025, #87).
@@ -61,6 +73,52 @@ Planned as 0.7.0. It contains breaking changes, marked **BREAKING** below; the
 - `sk_http_bench --expr` selects the expression for the sweep (#80).
 
 ### Changed
+- **BREAKING:** parsing requires the end of the input. Tokens after the expression are an error,
+  `Unexpected token after end of expression`, at the first extra token (`=1 2`,
+  `=42 as string`); before, they were dropped silently. One trailing `;` is still allowed. Error
+  positions count from the start of the caller's input, including a leading `=` (BL-069, #93; [parsing](docs/guide/migration-0.7.md#parsing-requires-the-end-of-input-bl-069-93)).
+- **BREAKING:** the `AND` and `OR` operators work. They were never lexed, so everything from
+  `AND` on was dropped: `TRUE AND FALSE` was TRUE and is now FALSE. `AND(...)`/`OR(...)` before an
+  operand are still the builtins (BL-069, #93). `^` followed by unary minus already matched Excel
+  (`2^-2` is 0.25, `0^-1` is `#DIV/0!`); tests now pin it (BL-060, #93).
+- **BREAKING:** Excel logic (ADR-0029, ADR-0018 D-8, #102; see
+  [logical functions](docs/guide/migration-0.7.md#logical-functions-and-operators-adr-0018-d-8-adr-0029)):
+  - The operators `AND`, `OR`, `&&` and `||` short-circuit (`FALSE AND 1/0` is FALSE). The
+    builtins `AND()`/`OR()` still evaluate every argument.
+  - The `AND`/`OR`/`NOT`/`XOR` builtins skip text and `NULL` inside arrays and a `NULL` argument;
+    text passed directly, or no logical value at all, is `#VALUE!`. `AND(TRUE, NULL)` is now TRUE
+    (was FALSE) and `AND()` is `#VALUE!` (was TRUE). `XOR` takes any number of arguments.
+- **BREAKING:** `DATEADD` and `DATEDIFF` read VBA's unit codes, case-insensitively
+  (`yyyy q m y d w ww h n s`). Three codes change silently: `"m"` is months (was minutes), `"y"`
+  is days (was years) and `DATEADD`'s `"w"` adds a day (was a week). The long words are unchanged.
+  `DATEADD` clamps months to the end of the month, as VBA does (BL-074, B-15, #103; see
+  [date units](docs/guide/migration-0.7.md#date-units-follow-excel-b-15)).
+- **BREAKING:** date and currency arithmetic like Excel (ADR-0027, amends ADR-0023, BL-070, #97;
+  see [dates](docs/guide/migration-0.7.md#dates-adr-0018-d-5) and
+  [currency](docs/guide/migration-0.7.md#currency-in-arithmetic-adr-0027)):
+  - In `DateTime ± x` and `x + DateTime`, `x` converts with the ADR-0023 rule:
+    `DATE(2026,1,1) + NULL` is the date, `+ "1"` or `+ TRUE` the next day, other text `#VALUE!`.
+  - `+ - * /` and unary minus keep Currency; `Currency / Currency`, `^` and `%` give a Number.
+    Results are not rounded. Some error messages change to `#VALUE!`.
+  - Methods are unchanged: `[1,"2"].sum()` still errors.
+- **BREAKING:** text builtins follow Excel (ADR-0018, #96; [builtins](docs/guide/migration-0.7.md#builtins-that-now-match-excel-adr-0018)): `LEFT`, `RIGHT`, `MID` and `REPLACE`
+  give `#VALUE!` for a negative length or a start below 1 instead of clamping (`LEFT(x,-1)`,
+  `MID(x,0,n)`). `SORT` sorts text case-insensitively, orders mixed values numbers < text <
+  booleans, and is stable; sorting text used to be an error.
+- **BREAKING** (wire format): `sk_http_server` answers an oversized request with HTTP 413 and a
+  slow one with 408 (both were 400). It reads the rest of the request first (bounded), so the
+  client gets the error instead of a reset (BL-049, #99; see
+  [servers](docs/guide/migration-0.7.md#servers)).
+- Evaluation budget: strings and JSON cost `48 + len` bytes (was `32 + len`), which matches what a
+  1-char string really takes. `with_limits` boundaries for string results move by 16 bytes per
+  string (ADR-0011 amendment 3, BL-035, #105).
+- `sk_server` daemonizes through the shared `daemon.rs`, with the same behaviour; a test fails on
+  `unsafe` outside `daemon.rs` and `local_time.rs` (BL-064, #99).
+- Server integration tests start each server on a port it owns and wait for its own start-up
+  line; under heavy load 0 of 360 suite runs failed, against 11 of 130 before (BL-061, #100).
+- `docs/reference/excel-compat.md` re-run on develop and recounted, and the threat model
+  re-reviewed (BL-071, #94). ADR-0030 (`Value::Object` and `Arc`-shared values) is accepted for
+  0.8.0; no code yet (BL-011, BL-036, #104).
 - **BREAKING:** like Excel, the arithmetic operators and scalar math builtins convert numeric
   text and `TRUE`/`FALSE` to numbers (`ABS("-3")` = 3, `"3"+1` = 4, `TRUE+1` = 2), and the operators
   read `NULL` as 0. Other text is `Cannot convert "abc" to a number (#VALUE!)` (ADR-0023, #89).
@@ -132,8 +190,10 @@ Planned as 0.7.0. It contains breaking changes, marked **BREAKING** below; the
   `NULL` is still an error (#82).
 - **BREAKING** Custom and JS functions are visible in builtin lambdas, method arguments and
   assignment formulas, so a custom function can shadow a builtin there too (ADR-0016) (#82).
-- `IF` and `IFS` evaluate only the chosen branch (#82). **BREAKING**: a non-boolean condition
-  (`IF("x", 1, 2)`) and `IFS` with no true condition are errors (#84).
+- `IF` and `IFS` evaluate only the chosen branch (#82). **BREAKING**: the condition must be
+  TRUE/FALSE, a number or `NULL` (false); anything else (`IF("x", 1, 2)`) is `#VALUE!`, and `IFS`
+  with no true condition is `#N/A` (ADR-0018 D-8, B-18, #102). An earlier version of this entry
+  credited #84, which did not implement it.
 - **BREAKING** `JQ` result shape follows the path (ADR-0014): a singular path (`.name`, `['name']`,
   `[n]`) returns the value, or `NULL` when it misses (was `[]`); any other path returns an array,
   even with one match. `JQ({"a":[3]}, "$.a[*]")` is `[3]` (was `3`) (#76).
@@ -175,6 +235,11 @@ Planned as 0.7.0. It contains breaking changes, marked **BREAKING** below; the
 - Public enum `lexer::Token` gains `Ampersand`, and `runtime::evaluator` gains
   `eval_with_assignments_and_custom` (#82).
 
+### Deprecated
+- `SUBSTITUTEM`, in favour of `SUBSTITUTE`; it still works (#96).
+- `runtime::builtin_functions::exec_builtin`; use `runtime::function_dispatch::exec_builtin_fast`
+  or `evaluate` (BL-057, #99; see [Rust API](docs/guide/migration-0.7.md#rust-api)).
+
 ### Removed
 - **BREAKING** (ADR-0010): the unused public modules `skillet::memory_pool`, `skillet::traits`,
   `skillet::concurrent_registry` and the `skillet::runtime::evaluation` re-export shim. Use
@@ -186,6 +251,20 @@ Planned as 0.7.0. It contains breaking changes, marked **BREAKING** below; the
 - `crate-release.yml` and the `crate-v*` release trigger (ADR-0022, #75).
 
 ### Fixed
+- `CONCAT` and `&` no longer drop Currency or DateTime: Currency is written as its number and a
+  DateTime as its `::String` text. `DB` matches Microsoft's 7-period example and gives `#NUM!` for
+  bad arguments instead of NaN or 0. `UNIQUE` keeps every type and `REVERSE` reverses strings
+  (B-7, B-8, B-11, #96).
+- `DATEADD` with a huge amount gives `#NUM!`; before, it panicked or looped (#103).
+- Two fuzz findings: an input starting with `==` overflowed in the lexer (release builds reported
+  position `usize::MAX`, now 0), and `[1][-1e300]` overflowed in index clamping. Both panicked in
+  debug builds only (F-1, F-2, #98).
+- `/health` evictions count real LRU evictions, and the HTTP request buffer goes back to the pool
+  (BL-057, #99).
+- The Docker image could never build: `.dockerignore` excluded `benches/`, which Cargo needs to
+  read `Cargo.toml`. Same fix for the Alpine builder (BL-062, #92; BL-065, #95).
+- `scripts/daemon_manager.sh` drives the `skillet-http` Compose service; it used `skillet-server`,
+  which does not exist (BL-063, #91).
 - `=1e3` evaluated to 1; `1e308*10` now gives the `#NUM!` error (BL-058, #89).
 - `DateTime == DateTime` compares timestamps, and `<`/`>` work between dates (BL-059, #88).
 - A lexer error on the first token is reported instead of `Unexpected token: Eof` (#89).
@@ -210,6 +289,14 @@ Planned as 0.7.0. It contains breaking changes, marked **BREAKING** below; the
   now give `Expression nested too deeply (max 128)` (#79).
 
 ### Security
+- `SORT`, `UNIQUE`, `JOIN`, `TEXTJOIN` and `.sort`/`.unique`/`.join` check the deadline inside
+  their loops: with a 1 ms deadline and 3M items `.unique` stops after 3.8 ms instead of 1064 ms
+  and returns the timeout error. `UPPER`/`LOWER` and the methods check that case-mapped text fits
+  the budget before building it; peak memory under a 4 MiB budget fell from 24 MB to 3.4 MB
+  (BL-035, #105).
+- The parser and evaluator are fuzzed weekly in CI with ASan (ADR-0028, #98).
+- `.env` and `.env.*` are excluded from the Docker build contexts (#92).
+- Every GitHub Action in `rust.yml` and `release.yml` is pinned by commit SHA (BL-065, #95, #101).
 - `sk_server` limits each request line to 1 MB and both servers limit reading one request to
   30 s in total (#51).
 - Auth tokens are compared in constant time on both servers (#51).

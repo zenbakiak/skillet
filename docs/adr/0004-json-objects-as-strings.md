@@ -1,6 +1,7 @@
 # 0004. Nested JSON objects carried as strings
 
-- Status: Accepted (retroactive, v0.6.3) — candidate for supersession (BL-011)
+- Status: Superseded by [ADR-0030](0030-structured-and-shared-values.md) (2026-11-21); was Accepted
+  (retroactive, v0.6.3)
 - Date: 2026-11-20
 - Related: BL-011, ADR-0003
 
