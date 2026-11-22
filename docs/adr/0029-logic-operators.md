@@ -15,6 +15,15 @@
 > and "`!` ... takes booleans only" in §3. Full text and the before/after table:
 > [Amendment 1](#amendment-1-maintainer-2026-11-22-bl-089) below.
 
+> **Amendment 2 (Proposed, maintainer decision 2026-11-22, BL-107):** the aggregates (`SUM`,
+> `AVERAGE`, `MIN`, `MAX`, `PRODUCT`, `COUNT`, `MEDIAN`, `MODE.SNGL`, `STDEV.*`, `VAR.*`,
+> `PERCENTILE.INC`, `QUARTILE.INC`) take this ADR's split between a direct argument and an item
+> inside an array. A direct number text or boolean counts (`SUM(1, "2", TRUE)` is 4), direct text
+> that is not a number is `#VALUE!` (`COUNT` skips it), and array items stay skipped. This
+> replaces audit X-3 ("skip direct text and booleans everywhere") and the ADR-0018 "Direct text
+> arguments" row. Full text and the before/after table:
+> [Amendment 2](#amendment-2-proposed-maintainer-decision-2026-11-22-bl-107) below.
+
 ## Context
 - #93 (BL-069) made `AND` and `OR` between two operands parse as the `&&`/`||` operators. Before,
   the parser dropped them silently (`TRUE AND FALSE` was TRUE). No ADR recorded the operators.
@@ -355,3 +364,219 @@ Unchanged, pinned by tests: `FALSE AND 1/0` (`false`), `TRUE OR 1/0` (`true`), `
   empty cells there. The warning in the reference covers the `&.` case.
 - **Keep §2's "the right side is still evaluated" for a non-boolean left side.** Not needed: with
   one rule, an invalid left side is an error by itself.
+
+## Amendment 2 (Proposed, maintainer decision 2026-11-22, BL-107)
+
+- Status: Proposed. The maintainer chose the direction on 2026-11-22 ("the aggregates follow
+  ADR-0029"); the exact rules below wait for acceptance.
+- Related: excel-compat X-3 (LANG-10, found by BL-084), ADR-0018 "Deliberate differences"
+  ("Direct text arguments"), ADR-0023 §6 (number coercion), ADR-0031 amendment 2 (dates in
+  aggregates), ADR-0033 (one number type), ADR-0015 (NaN in statistics).
+
+### Context
+The aggregates skip text and booleans everywhere: `SUM(1, "2", TRUE)` is `1`, `MAX(-1, "5")` is
+`-1`, `AVERAGE("x")` is `AVERAGE of no numbers (#DIV/0!)`. Excel skips them only inside a range
+or array; typed directly as an argument, number text and logical values count and other text is
+`#VALUE!`. ADR-0018 kept the skip because Skillet has "no cell ranges", but Skillet can tell a
+direct argument from an array item, and the `AND`/`OR`/`XOR` builtins already do (§5:
+`AND(TRUE, "x")` is `#VALUE!`, `AND([TRUE, "x"])` is TRUE). The scalar math builtins convert
+(ADR-0023 §6), so `ABS("2")` is `2` while `SUM("2")` is `0`. The audit also found that a NaN from
+the host makes `SUM` return NaN and that `MIN`/`MAX` drop it silently (`MAX(:n, 1)` is `1`).
+
+### Decision
+
+#### B1. Which builtins
+Every builtin in `src/runtime/builtin_table.rs` that reads a list of values was checked.
+
+| Builtin (aliases) | Covered? | Notes |
+|---|---|---|
+| `SUM` | yes | |
+| `PRODUCT` (`MULTIPLY`) | yes | |
+| `AVERAGE` (`AVG`) | yes | |
+| `MIN`, `MAX` | yes | dates keep ADR-0031 amendment 2 (B1) |
+| `COUNT` | yes, counting rule (B3) | counts; never converts or errors on text |
+| `MEDIAN` | yes | |
+| `MODE.SNGL` (`MODE_SNGL`, `MODESNGL`, `MODE`) | yes | |
+| `STDEV.P` (`STDEV_P`, `STDEVP`), `STDEV.S` (`STDEV_S`, `STDEV`) | yes | |
+| `VAR.P` (`VAR_P`, `VARP`), `VAR.S` (`VAR_S`, `VAR`) | yes | |
+| `PERCENTILE.INC` (`PERCENTILE_INC`, `PERCENTILEINC`, `PERCENTILE`), `QUARTILE.INC` (`QUARTILE_INC`, `QUARTILEINC`, `QUARTILE`) | yes, data arguments only | the last argument (`k`, `quart`) keeps its rule: it must be a Number (unchanged) |
+| `COUNTA` | no | counts every value that is not `NULL`, direct or in an array; already Excel's rule |
+| `NPV` | no | Excel's `NPV` ignores direct text and logical values too ("Arguments that are empty cells, logical values, or text representations of numbers ... are ignored"); Skillet already does that |
+| `SUMIF`, `AVERAGEIF` (`AVGIF`), `COUNTIF` | no | `range` and `sum_range`/`average_range` are arrays (every value is an item); criteria keep their matching rules (ADR-0023, A2 for lambdas) |
+| `AND`, `OR`, `XOR` | already | §5 and A4, unchanged |
+| `CONCAT`, `TEXTJOIN`, `ARRAY`, `FLATTEN`, `MERGE`, `UNIQUE`, `SORT`, the financial builtins | no | not aggregates over numbers, or one value per argument (`PMT`, `FV`, … use `number_arg`, which already converts) |
+
+#### B2. The rule for the numeric aggregates (all of B1 except `COUNT`)
+A **direct argument** is a value written as an argument of the call: a literal, a variable, any
+sub-expression, or one value produced by a spread (B5). An **array item** is a value inside an
+array argument, at any depth. The values are read left to right, arrays depth first; the first
+value that is an error (below) is the result of the call.
+
+| Value | As a direct argument | As an array item |
+|---|---|---|
+| a Number (also a deprecated `Value::Currency`) | counts | counts (unchanged) |
+| number text, read as in ADR-0023 §6 (`"2"`, `" 4 "`, `"2.5"`, `"1e3"`) | **counts as that number** | skipped (unchanged) |
+| other text (`"x"`, `""`, `"TRUE"`, `"1,000"`, `"2026-01-01"`) | **`<NAME>: cannot convert "x" to a number (#VALUE!)`** | skipped (unchanged) |
+| `TRUE`, `FALSE` | **count as 1 and 0** | skipped (unchanged) |
+| `NULL` | skipped, like an empty cell (unchanged) | skipped (unchanged) |
+| a DateTime | unchanged: `MIN`/`MAX` compare dates (ADR-0031 amendment 2, B1); the others are `<NAME> does not accept dates (#VALUE!)` (B2) | the same (unchanged) |
+| a JSON object (`Value::Json`) | **`<NAME> expects numbers, got json (#VALUE!)`** | skipped (unchanged) |
+| an array | its values are array items | its values are array items |
+| NaN (a Number that is not a number) | **`<NAME> value is not a number (#NUM!)`** | **the same** |
+
+- `<NAME>` is the canonical name, whichever alias was called, the same names
+  `dates_not_accepted` uses: `SUM`, `PRODUCT`, `AVERAGE`, `MIN`, `MAX`, `MEDIAN`, `MODE.SNGL`,
+  `STDEV.P`, `STDEV.S`, `VAR.P`, `VAR.S`, `PERCENTILE.INC`, `QUARTILE.INC`. The text message is
+  the one ADR-0023 §6 gives the scalar builtins (`coerce_to_number` with context `"SUM: "`),
+  long text cut to 32 characters.
+- A converted direct value is a number like any other: it counts for `AVERAGE`'s divisor, for
+  "no numbers" errors (`AVERAGE(TRUE)` is `1`), for `MIN`/`MAX` mixing with dates
+  (`MAX(DATE(2026,1,1), TRUE)` is `MAX cannot compare dates with numbers (#VALUE!)`) and for
+  `STDEV.S`'s "at least two numbers".
+- `NULL` stays skipped so a missing value (`:u&.bonus`, a JSON `null`) adds nothing:
+  `SUM(:price, :u&.bonus)` keeps working, and `AVERAGE(NULL)` stays
+  `AVERAGE of no numbers (#DIV/0!)`. This is the same reading as `AND(TRUE, NULL)` (§5).
+- NaN. ADR-0029 amendment 1 made a NaN condition `#NUM!`; NaN data in an aggregate is now
+  `#NUM!` too, direct or in an array, because a NaN is a Number and array position does not
+  hide it. Worded like `ROUND num_digits is not a number (#NUM!)`. `MEDIAN`, `PERCENTILE.INC` and
+  `QUARTILE.INC` already reject NaN with `Cannot sort NaN values` (ADR-0015, pinned by
+  `tests/nan_data.rs`); they keep that message, so only the aggregates that returned NaN or
+  dropped it change (`SUM`, `PRODUCT`, `AVERAGE`, `MIN`, `MAX`, `MODE.SNGL`, `STDEV.*`, `VAR.*`).
+  Infinity is out of scope (unchanged).
+- `PERCENTILE.INC`/`QUARTILE.INC`: their `k`/`quart` checks still run first, then the data is
+  read with this rule (ADR-0031 amendment 2, B2 order).
+
+#### B3. `COUNT`
+`COUNT` counts and never fails on its values, as in Excel ("Arguments that are error values or
+text that cannot be translated into numbers are not counted").
+
+| Value | As a direct argument | As an array item |
+|---|---|---|
+| a Number (also NaN), a DateTime | counted (unchanged) | counted (unchanged) |
+| number text (ADR-0023 §6) | **counted** | not counted (unchanged) |
+| `TRUE`, `FALSE` | **counted** | not counted (unchanged) |
+| other text, `NULL`, a JSON object | not counted (unchanged) | not counted (unchanged) |
+
+Date text (`COUNT("2026-01-01")`) is not number text, so it is not counted (Excel counts it as
+a serial; Skillet has none, X-12). `COUNT()` stays `COUNT expects at least 1 argument`.
+
+#### B4. Excel and the deliberate differences
+Matches Excel's documented rule for `SUM`, `AVERAGE`, `MIN`, `MAX`, `COUNT`, `MEDIAN`,
+`STDEV.*`, `VAR.*` ("Logical values and text representations of numbers that you type directly
+into the list of arguments are counted"; "text that cannot be translated into numbers cause[s]
+errors", and for `COUNT` is not counted). `PRODUCT` says only that array text and logical values
+are ignored and that untranslatable text is an error; `MODE.SNGL`, `PERCENTILE.INC` and
+`QUARTILE.INC` say only the array part. Skillet applies the same rule to them (**verify in
+Excel**). `SUM(1,"2",TRUE)` is 4 and `SUM(1,"x")` is `#VALUE!` in Excel and in Skillet.
+
+Deliberate differences:
+- **A variable is a direct argument.** Excel ignores text in a referenced cell (`=SUM(A1, 1)`
+  with A1 = `"x"` is 1); only typed values convert. Skillet has no cells: `SUM(:a, 1)` with
+  `:a` = `"x"` is `#VALUE!`, and with `:a` = `"2"` is 3. To skip text from host data, pass it in
+  an array: `SUM([:a, 1])` is 1.
+- **A spread value is a direct argument** (B5). Excel has no spread.
+- **Dates** follow ADR-0031 amendment 2 (X-12), not Excel's serial numbers: date text is not a
+  number, and `SUM` of a date is an error.
+- **NaN** cannot occur in Excel. Skillet makes it `#NUM!` (B2).
+- **A JSON object** has no Excel counterpart; direct, it is `#VALUE!`, like `AND` (§5).
+
+#### B5. Spread arguments, methods and criteria
+- **Spread.** `SUM(...:xs)` passes each item of `:xs` as its own direct argument, the same as
+  writing them out: `SUM(...[1, "2", TRUE])` is `SUM(1, "2", TRUE)`, 4. This is how spread already
+  works in every builtin call (the `AND` builtin: `AND(...[TRUE, "x"])` is `#VALUE!` today, while
+  `AND([TRUE, "x"])` is TRUE; A7 counts `IF`'s arguments after spreading). One meaning of `...`
+  everywhere, and no change to the evaluator. To keep array-item skipping, pass the array itself:
+  `SUM(:xs)`. A spread of an array that contains an array still flattens that inner array as
+  array items: `SUM(...[[1, "2"]])` is 1.
+- **Methods** keep their own rule (ADR-0018: methods are not bound to the builtin):
+  `[1, "2", TRUE].sum()` stays `sum method expects numeric array`, `["2"].max()` stays an error.
+- **`COUNTIF`, `SUMIF`, `AVERAGEIF`** are out of scope: their ranges are arrays, their criteria
+  keep their matching rules, and lambda criteria keep A2. `SUMIF(["1", 2], ">0")` stays 2.
+- **Lambdas** inside `MAP`/`REDUCE`/`filter` that call an aggregate use the rule like any other
+  call: `[["2", 3]].map(SUM(...:x))` is `[5]`, `[["2", 3]].map(SUM(:x))` is `[3]`.
+
+### Before and after
+Run on `develop` at 47daba2 with `cargo run -q --bin sk`; the NaN rows through the library
+(`evaluate_with`) with `:n` = `Value::Number(f64::NAN)`. **Every row changes.** For the
+migration guide.
+
+| Expression | Before | After |
+|---|---|---|
+| `SUM(1, "2", TRUE)` | `1` | `4` |
+| `SUM("2")` | `0` | `2` |
+| `SUM(" 3 ", "1e2")` | `0` | `103` |
+| `SUM(1 == 1, 2 == 2)` | `0` | `2` |
+| `SUM(...[1, "2", TRUE])` | `1` | `4` |
+| `SUM(1, "x")` | `1` | `Error: SUM: cannot convert "x" to a number (#VALUE!)` |
+| `SUM(1, "")` | `1` | `Error: SUM: cannot convert "" to a number (#VALUE!)` |
+| `SUM("TRUE")` | `0` | `Error: SUM: cannot convert "TRUE" to a number (#VALUE!)` |
+| `SUM('a', TRUE)` | `0` | `Error: SUM: cannot convert "a" to a number (#VALUE!)` |
+| `SUM(:a, 1)` with `:a` = `"x"` | `1` | `Error: SUM: cannot convert "x" to a number (#VALUE!)` |
+| `SUM({"a": 1}, 2)` | `2` | `Error: SUM expects numbers, got json (#VALUE!)` |
+| `SUM(:n, 1)`, `SUM([:n])` | `NaN` | `Error: SUM value is not a number (#NUM!)` |
+| `PRODUCT("2", 3)`, `MULTIPLY("2", 3)` | `3` | `6` |
+| `PRODUCT(FALSE, 5)` | `5` | `0` |
+| `PRODUCT(:n)` | `NaN` | `Error: PRODUCT value is not a number (#NUM!)` |
+| `AVERAGE(1, "2")`, `AVG(1, "2")` | `1` | `1.5` |
+| `AVERAGE(TRUE)` | `Error: AVERAGE of no numbers (#DIV/0!)` | `1` |
+| `AVERAGE("x")`, `AVERAGE('a')` | `Error: AVERAGE of no numbers (#DIV/0!)` | `Error: AVERAGE: cannot convert "x" to a number (#VALUE!)` (`"a"`) |
+| `AVERAGE(:n)` | `NaN` | `Error: AVERAGE value is not a number (#NUM!)` |
+| `MAX(-1, "5")` | `-1` | `5` |
+| `MIN(TRUE, 5)` | `5` | `1` |
+| `MIN("x")` | `0` | `Error: MIN: cannot convert "x" to a number (#VALUE!)` |
+| `MAX(DATE(2026,1,1), TRUE)`, `MAX(DATE(2026,1,1), "5")` | `DateTime(1767225600)` | `Error: MAX cannot compare dates with numbers (#VALUE!)` |
+| `MAX(DATE(2026,1,1), "2027-01-01")` | `DateTime(1767225600)` | `Error: MAX: cannot convert "2027-01-01" to a number (#VALUE!)` |
+| `MAX(:n, 1)`, `MIN([:n, 1])` | `1` | `Error: MAX value is not a number (#NUM!)` (`MIN`) |
+| `COUNT(1, "2", TRUE)` | `1` | `3` |
+| `COUNT(...[1, "2"])` | `1` | `2` |
+| `[["2", 3]].map(SUM(...:x))` | `[3]` | `[5]` |
+| `MEDIAN(1, "9", "8")` | `1` | `8` |
+| `MODE_SNGL(TRUE, 1)` | `Error: MODE.SNGL: no value repeats (#N/A)` | `1` |
+| `MODE_SNGL(:n, :n)` | `NaN` | `Error: MODE.SNGL value is not a number (#NUM!)` |
+| `STDEV_P("2", "4")` | `Error: STDEV.P of no numbers (#DIV/0!)` | `1` |
+| `STDEV_P(:n, 1)` | `NaN` | `Error: STDEV.P value is not a number (#NUM!)` |
+| `VAR_S(TRUE, FALSE)` | `Error: VAR_S needs at least two numbers` | `0.5` |
+| `VAR.S('a', 1)` | `Error: VAR.S needs at least two numbers` | `Error: VAR.S: cannot convert "a" to a number (#VALUE!)` |
+| `PERCENTILE_INC(1, "3", 0.5)` | `1` | `2` |
+| `QUARTILE_INC(1, "5", 1)` | `1` | `2` |
+
+Unchanged, to be pinned by tests: `SUM([1, "2", TRUE, NULL])` (`1`), `SUM(:xs)` with
+`:xs` = `[1, "2", TRUE]` (`1`), `SUM(NULL, 2)` and `SUM(:nil, 1)` (`2`, `1`), `SUM()` (`0`),
+`SUM(["x"])` (`0`), `AVERAGE(NULL)` and `AVERAGE(["x", TRUE, NULL])` (`#DIV/0!`), `MIN()`,
+`MAX(NULL)`, `MIN(["a"])` (`0`), `SUM(DATE(2026,1,1))` (`SUM does not accept dates (#VALUE!)`),
+`MAX(DATE(2026,1,1), DATE(2027,1,1))` (the 2027 date), `COUNT(1, "x")` (`1`), `COUNT("a")`,
+`COUNT(NULL)`, `COUNT({"a": 1})`, `COUNT("2026-01-01")` (`0`), `COUNT(1, "hello", 3, 4)` (`3`),
+`COUNT(:n)` (`1`), `COUNTA(1, "x", NULL, TRUE)` (`3`), `MEDIAN([1, "9", TRUE])` (`1`),
+`MEDIAN(:n)` and `MEDIAN([1, :n, 3])` (`Cannot sort NaN values`), `STDEV_S("1")`
+(`needs at least two numbers`), `PERCENTILE_INC([1, 2], "0.5")` (`percentile must be a number`),
+`NPV(0.1, "100", TRUE, 100)` (`90.9090909090909`), `SUMIF(["1", 2], ">0")` (`2`),
+`[1, "2", TRUE].sum()` (error), `AND(...[TRUE, "x"])` (`#VALUE!`).
+
+### Consequences
+- \+ Formulas copied from a spreadsheet with typed values give the spreadsheet's result
+  (`SUM(1, "2", TRUE)` is 4), or an error instead of a silent wrong total (`SUM(1, "x")`).
+- \+ One rule for builtins that take a list: a direct argument is read as a value, an array item
+  as range data. `AND`, `OR`, `XOR` and the aggregates agree, and `SUM("2")` agrees with
+  `ABS("2")` and `"2" + 0`.
+- \+ `SUM(:a == 1, :b == 2)` counts the true comparisons, as `SUM(--(…))` does in Excel.
+- − Results change without an error (`SUM(1, "2")` 1 → 3, `AVERAGE(1, "2")` 1 → 1.5,
+  `MIN(TRUE, 5)` 5 → 1). The migration guide lists them first.
+- − Host data passed as separate variables or spread now errors on text: `SUM(:a, :b)` with
+  `:b` = `""` and `SUM(...:xs)` with a text item were sums and are `#VALUE!`. Pass the array
+  (`SUM(:xs)`, `SUM([:a, :b])`) to keep skipping. The reference and the migration guide say so.
+- − `SUM(...:xs)` and `SUM(:xs)` can differ. This was already true of `AND`.
+
+### Alternatives considered
+- **Keep X-3 (skip everywhere).** Rejected by the maintainer on 2026-11-22: two rules for
+  builtins that take a list, and silent wrong totals.
+- **Spread items as array items**, so `SUM(...:xs)` equals `SUM(:xs)`. Not chosen: `...` would
+  mean one thing in `SUM` and another in `AND` (which already reads spread items as direct), the
+  evaluator would need to track where each argument came from, and `PERCENTILE_INC(...[1, 2,
+  0.5])` would lose its last-argument `k`.
+- **Treat only literals as direct and variables as array items** (closer to Excel's cell
+  references). Not chosen: the evaluator would decide by the syntax of an argument, `SUM(:a)`
+  and `SUM((:a))` or `SUM(:a + 0)` would differ, and `AND` already reads variables as direct.
+- **Direct `""` as `NULL` (skipped).** Not chosen: ADR-0023 §6 says empty text is not a number,
+  and Excel's `=SUM(1, "")` is `#VALUE!`.
+- **Also make `COUNT` error on direct non-number text.** Not chosen: Excel's `COUNT` never
+  errors on its values.
