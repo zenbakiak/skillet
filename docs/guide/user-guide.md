@@ -821,11 +821,26 @@ sk "=2 ^ 3 ^ 2"                    # 64 (left to right, as in Excel)
 sk "=-2 ^ 2"                       # 4 (negation first, as in Excel)
 sk "=10 % 3"                       # 1 (modulo)
 sk "=200 * 15%"                    # 30 (percent suffix)
+sk "=10%-3"                        # -2.9 (percent, then minus: % before + or - is a percent)
+sk "=10 % (3)"                     # 1 (modulo: an operand follows the %)
+sk "=1.5e3"                        # 1500 (scientific notation)
 sk "=\"Total: \" & 42"              # "Total: 42" (& joins text)
+
+# Text and booleans convert to numbers, like Excel
+sk "=\"3\" + 1"                     # 4
+sk "=TRUE + 1"                     # 2
+sk "=1 + NULL"                     # 1 (NULL is a blank cell: 0)
+sk "=ABS(\"-3\")"                   # 3
+sk "=\"abc\" + 1"                   # Error: Cannot convert "abc" to a number (#VALUE!)
+sk "=SUM([1, \"2\", TRUE])"         # 1 (aggregates still skip text in arrays)
 
 # With variables
 sk "=:price * (1 + :tax)" price=100 tax=0.08    # 108
 ```
+
+`%` is a percent unless an operand (a number, `(`, `:var`, a function, a string) follows it
+directly; then it is modulo. The full rules, and which builtins convert text, are in the
+[API reference](../reference/api.md#arithmetic-operators).
 
 ### Statistical Functions
 
@@ -1090,7 +1105,8 @@ sk "=:sales * IF(:sales > 100000, 0.08, IF(:sales > 50000, 0.06, 0.04))" sales=7
 These follow Excel: where Excel returns `#DIV/0!`, `#NUM!` or `#VALUE!` (for example `SQRT(-1)`,
 `MOD(5, 0)`, `AVERAGE()` of no numbers, `ABS("x")`), Skillet returns an error. `MAX` and `MIN`
 of no numbers are 0, as in Excel. The operators follow the same rule: `1 / 0`, `0 / 0` and `5 % 0`
-are `Division by zero`, and a result that overflows (`10 ^ 400`) is a `#NUM!` error.
+are `Division by zero`, and a result that overflows (`10 ^ 400`) is a `#NUM!` error. Numeric text
+and booleans convert, as in Excel: `ABS("-3")` is `3`, `ABS(TRUE)` is `1`.
 
 ### Statistical Functions
 - `STDEV.P(...)` - Population standard deviation

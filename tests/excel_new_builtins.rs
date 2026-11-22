@@ -135,10 +135,17 @@ fn ppmt_errors() {
         err("=PPMT(0.1, 4, 3, 1000)"),
         "PPMT per must be between 1 and nper"
     );
-    assert_eq!(err("=PPMT('x', 1, 3, 1000)"), "PPMT rate must be a number");
+    assert_eq!(
+        err("=PPMT('x', 1, 3, 1000)"),
+        "PPMT rate: cannot convert \"x\" to a number (#VALUE!)"
+    );
     assert_eq!(
         err("=PPMT(0.1, 1, 3, 1000, 'x')"),
-        "PPMT fv must be a number"
+        "PPMT fv: cannot convert \"x\" to a number (#VALUE!)"
+    );
+    assert_eq!(
+        err("=PPMT(0.1, 1, 3, [1000])"),
+        "PPMT pv must be a number, got array"
     );
     assert!(err("=PPMT(0.1, 1, 3)").starts_with("PPMT expects 4-6 arguments"));
 }
@@ -162,8 +169,14 @@ fn pv_matches_excel() {
 
 #[test]
 fn pv_errors() {
-    assert_eq!(err("=PV(0.05, 10, 'x')"), "PV pmt must be a number");
-    assert_eq!(err("=PV(0.05, 10, -100, 'x')"), "PV fv must be a number");
+    assert_eq!(
+        err("=PV(0.05, 10, 'x')"),
+        "PV pmt: cannot convert \"x\" to a number (#VALUE!)"
+    );
+    assert_eq!(
+        err("=PV(0.05, 10, -100, 'x')"),
+        "PV fv: cannot convert \"x\" to a number (#VALUE!)"
+    );
     assert!(err("=PV(0.05, 10)").starts_with("PV expects 3-5 arguments"));
     // rate = -1 divides by zero (Excel #NUM!/#DIV/0!).
     assert_eq!(err("=PV(-1, 10, -100)"), "PV result is not a finite number");
@@ -198,7 +211,10 @@ fn npv_matches_excel() {
 fn npv_errors() {
     assert_eq!(err("=NPV(0.1)"), "NPV expects rate, value1, [value2], ...");
     assert_eq!(err("=NPV(0.1, [])"), "NPV expects at least one number");
-    assert_eq!(err("=NPV('x', 1)"), "NPV rate must be a number");
+    assert_eq!(
+        err("=NPV('x', 1)"),
+        "NPV rate: cannot convert \"x\" to a number (#VALUE!)"
+    );
     assert_eq!(err("=NPV(-1, 100)"), "NPV result is not a finite number");
 }
 
@@ -379,7 +395,12 @@ fn date_errors() {
     assert_eq!(err("=DATE(1900, 1, 0)"), range);
     assert_eq!(err("=DATE(2026, 1, 10 ^ 300)"), range);
     assert_eq!(err("=DATE(2026, -10 ^ 300, 1)"), range);
-    assert_eq!(err("=DATE('2026', 1, 1)"), "DATE expects year as number");
+    // BL-066: numeric text converts (`DATE('2026', 1, 1)` is tested in number_coercion.rs).
+    assert_eq!(
+        err("=DATE('x', 1, 1)"),
+        "DATE year: cannot convert \"x\" to a number (#VALUE!)"
+    );
+    assert_eq!(err("=DATE([2026], 1, 1)"), "DATE expects year as number");
     assert_eq!(err("=DATE(2026, 1, NULL)"), "DATE expects day as number");
     assert_eq!(err_nan("=DATE(:nan, 1, 1)"), "DATE expects year as number");
     // String casts stay strict: no rollover there.

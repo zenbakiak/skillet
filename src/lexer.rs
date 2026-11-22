@@ -138,8 +138,20 @@ impl<'a> Lexer<'a> {
                 _ => break,
             }
         }
+        // Scientific notation (BL-058): `1e3`, `2.5E-4`, `1e+2`. The exponent needs a digit.
+        let exp_end = self.exponent_end();
+        if let Some(e) = exp_end {
+            self.pos = e;
+            end = e;
+        }
+        let has_exp = exp_end.is_some();
+        // A number that runs into a letter is not a literal (`1x`, `1e`, `2ex`): an error, not
+        // the number with the rest silently dropped.
+        if matches!(self.peek(), Some(b'a'..=b'z' | b'A'..=b'Z' | b'_')) {
+            return Err(Error::new("Invalid number literal", Some(start)));
+        }
         // Avoid UTF-8 conversion - parse directly from bytes for common numbers
-        let n = if end - start <= 10 && !has_dot {
+        let n = if end - start <= 10 && !has_dot && !has_exp {
             // Fast path for small integers
             let mut result = 0.0;
             for i in start..end {
@@ -156,6 +168,24 @@ impl<'a> Lexer<'a> {
         self.last_start = start;
         self.last_end = end;
         Ok(Token::Number(n))
+    }
+
+    /// With the mantissa just read: the end of an exponent part (`e`/`E`, an optional sign, at
+    /// least one digit) starting at the current position, if there is one.
+    fn exponent_end(&self) -> Option<usize> {
+        let mut k = self.pos;
+        if !matches!(self.input.get(k), Some(b'e' | b'E')) {
+            return None;
+        }
+        k += 1;
+        if matches!(self.input.get(k), Some(b'+' | b'-')) {
+            k += 1;
+        }
+        let digits_start = k;
+        while matches!(self.input.get(k), Some(b'0'..=b'9')) {
+            k += 1;
+        }
+        (k > digits_start).then_some(k)
     }
 
     fn identifier(&mut self, _first: u8) -> Result<Token, Error> {

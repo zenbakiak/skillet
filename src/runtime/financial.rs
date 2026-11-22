@@ -1,5 +1,5 @@
 use crate::error::Error;
-use crate::runtime::utils::optional_number_arg;
+use crate::runtime::utils::{number_arg, optional_number_arg};
 use crate::types::Value;
 
 pub fn exec_financial(name: &str, args: &[Value]) -> Result<Value, Error> {
@@ -12,15 +12,9 @@ pub fn exec_financial(name: &str, args: &[Value]) -> Result<Value, Error> {
                 ));
             }
 
-            let rate = args[0]
-                .as_number()
-                .ok_or_else(|| Error::new("PMT rate must be a number", None))?;
-            let nper = args[1]
-                .as_number()
-                .ok_or_else(|| Error::new("PMT nper must be a number", None))?;
-            let pv = args[2]
-                .as_number()
-                .ok_or_else(|| Error::new("PMT pv must be a number", None))?;
+            let rate = required(args, 0, "PMT", "rate")?;
+            let nper = required(args, 1, "PMT", "nper")?;
+            let pv = required(args, 2, "PMT", "pv")?;
             let fv = optional_number_arg("PMT", args, 3, "fv", 0.0)?;
             let payment_type = optional_number_arg("PMT", args, 4, "type", 0.0)?;
 
@@ -38,18 +32,10 @@ pub fn exec_financial(name: &str, args: &[Value]) -> Result<Value, Error> {
                 ));
             }
 
-            let cost = args[0]
-                .as_number()
-                .ok_or_else(|| Error::new("DB cost must be a number", None))?;
-            let salvage = args[1]
-                .as_number()
-                .ok_or_else(|| Error::new("DB salvage must be a number", None))?;
-            let life = args[2]
-                .as_number()
-                .ok_or_else(|| Error::new("DB life must be a number", None))?;
-            let period = args[3]
-                .as_number()
-                .ok_or_else(|| Error::new("DB period must be a number", None))?;
+            let cost = required(args, 0, "DB", "cost")?;
+            let salvage = required(args, 1, "DB", "salvage")?;
+            let life = required(args, 2, "DB", "life")?;
+            let period = required(args, 3, "DB", "period")?;
             let month = optional_number_arg("DB", args, 4, "month", 12.0)?;
 
             if cost < 0.0 || salvage < 0.0 || life <= 0.0 || period < 0.0 {
@@ -91,15 +77,9 @@ pub fn exec_financial(name: &str, args: &[Value]) -> Result<Value, Error> {
                 ));
             }
 
-            let rate = args[0]
-                .as_number()
-                .ok_or_else(|| Error::new("FV rate must be a number", None))?;
-            let nper = args[1]
-                .as_number()
-                .ok_or_else(|| Error::new("FV nper must be a number", None))?;
-            let pmt = args[2]
-                .as_number()
-                .ok_or_else(|| Error::new("FV pmt must be a number", None))?;
+            let rate = required(args, 0, "FV", "rate")?;
+            let nper = required(args, 1, "FV", "nper")?;
+            let pmt = required(args, 2, "FV", "pmt")?;
             let pv = optional_number_arg("FV", args, 3, "pv", 0.0)?;
             let payment_type = optional_number_arg("FV", args, 4, "type", 0.0)?;
 
@@ -117,18 +97,10 @@ pub fn exec_financial(name: &str, args: &[Value]) -> Result<Value, Error> {
                 ));
             }
 
-            let rate = args[0]
-                .as_number()
-                .ok_or_else(|| Error::new("IPMT rate must be a number", None))?;
-            let per = args[1]
-                .as_number()
-                .ok_or_else(|| Error::new("IPMT per must be a number", None))?;
-            let nper = args[2]
-                .as_number()
-                .ok_or_else(|| Error::new("IPMT nper must be a number", None))?;
-            let pv = args[3]
-                .as_number()
-                .ok_or_else(|| Error::new("IPMT pv must be a number", None))?;
+            let rate = required(args, 0, "IPMT", "rate")?;
+            let per = required(args, 1, "IPMT", "per")?;
+            let nper = required(args, 2, "IPMT", "nper")?;
+            let pv = required(args, 3, "IPMT", "pv")?;
             let fv = optional_number_arg("IPMT", args, 4, "fv", 0.0)?;
             let payment_type = optional_number_arg("IPMT", args, 5, "type", 0.0)?;
 
@@ -149,21 +121,15 @@ pub fn exec_financial(name: &str, args: &[Value]) -> Result<Value, Error> {
     }
 }
 
-/// A required numeric argument (number or currency).
+/// A required numeric argument: a number, currency, or a value Excel converts to a number
+/// (`utils::number_arg`, BL-066).
 fn required(args: &[Value], i: usize, func: &str, what: &str) -> Result<f64, Error> {
-    match args.get(i) {
-        Some(Value::Number(n)) | Some(Value::Currency(n)) => Ok(*n),
-        _ => Err(Error::new(format!("{func} {what} must be a number"), None)),
-    }
+    number_arg(func, args, i, what)
 }
 
-/// An optional numeric argument: missing or NULL gives `default`; any other non-number is an
-/// error (Excel `#VALUE!`), never silently ignored.
+/// An optional numeric argument: missing or NULL gives `default`; otherwise as `required`.
 fn optional(args: &[Value], i: usize, default: f64, func: &str, what: &str) -> Result<f64, Error> {
-    match args.get(i) {
-        None | Some(Value::Null) => Ok(default),
-        Some(_) => required(args, i, func, what),
-    }
+    optional_number_arg(func, args, i, what, default)
 }
 
 /// A finite result, or Excel's `#NUM!` as an error.

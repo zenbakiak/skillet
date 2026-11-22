@@ -41,6 +41,57 @@ admin-token check. Details: [limits](../guide/limits.md#server-request-limits-1-
 - `^` - Exponentiation (left-associative: `2^3^2` is `64`)
 - `=` - Equals prefix (Excel-style)
 
+**Number literals.** Integers (`42`), decimals (`2.5`, `.5`) and scientific notation (`1e3`,
+`1E3`, `2.5e-4`, `1e+2`) are numbers. A number that runs into a letter is a parse error
+(`Invalid number literal`): `1x`, `1e`, `2ex`. Before BL-058, `1e3` silently evaluated to `1`.
+
+**Percent or modulo.** `%` is the percent suffix (divide by 100) unless the next token starts an
+operand directly: a number, `(`, a `:variable`, a function name, a string, `[`, `{` or `!`. Then
+it is modulo. Before `+`, `-`, `)`, `,`, `]`, `;`, another operator, `&`, a comparison, `?`/`:`
+or the end of the expression it is a percent (BL-066).
+
+```bash
+10%            # 0.1
+10%-3          # -2.9   (10% - 3)
+10 % -3        # -2.9   (percent, then minus 3; before BL-066 this was modulo: 1)
+10% + 1        # 1.1
+50%*2          # 1
+10 % 3         # 1      (modulo)
+10 % (3)       # 1      (modulo)
+:a % :b        # modulo
+```
+
+**Coercion (like Excel, BL-066).** The arithmetic operators (`+ - * / % ^`, unary `-` and `+`,
+the percent suffix) convert their operands to numbers:
+
+| Operand | Converts to |
+|---|---|
+| Text that reads as a number after trimming: `"-3"`, `"2.5"`, `"1e3"`, `" 4 "` | that number |
+| `TRUE` / `FALSE` | `1` / `0` |
+| `NULL` (a blank cell) | `0` |
+| Other text (`"abc"`, `""`, `"1,000"`, `"inf"`) | `Error: Cannot convert "abc" to a number (#VALUE!)` |
+| Arrays, JSON objects | `Error: Arithmetic op on non-number` (as before) |
+
+```bash
+"3" + 1        # 4
+TRUE + 1       # 2
+1 + NULL       # 1
+"a" + "b"      # Error: Cannot convert "a" to a number (#VALUE!)   (use & to join text)
+```
+
+`+` never joins text; `&` does. A DateTime operand keeps the date rules below and is not coerced
+(`DATE(2026, 1, 1) + "1"` and `DATE(2026, 1, 1) + NULL` are errors).
+
+The scalar math builtins convert numeric text and booleans the same way: `ABS`, `SQRT`, `INT`,
+`MOD`, `POWER`, `ROUND`, `CEILING`, `FLOOR`, the arguments of the financial functions (`PMT`,
+`FV`, `PV`, `IPMT`, `PPMT`, `DB`, `NPV`'s rate) and the parts of `DATE` and `TIME`.
+`ABS("-3")` is `3`, `ABS(TRUE)` is `1`, `DATE("2026", 1, 1)` works. Text that is not a number is
+`#VALUE!` with the function name: `ABS("x")` is `Error: ABS: cannot convert "x" to a number
+(#VALUE!)`. `NULL` in a required argument stays an error (`ABS(NULL)`); an optional argument
+that is `NULL` takes its default. Aggregates over arrays (`SUM`, `AVERAGE`, `MAX`, `NPV`'s
+values, …) still skip text and booleans inside arrays, as Excel skips them in a range:
+`SUM([1, "2", TRUE])` is `1`.
+
 Dates work with `+` and `-` in days, like Excel:
 
 ```bash
@@ -61,6 +112,7 @@ is not a finite number (overflow, a non-real power) are a `#NUM!` error.
 1 / 0                        # Error: Division by zero (#DIV/0!)
 0 / 0                        # Error: Division by zero (#DIV/0!)
 10 ^ 400                     # Error: Result is not a finite number (#NUM!)
+1e308 * 10                   # Error: Result is not a finite number (#NUM!)
 0 ^ 0                        # Error: 0 ^ 0 is undefined (#NUM!)
 ```
 

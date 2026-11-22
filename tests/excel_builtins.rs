@@ -179,16 +179,21 @@ fn impossible_math_is_an_error() {
 
 #[test]
 fn wrong_type_or_missing_arguments_are_errors() {
-    err("=ABS(\"x\")", "expects number");
-    err("=SQRT(\"x\")", "expects number");
-    err("=FLOOR(\"3.7\")", "expects number");
-    err("=INT(\"x\")", "expects number");
-    err("=ROUND(2.567, \"x\")", "num_digits must be a number");
+    // BL-066: text that is not a number is #VALUE!; numeric text converts (`FLOOR("3.7")` = 3).
+    err(
+        "=ABS(\"x\")",
+        "ABS: cannot convert \"x\" to a number (#VALUE!)",
+    );
+    err("=SQRT(\"x\")", "SQRT: cannot convert");
+    err("=FLOOR(\"3.7x\")", "FLOOR: cannot convert");
+    err("=INT(\"x\")", "INT: cannot convert");
+    err("=ABS([1])", "expects number");
+    err("=ROUND(2.567, \"x\")", "ROUND num_digits: cannot convert");
     err("=ABS()", "ABS expects");
     err("=MOD(10)", "MOD expects");
     err("=POWER(2)", "POWER expects");
-    err("=PMT(0.05, 10, 1000, \"x\")", "fv must be a number");
-    err("=FV(0.05, 10, -100, \"x\")", "pv must be a number");
+    err("=PMT(0.05, 10, 1000, \"x\")", "PMT fv: cannot convert");
+    err("=FV(0.05, 10, -100, \"x\")", "FV pv: cannot convert");
     err("=SORT([3, 1, 2], \"sideways\")", "SORT order");
     err("=SUBSTITUTE(\"a-b\", \"-\", \"+\", 0)", "instance_num");
 }

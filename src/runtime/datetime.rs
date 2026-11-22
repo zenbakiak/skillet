@@ -1,4 +1,5 @@
 use super::local_time;
+use super::utils::coerce_to_number;
 use crate::error::Error;
 use crate::types::Value;
 use chrono::{DateTime, Datelike, NaiveDate, NaiveTime, Timelike, Utc};
@@ -194,10 +195,20 @@ fn today() -> Value {
 }
 
 /// One `DATE` argument, truncated toward zero like Excel.
+/// Numeric text and booleans convert as in Excel (BL-066); NULL stays an error.
 fn date_part(v: &Value, what: &str) -> Result<i64, Error> {
-    match v {
-        Value::Number(n) if n.is_finite() => Ok(n.trunc() as i64),
+    match part_number(v, "DATE", what)? {
+        Some(n) if n.is_finite() => Ok(n.trunc() as i64),
         _ => Err(Error::new(format!("DATE expects {} as number", what), None)),
+    }
+}
+
+/// A `DATE`/`TIME` part as a number: a number, or numeric text or a boolean (Excel coercion).
+/// `None` for other types.
+fn part_number(v: &Value, func: &str, what: &str) -> Result<Option<f64>, Error> {
+    match v {
+        Value::Number(n) => Ok(Some(*n)),
+        other => coerce_to_number(other, &format!("{func} {what}: ")),
     }
 }
 
@@ -258,13 +269,13 @@ fn exec_time(args: &[Value]) -> Result<Value, Error> {
             // second is allowed while the total stays non-negative). The total wraps at 24
             // hours, so TIME(25, 0, 0) = TIME(1, 0, 0). The result is a fraction of a day, as in
             // Excel (ADR-0018), so DATE(...) + TIME(...) adds the time to a date.
-            let part = |v: &Value, what: &str| match v {
-                Value::Number(n) if n.is_finite() && *n <= 32767.0 => Ok(n.trunc()),
-                Value::Number(_) => Err(Error::new(
+            let part = |v: &Value, what: &str| match part_number(v, "TIME", what)? {
+                Some(n) if n.is_finite() && n <= 32767.0 => Ok(n.trunc()),
+                Some(_) => Err(Error::new(
                     format!("TIME {} must be at most 32767 (#NUM!)", what),
                     None,
                 )),
-                _ => Err(Error::new(format!("TIME expects {} as number", what), None)),
+                None => Err(Error::new(format!("TIME expects {} as number", what), None)),
             };
             let h = part(hour, "hour")?;
             let m = part(minute, "minute")?;

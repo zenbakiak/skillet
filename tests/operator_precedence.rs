@@ -77,7 +77,8 @@ fn percent_followed_by_an_operand_is_still_modulo() {
     close("10 % 3", 1.0);
     close("10%3", 1.0);
     close("-10 % 3", -1.0);
-    close("10 % -3", 1.0);
+    // BL-066: a `%` before `-` is the percent suffix, so this is 10% - 3, not modulo.
+    close("10 % -3", -2.9);
     close("7 % (2 + 2)", 3.0);
     assert_eq!(
         evaluate("FILTER([1, 2, 3, 4], :x % 2 == 0)").unwrap(),

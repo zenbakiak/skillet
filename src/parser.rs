@@ -17,12 +17,17 @@ pub struct Parser<'a> {
     /// Current recursion level of `parse_expr` / unary operands (bounds the parser's stack;
     /// parentheses add recursion without adding AST nodes).
     nesting: usize,
+    /// A lexer error on the first token, reported by `parse` (`new` cannot fail).
+    first_error: Option<Error>,
 }
 
 impl<'a> Parser<'a> {
     pub fn new(input: &'a str) -> Self {
         let mut lexer = Lexer::new(input);
-        let lookahead = lexer.next_token().unwrap_or(Token::Eof);
+        let (lookahead, first_error) = match lexer.next_token() {
+            Ok(tok) => (tok, None),
+            Err(e) => (Token::Eof, Some(e)),
+        };
         let look_pos = lexer.last_start();
         Self {
             lexer,
@@ -30,6 +35,7 @@ impl<'a> Parser<'a> {
             lookahead2: None,
             look_pos,
             nesting: 0,
+            first_error,
         }
     }
 
@@ -84,6 +90,9 @@ impl<'a> Parser<'a> {
     }
 
     pub fn parse(&mut self) -> Result<Expr, Error> {
+        if let Some(e) = self.first_error.take() {
+            return Err(e);
+        }
         let mut exprs = Vec::new();
         let mut max_depth = 0;
 
@@ -295,8 +304,10 @@ impl<'a> Parser<'a> {
         Ok((node, depth))
     }
 
-    /// Zero or more postfix `%` after an operand. A `%` followed by something that starts an
-    /// operand stays the binary modulo operator (`10 % 3`, `:a % :b`), as before D-10.
+    /// Zero or more postfix `%` after an operand. A `%` directly followed by something that
+    /// starts an operand stays the binary modulo operator (`10 % 3`, `:a % :b`, `10 % (3)`);
+    /// before anything else, including `+` and `-`, it is the percent suffix (`10%-3` is -2.9,
+    /// BL-066).
     fn parse_percent_suffix(&mut self, (mut node, mut depth): (Expr, usize)) -> Parsed {
         while matches!(self.lookahead, Token::Percent) && !self.percent_is_modulo() {
             self.bump()?;
@@ -327,8 +338,6 @@ impl<'a> Parser<'a> {
                     | Token::LParen
                     | Token::LBracket
                     | Token::LBrace
-                    | Token::Minus
-                    | Token::Plus
                     | Token::Bang
             ),
             Err(_) => false,
