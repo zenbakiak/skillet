@@ -121,7 +121,9 @@ sk "=5 + \"hello\""
 # Output: Error: Arithmetic op on non-number
 ```
 
-Errors go to stderr and `sk` exits with code 2.
+Errors go to stderr and `sk` exits with code 2. Bad input that stops `sk` before it evaluates (a
+usage error, a `var=value` without `=`, or a `--json` value that is not valid JSON, not an object,
+or has two keys that map to the same variable) exits with code 1.
 
 ### Limits
 

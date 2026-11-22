@@ -335,12 +335,15 @@ unchanged at 256 MiB, only now configurable. Details: [Limits](limits.md).
 ## JSON variables (BL-077)
 Where variables come from a JSON object (`evaluate_with_json`, `evaluate_with_json_custom`,
 `sk --json`, `sk_http_server` `arguments` and `GET /eval` parameters), the whole object is the
-reserved `:arguments`, for `JQ`.
+reserved `:arguments`, for `JQ`. `sk_server` `variables` follow the same key rules (BL-096) but
+build no `:arguments`.
 
 | Input | 0.6 | 0.7 |
 |---|---|---|
 | A key named `arguments`, e.g. `{"x": 1, "arguments": {"a": 2}}` | `:arguments` is that key's value (`{"a": 2}`) | `:arguments` is the whole object; the key's value is `:arguments.arguments` |
-| Two keys that give the same variable, e.g. `{"a-b": 1, "a_b": 2}` | one value silently replaces the other | `Error: JSON keys "a-b" and "a_b" both map to variable :a_b` (HTTP 400 on `sk_http_server`); rename one key. `sk_server` does not rename keys and is unchanged |
+| Two keys that give the same variable, e.g. `{"a-b": 1, "a_b": 2}` | one value silently replaces the other | `Error: JSON keys "a-b" and "a_b" both map to variable :a_b` (HTTP 400 on `sk_http_server`, `"success": false` on `sk_server`); rename one key |
+| `sk_server` `variables` key with other characters than letters, digits and `_`, e.g. `first-name` | kept as written, so it cannot be read (`:first-name` is not a variable) | sanitized like the other surfaces: read it as `:first_name` (BL-096) |
+| `sk --json` with invalid JSON, a non-object or colliding keys, expression without `:=`/`;` | exit code 2 | exit code 1, as with `:=`/`;` (BL-096). Evaluation errors still exit 2 |
 
 ## Servers
 | Change | 0.6 | 0.7 |
