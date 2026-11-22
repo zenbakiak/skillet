@@ -17,12 +17,17 @@ pub struct Parser<'a> {
     /// Current recursion level of `parse_expr` / unary operands (bounds the parser's stack;
     /// parentheses add recursion without adding AST nodes).
     nesting: usize,
+    /// A lexer error on the first token, reported by `parse` (`new` cannot fail).
+    first_error: Option<Error>,
 }
 
 impl<'a> Parser<'a> {
     pub fn new(input: &'a str) -> Self {
         let mut lexer = Lexer::new(input);
-        let lookahead = lexer.next_token().unwrap_or(Token::Eof);
+        let (lookahead, first_error) = match lexer.next_token() {
+            Ok(tok) => (tok, None),
+            Err(e) => (Token::Eof, Some(e)),
+        };
         let look_pos = lexer.last_start();
         Self {
             lexer,
@@ -30,6 +35,7 @@ impl<'a> Parser<'a> {
             lookahead2: None,
             look_pos,
             nesting: 0,
+            first_error,
         }
     }
 
@@ -84,6 +90,9 @@ impl<'a> Parser<'a> {
     }
 
     pub fn parse(&mut self) -> Result<Expr, Error> {
+        if let Some(e) = self.first_error.take() {
+            return Err(e);
+        }
         let mut exprs = Vec::new();
         let mut max_depth = 0;
 
