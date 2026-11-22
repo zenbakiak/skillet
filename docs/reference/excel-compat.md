@@ -227,10 +227,8 @@ result as the builtin of the same name. The pairs that differ:
 | B-17 | Low | `COUNTIF([1,2,3], :x)` (lambda returns a non-boolean) | `3` (a number is a condition, X-11); text → `#VALUE!` error | fixed (#83); the rule changed to `IF`'s in ADR-0029 Amendment 1 |
 | B-18 | Medium | `IF("x", 1, 2)`; `IFS(FALSE, 1)` | `#VALUE!` error; `#N/A` error | fixed (ADR-0029, BL-073); were `2` and `false` |
 
-Doc defects in `docs/reference/api.md` that are still there: `COMPACT(array)` is documented as a
-function but only the `.compact()` method exists (`COMPACT([1,NULL])` → `Unknown function`); the
-`PMT` examples show positive amounts ("$536.82") where the result is negative. The other defects
-from the audit (`LEN`, `COUNT`, `TIME`, `INT(-3.9)`, dotted headings) are fixed.
+Doc defects in `docs/reference/api.md` from the audit (`COMPACT(array)` documented as a function,
+positive `PMT` amounts, `LEN`, `COUNT`, `TIME`, `INT(-3.9)`, dotted headings) are fixed.
 
 ## Decisions for the maintainer (ranked by user impact)
 
