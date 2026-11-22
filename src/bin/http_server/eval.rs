@@ -9,6 +9,7 @@ use std::time::Instant;
 
 use super::auth::check_authentication;
 use super::cache::{clear_cache, evaluate_cached, get_cache_stats};
+use super::eval_limits::server_limits;
 use super::parse_cache;
 use super::response_size;
 use super::stats::ServerStats;
@@ -284,7 +285,7 @@ fn process_eval_request(
         Ok(val) => {
             // Size the response before building it: escaping can make it up to 6x the value.
             let mut response_bytes = response_size::json_size(&val, false);
-            if let Err(e) = response_size::check(response_bytes) {
+            if let Err(e) = response_size::check(response_bytes, server_limits().max_bytes) {
                 return failed(e);
             }
             let result_json = if req.output_json.unwrap_or(false) {
@@ -313,7 +314,9 @@ fn process_eval_request(
                             response_bytes = response_bytes
                                 .saturating_add(key.len() as u64 + 4)
                                 .saturating_add(response_size::json_size(&value, false));
-                            if let Err(e) = response_size::check(response_bytes) {
+                            if let Err(e) =
+                                response_size::check(response_bytes, server_limits().max_bytes)
+                            {
                                 return failed(e);
                             }
                             json_vars.insert(key, format_simple_output(&value));
