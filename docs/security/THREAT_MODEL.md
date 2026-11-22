@@ -52,12 +52,14 @@ limits return an ordinary `Error`, never abort the process.
     budget (ADR-0011). Tests: `c6_timeout`, `bl027c_*_meet_the_deadline`,
     `f3_servers_reject_responses_larger_than_the_budget` in `tests/eval_budget.rs`.
   - Lambdas share the parent scope (BL-030), so formulas over big variables are no longer O(n·m).
+  - Weekly coverage-guided fuzzing of `parse`, `evaluate` and `evaluate_with_json`
+    (`fuzz/`, `.github/workflows/fuzz.yml`, ADR-0028). Found inputs are pinned in
+    [`tests/fuzz_regressions.rs`](../../tests/fuzz_regressions.rs).
 - **Gaps:**
   - The library and `sk` have **no deadline** by default (by design, ADR-0011). Uncharged
     borrowed reads can still cost O(n²) CPU there; embedders must use `with_limits`.
   - A single builtin runs to completion before the next deadline check; small cost-model
     undercounts (BL-035). Shared values would remove the read copies (BL-036).
-  - No fuzzing yet (BL-019; `cargo fuzz` over `parse` + `evaluate_with_json`).
   - Custom (Rust or JS) functions are looked up **before** builtins, so a hook named `SUM`
     replaces `SUM` for every expression (see 2.6).
 

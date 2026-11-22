@@ -42,6 +42,9 @@ Agents prepare steps 1–3; **only a human publishes, tags, or pushes to `main`.
   `.tool-versions` is gitignored, local only.
 - CI (`rust.yml`) runs `./harness/check.sh`, `cargo audit` and the MSRV build on pushes and PRs to
   `main` and `develop`, all `--locked`.
+- `fuzz.yml` (ADR-0028) runs the `fuzz/` targets weekly and on dispatch on a pinned nightly
+  (`FUZZ_TOOLCHAIN`) and `cargo-fuzz` version; not a required check. `fuzz/` has its own
+  workspace and `Cargo.lock` and is outside `include`.
 - Release (ADR-0022): one tag `vX.Y.Z`, one workflow `release.yml`: `verify` (tag = `Cargo.toml`
   version, CHANGELOG section present) → `build-binaries` + `crate-check` → `github-release`
   (body from `scripts/changelog_section.sh`) → `crates-io`. All `--locked`. `workflow_dispatch`
