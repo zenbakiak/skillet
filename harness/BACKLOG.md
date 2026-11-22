@@ -1257,6 +1257,11 @@ tag publishes to crates.io.
 Decision (maintainer): back-merge `main` into `develop` keeping develop's side, through a PR merged
 with a merge commit (not squash), after checking every main commit's content is on develop.
 Maintainer adds a `v*` tag ruleset and a protected `crates-io` environment with a required reviewer.
+Release-engineer workflow part (from the back-merge lane): add `environment: crates-io` to the
+`crates-io` job in `release.yml` and move `CRATES_IO_TOKEN` into that environment (deployment rule:
+tags `v*`); add `pull_request: branches: [main]` so the release PR is the dry run. Until the release
+PR reaches `main`, `fuzz.yml`'s schedule does not fire and the old `release-binaries.yml` on `main`
+still runs on any `v*` tag. Cosmetic: rename the ruleset "protected branchews".
 
 ### BL-084 · Docs catch up with what merged · P2 · `todo` · docs-engineer
 - REL-3: migration guide misses silent changes: `[1,2]==[1,2]` false→true (also objects, Currency,
