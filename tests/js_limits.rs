@@ -4,11 +4,13 @@
 //! these cover the public library path, `sk`, and `sk_http_server`.
 #![cfg(feature = "plugins")]
 
+mod common;
+
+use common::ServerProcess;
 use skillet::js_plugin::JavaScriptFunction;
 use skillet::{CustomFunction, EvalLimits, Value};
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::net::TcpStream;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -94,11 +96,8 @@ fn sk_survives_deep_and_cyclic_hook_results() {
 
 const ADMIN: &str = "js-limits-admin";
 
-/// `sk_http_server` with one worker on a free 127.0.0.1 port, killed on drop.
-struct Server {
-    child: std::process::Child,
-    port: u16,
-}
+/// `sk_http_server` with one worker on its own 127.0.0.1 port, killed on drop (tests/common).
+struct Server(ServerProcess);
 
 impl Server {
     fn start(hooks: &Path) -> Server {
@@ -106,35 +105,20 @@ impl Server {
     }
 
     fn start_with(hooks: &Path, extra: &[&str]) -> Server {
-        let port = std::net::TcpListener::bind("127.0.0.1:0")
-            .unwrap()
-            .local_addr()
-            .unwrap()
-            .port();
-        let child = std::process::Command::new(env!("CARGO_BIN_EXE_sk_http_server"))
-            .args([&port.to_string(), "--threads", "1", "--admin-token", ADMIN])
-            .args(extra)
-            .env_remove("SKILLET_EVAL_TIMEOUT")
-            .env("SKILLET_HOOKS_DIR", hooks)
-            .env("SKILLET_BIND_HOST", "127.0.0.1")
-            .env_remove("SKILLET_AUTH_TOKEN")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .expect("spawn server");
-        for _ in 0..200 {
-            if TcpStream::connect(("127.0.0.1", port)).is_ok() {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(50));
-        }
-        Server { child, port }
+        Server(ServerProcess::start(|port| {
+            let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_sk_http_server"));
+            cmd.args([&port.to_string(), "--threads", "1", "--admin-token", ADMIN])
+                .args(extra)
+                .env("SKILLET_HOOKS_DIR", hooks)
+                .env("SKILLET_BIND_HOST", "127.0.0.1")
+                .stdout(std::process::Stdio::null());
+            cmd
+        }))
     }
 
     fn request(&self, method: &str, path: &str, body: &str) -> (String, Duration) {
         let started = Instant::now();
-        let mut s = TcpStream::connect(("127.0.0.1", self.port)).expect("connect");
-        s.set_read_timeout(Some(Duration::from_secs(60))).unwrap();
+        let mut s = self.0.connect();
         let req = format!(
             "{method} {path} HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {ADMIN}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
             body.len()
@@ -148,13 +132,6 @@ impl Server {
     fn eval(&self, expr: &str) -> (String, Duration) {
         let body = serde_json::json!({ "expression": expr }).to_string();
         self.request("POST", "/eval", &body)
-    }
-}
-
-impl Drop for Server {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
     }
 }
 
