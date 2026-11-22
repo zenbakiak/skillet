@@ -267,6 +267,29 @@ Every request succeeded in every run. For the small formula the parse (~0.4 µs)
 ~50 µs per request at one connection; from 20 connections on, both builds are limited by the 4
 workers and the connection handling, and the gain shrinks to ~3%.
 
+## Accepted: parse cost of Excel precedence (#82, PERF-6)
+
+The Excel precedence levels (ADR-0018 D-10, PR #82, commit `6127224`) made short expressions
+slower to parse and evaluate. Measured in the 2026-11-22 audit (library layer, medians of 6
+rounds, `3f59ae1` → `9b36d9b`; min/max ranges do not overlap):
+
+| Case | Before → after | Change |
+|---|---|---|
+| `arith` parse | 0.39 → 0.46 µs | +18% |
+| `arith` eval | 0.50 → 0.58 µs | +16% |
+| `financial` eval | 0.43 → 0.48 µs | +12% |
+| `parse_heavy` parse | 24.5 → 27.0 µs | +10% |
+| `parse_heavy` eval | 29.7 → 33.2 µs | +12% |
+
+A per-commit bisect puts the whole step at `6127224` (`arith` parse 0.38 → 0.45 µs); it stayed
+flat at every later commit, and the other cases are within ±5%. **Accepted** (maintainer,
+2026-11-22): parsing is a one-time cost per expression, the servers' per-worker parse cache
+(ADR-0021) hides it on repeated requests, and Excel precedence is the language contract. This
+crosses the ">10% on the baseline set" rule, so it is recorded here instead of blocking.
+
+The results table above is still from `21a37cc`; a later performance pass re-runs the baseline
+on the release commit.
+
 ## Reproduce
 
 ```bash
