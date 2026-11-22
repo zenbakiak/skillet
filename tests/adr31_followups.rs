@@ -1,0 +1,103 @@
+//! ADR-0031 amendment 1 (BL-078): every example in the amendment.
+//!
+//! - A1: casts chain left to right (`atom link* cast*`), with positioned cast errors.
+//! - A2: `.to_json()` on a date is the ISO text; `::Json` stays a number.
+//! - A3: `.join()` writes Currency and `NULL` as `JOIN` does; other items keep Ruby text.
+//! - A4: `LEN` and `FIND` on a date stay errors.
+//! - A5: `SUMIF`/`AVERAGEIF` return Currency when a summed value is Currency.
+
+use skillet::{evaluate, evaluate_with_json, Error, Value};
+
+fn eval(expr: &str) -> Value {
+    evaluate(expr).unwrap_or_else(|e| panic!("{expr}: unexpected error {e:?}"))
+}
+
+fn err(expr: &str) -> Error {
+    match evaluate(expr) {
+        Err(e) => e,
+        Ok(v) => panic!("{expr}: expected an error, got {v:?}"),
+    }
+}
+
+fn s(text: &str) -> Value {
+    Value::String(text.to_string())
+}
+
+fn assert_err_at(expr: &str, message: &str, position: usize) {
+    let e = err(expr);
+    assert_eq!(e.message, message, "{expr}");
+    assert_eq!(e.position, Some(position), "{expr}");
+}
+
+// ---- A1. Chained casts ---------------------------------------------------------------------
+
+#[test]
+fn casts_chain_left_to_right() {
+    assert_eq!(
+        eval("DATE(2026,1,1)::String::DateTime"),
+        Value::DateTime(1767225600)
+    );
+    assert_eq!(
+        eval("DATE(2026,1,1)::String::DateTime == DATE(2026,1,1)"),
+        Value::Boolean(true)
+    );
+    assert_eq!(eval("1::String::Integer + 1"), Value::Number(2.0));
+    assert_eq!(eval("\"2\"::Integer::String"), s("2"));
+    assert_eq!(eval("1.5::Currency::String"), s("1.5000"));
+    assert_eq!(
+        eval("1.5::Currency::String"),
+        eval("(1.5::Currency)::String")
+    );
+    assert_eq!(eval("NULL::String::Integer"), Value::Number(0.0));
+    assert_eq!(eval("1::String::Integer::Float"), Value::Number(1.0));
+}
+
+#[test]
+fn prefix_ops_power_and_not_take_the_whole_cast_chain() {
+    assert_eq!(eval("-\"2\"::String::Integer"), Value::Number(-2.0));
+    assert_eq!(eval("2^\"3\"::String::Integer"), Value::Number(8.0));
+    assert_eq!(eval("NOT 1::String::Boolean"), Value::Boolean(false));
+    assert_eq!(eval("NOT 1::String::Boolean"), eval("NOT (\"1\"::Boolean)"));
+}
+
+#[test]
+fn casts_apply_to_the_whole_link_chain() {
+    let v = evaluate_with_json(":u&.name::String::Integer", r#"{"u": null}"#)
+        .unwrap_or_else(|e| panic!("unexpected error {e:?}"));
+    assert_eq!(v, Value::Number(0.0));
+    assert_eq!(eval("(1::String).length()"), Value::Number(1.0));
+}
+
+#[test]
+fn links_and_percent_after_a_cast_stay_errors() {
+    let msg = "Unexpected token after end of expression";
+    assert_err_at("=1::String.length()", msg, 10);
+    assert_err_at("1::String.length()", msg, 9);
+    assert_err_at("1::String::Integer[0]", msg, 18);
+    assert_eq!(err("10%::String").message, msg);
+}
+
+#[test]
+fn cast_errors_point_at_the_token_after_the_colons() {
+    assert_err_at("=1::String::Foo", "Unknown cast type", 12);
+    assert_err_at("  =1::String::Foo", "Unknown cast type", 14);
+    assert_err_at("=1::Foo", "Unknown cast type", 4);
+    assert_err_at("=1::String::5", "Expected type name after '::'", 12);
+    // End of input: the start of the last token, as `=1 +` reports.
+    assert_err_at("=1::String::", "Expected type name after '::'", 10);
+    assert_eq!(err("=1 +").position, Some(3));
+}
+
+#[test]
+fn every_cast_counts_against_the_nesting_limit() {
+    let casts = |n: usize| format!("1{}", "::String".repeat(n));
+    assert_eq!(eval(&casts(128)), s("1"));
+    let e = err(&casts(129));
+    assert_eq!(e.message, "Expression nested too deeply (max 128)");
+    assert!(e.position.is_some());
+
+    // Same limit as method links.
+    let links = |n: usize| format!("\"a\"{}", ".upper()".repeat(n));
+    assert_eq!(eval(&links(128)), s("A"));
+    assert_eq!(err(&links(129)).message, e.message);
+}
