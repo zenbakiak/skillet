@@ -3,7 +3,8 @@
 
 # Use Debian-based Rust to cross-compile to musl (proc-macros need glibc to build)
 # Using latest stable Rust (1.85+ required for edition2024)
-FROM rust:latest AS builder
+# Same toolchain as CI (ADR-0012); bump with RUST_TOOLCHAIN in the workflows.
+FROM rust:1.89.0-bookworm AS builder
 
 # Install the musl toolchain (musl-gcc is native only, so each arch builds on its own platform)
 RUN apt-get update && apt-get install -y \
