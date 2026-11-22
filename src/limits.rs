@@ -109,10 +109,13 @@ impl Default for EvalLimits {
 /// the outer scope.
 ///
 /// All evaluations inside one call share one budget. The budget and the deadline are
-/// thread-local: work that a custom function moves to another thread is not charged and is not
-/// stopped by the deadline, and an evaluation started on that other thread gets a fresh default
-/// scope. The deadline is checked between operations, so one long builtin call (or one custom
-/// function call) runs to completion before the next check.
+/// thread-local: work that a custom function moves to another thread (spawned threads, pools,
+/// async runtimes) is not charged and is not stopped by the deadline, and an evaluation started
+/// on that other thread gets a fresh default scope (default budget, no deadline). Such a function
+/// must bound that work itself, for example by calling `with_limits` on the other thread with
+/// limits it chooses. The deadline is checked between operations and every 64 items inside the
+/// long builtin loops (`SORT`, `UNIQUE`, the joins); one custom function call runs to completion
+/// before the next check.
 ///
 /// ```
 /// let mut limits = skillet::EvalLimits::default();

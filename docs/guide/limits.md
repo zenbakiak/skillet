@@ -439,7 +439,10 @@ Notes (all checked against the code):
   (for example with `std::thread::spawn`, a thread pool, or an async runtime) is outside them: it is
   not charged, the deadline does not stop it, and a `skillet::evaluate` call made on that other
   thread opens a new default scope (256 MiB, no deadline) instead of joining the caller's. If a
-  custom function must use other threads, it has to bound that work itself.
+  custom function must use other threads, it has to bound that work itself, for example by
+  wrapping the evaluations on the other thread in their own `with_limits` with a budget and a
+  timeout it chooses, and by not waiting for that thread longer than it can afford (for example
+  `recv_timeout` on a channel instead of `join`).
 - A custom function's own Rust code is not metered either, on any thread. Only the values it
   returns are charged, and the deadline is checked only after it returns (same as a long builtin,
   see [Server deadline](#server-deadline-10-s)).
