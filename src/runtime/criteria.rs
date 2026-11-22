@@ -2,7 +2,7 @@
 //!
 //! One matcher for the three functions, following Microsoft's documented rules:
 //! - An optional operator prefix: `=`, `<>`, `<`, `<=`, `>`, `>=` (none means `=`).
-//! - A numeric operand compares with numbers (and currency). For `=` and `<>`, text that reads
+//! - A numeric operand compares with numbers. For `=` and `<>`, text that reads
 //!   as a number also compares as that number, as Excel's `COUNTIF` does.
 //! - `TRUE` / `FALSE` compare with booleans.
 //! - An empty operand (`""`, `"="`) matches blank values (`NULL`, `""`); `"<>"` matches the rest.
@@ -61,6 +61,7 @@ pub(crate) struct Criterion {
 impl Criterion {
     /// The criterion for a static value, or `None` when the value is not an Excel criterion
     /// (the caller then treats the argument as a lambda over `:x`).
+    #[allow(deprecated)] // `Value::Currency` is read as a Number (ADR-0033)
     pub(crate) fn from_value(v: &Value) -> Option<Criterion> {
         match v {
             Value::Number(n) | Value::Currency(n) => Some(Criterion {
@@ -153,7 +154,8 @@ fn parse_number(s: &str) -> Option<f64> {
     t.parse::<f64>().ok().filter(|n| n.is_finite())
 }
 
-/// The number an item compares as: numbers and currency always; numeric text for `=`/`<>`.
+/// The number an item compares as: numbers always; numeric text for `=`/`<>`.
+#[allow(deprecated)] // `Value::Currency` is read as a Number (ADR-0033)
 fn number_of(item: &Value, op: Op) -> Option<f64> {
     match item {
         Value::Number(n) | Value::Currency(n) => Some(*n),
@@ -426,15 +428,15 @@ pub(crate) fn range_items(v: Value) -> Vec<Value> {
 }
 
 /// `COUNTIF`/`SUMIF`/`AVERAGEIF` over `range`. `values` is the optional sum or average range,
-/// paired with `range` by position. Only numbers and currency are summed or averaged; the
-/// result is Currency when any summed value is (ADR-0031 A5), else a Number. `COUNTIF` is a Number.
+/// paired with `range` by position. Only numbers are summed or averaged (ADR-0033).
+#[allow(deprecated)] // `Value::Currency` is read as a Number (ADR-0033)
 pub(crate) fn aggregate(
     kind: Aggregate,
     range: &[Value],
     values: Option<&[Value]>,
     mut meets: impl FnMut(&Value) -> Result<bool, Error>,
 ) -> Result<Value, Error> {
-    let (mut count, mut sum, mut numbers, mut currency) = (0usize, 0.0, 0usize, false);
+    let (mut count, mut sum, mut numbers) = (0usize, 0.0, 0usize);
     for (i, item) in range.iter().enumerate() {
         if !meets(item)? {
             continue;
@@ -445,29 +447,18 @@ pub(crate) fn aggregate(
             None => Some(item),
         };
         match target {
-            Some(Value::Number(n)) => sum += n,
-            Some(Value::Currency(n)) => {
-                sum += n;
-                currency = true;
-            }
+            Some(Value::Number(n) | Value::Currency(n)) => sum += n,
             _ => continue,
         }
         numbers += 1;
     }
-    let num = |n| {
-        if currency {
-            Value::Currency(n)
-        } else {
-            Value::Number(n)
-        }
-    };
     match kind {
         Aggregate::Count => Ok(Value::Number(count as f64)),
-        Aggregate::Sum => Ok(num(sum)),
+        Aggregate::Sum => Ok(Value::Number(sum)),
         Aggregate::Average if numbers == 0 => {
             Err(Error::new("AVERAGEIF: no matching numbers (#DIV/0!)", None))
         }
-        Aggregate::Average => Ok(num(sum / numbers as f64)),
+        Aggregate::Average => Ok(Value::Number(sum / numbers as f64)),
     }
 }
 
@@ -506,6 +497,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)] // a host `Value::Currency` is read as a Number (ADR-0033)
     fn numeric_operators() {
         assert!(m(">2", Value::Number(3.0)));
         assert!(!m(">2", Value::Number(2.0)));

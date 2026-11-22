@@ -1,10 +1,10 @@
-//! ADR-0031 (BL-076): a DateTime as text is ISO 8601 UTC, and the aggregate builtins keep the
-//! Currency type (excel-compat B-13).
+//! ADR-0031 (BL-076): a DateTime as text is ISO 8601 UTC. Its aggregate Currency rule (B-13) is
+//! superseded by ADR-0033: there is one number type.
 //!
 //! 1. `::String`, `.to_s()`, `CONCAT`, `&`, `JOIN`, `.join()`, `TEXTJOIN` and `.to_json()` write
 //!    a DateTime as `2026-01-01T00:00:00Z`. `::DateTime` reads that text back.
-//! 2. `SUM`, `PRODUCT`, `AVERAGE`, `MIN` and `MAX` return Currency when a counted value is
-//!    Currency. Lowercase methods are unchanged.
+//! 2. `SUM`, `PRODUCT`, `AVERAGE`, `MIN` and `MAX` with `::Currency` values return Numbers.
+//!    Lowercase methods are unchanged.
 
 use skillet::{evaluate, evaluate_with, Value};
 use std::collections::HashMap;
@@ -156,54 +156,46 @@ fn string_cast_is_strict() {
     }
 }
 
-// ---- 2. Currency in the aggregates ------------------------------------------------------
+// ---- 2. Currency in the aggregates: Numbers since ADR-0033 (supersedes ADR-0031 decision 3) ---
 
 #[test]
-fn sum_keeps_currency() {
-    assert_eq!(eval("SUM(10::Currency, 5)"), Value::Currency(15.0));
-    assert_eq!(
-        eval("SUM(10::Currency, 5::Currency)"),
-        Value::Currency(15.0)
-    );
-    assert_eq!(eval("SUM([1, 2::Currency], 3)"), Value::Currency(6.0));
-    // Ignored values do not change the type rule.
+fn sum_with_currency_is_a_number() {
+    assert_eq!(eval("SUM(10::Currency, 5)"), Value::Number(15.0));
+    assert_eq!(eval("SUM(10::Currency, 5::Currency)"), Value::Number(15.0));
+    assert_eq!(eval("SUM([1, 2::Currency], 3)"), Value::Number(6.0));
+    // Ignored values are still ignored.
     assert_eq!(
         eval("SUM([1::Currency, 'x', TRUE, NULL])"),
-        Value::Currency(1.0)
+        Value::Number(1.0)
     );
-    // All numbers, or none, stay Number.
     assert_eq!(eval("SUM(10, 5)"), Value::Number(15.0));
     assert_eq!(eval("SUM()"), Value::Number(0.0));
     assert_eq!(eval("SUM('a', TRUE)"), Value::Number(0.0));
 }
 
 #[test]
-fn product_keeps_currency() {
-    assert_eq!(eval("PRODUCT(2::Currency, 3)"), Value::Currency(6.0));
+fn product_with_currency_is_a_number() {
+    assert_eq!(eval("PRODUCT(2::Currency, 3)"), Value::Number(6.0));
     assert_eq!(
         eval("MULTIPLY([2::Currency], 3::Currency)"),
-        Value::Currency(6.0)
+        Value::Number(6.0)
     );
     assert_eq!(eval("PRODUCT(2, 3)"), Value::Number(6.0));
     assert_eq!(eval("PRODUCT()"), Value::Number(1.0));
 }
 
 #[test]
-fn average_min_max_keep_currency() {
+fn average_min_max_with_currency_are_numbers() {
     assert_eq!(
         eval("AVERAGE(10::Currency, 20::Currency)"),
-        Value::Currency(15.0)
+        Value::Number(15.0)
     );
-    assert_eq!(eval("AVG(10::Currency, 20)"), Value::Currency(15.0));
+    assert_eq!(eval("AVG(10::Currency, 20)"), Value::Number(15.0));
     assert_eq!(eval("AVERAGE(10, 20)"), Value::Number(15.0));
-    assert_eq!(eval("MIN(3::Currency, 1::Currency)"), Value::Currency(1.0));
-    assert_eq!(
-        eval("MAX([3::Currency, 9::Currency])"),
-        Value::Currency(9.0)
-    );
-    // A mix follows ADR-0027's `Currency op Number` rule, whichever value is picked.
-    assert_eq!(eval("MIN(1, 3::Currency)"), Value::Currency(1.0));
-    assert_eq!(eval("MAX(1, 3::Currency)"), Value::Currency(3.0));
+    assert_eq!(eval("MIN(3::Currency, 1::Currency)"), Value::Number(1.0));
+    assert_eq!(eval("MAX([3::Currency, 9::Currency])"), Value::Number(9.0));
+    assert_eq!(eval("MIN(1, 3::Currency)"), Value::Number(1.0));
+    assert_eq!(eval("MAX(1, 3::Currency)"), Value::Number(3.0));
     assert_eq!(eval("MIN(1, 3)"), Value::Number(1.0));
     assert_eq!(eval("MAX()"), Value::Number(0.0));
     assert_eq!(err("AVERAGE('a')"), "AVERAGE of no numbers (#DIV/0!)");

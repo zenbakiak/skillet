@@ -57,6 +57,7 @@ pub fn exec_method_with_custom(
 /// Method dispatch used by the evaluator. Arguments and lambda bodies are evaluated against
 /// `ctx` without copying it; both lambda bodies and plain arguments see `ctx`'s custom
 /// registry (ADR-0016).
+#[allow(deprecated)] // `Value::Currency` is read as a Number (ADR-0033)
 pub(crate) fn exec_method_in(
     name: &str,
     predicate: bool,
@@ -93,7 +94,7 @@ pub(crate) fn exec_method_in(
                 _ => exec_array_method(name, recv, args_expr, ctx),
             }
         }
-        Value::Number(_) => exec_number_method(name, recv, args_expr, ctx),
+        Value::Number(_) | Value::Currency(_) => exec_number_method(name, recv, args_expr, ctx),
         Value::Json(_) => exec_json_method(name, recv, args_expr, ctx),
         _ => Err(Error::new(
             format!("No methods available for {:?} type", recv),
@@ -103,6 +104,7 @@ pub(crate) fn exec_method_in(
 }
 
 /// Handle number method calls
+#[allow(deprecated)] // `Value::Currency` is read as a Number (ADR-0033)
 fn exec_number_method(
     name: &str,
     recv: &Value,
@@ -110,8 +112,7 @@ fn exec_number_method(
     ctx: &dyn EvaluationContext,
 ) -> Result<Value, Error> {
     let num = match recv {
-        Value::Number(n) => *n,
-        Value::Currency(c) => *c,
+        Value::Number(n) | Value::Currency(n) => *n,
         _ => return Err(Error::new("Method called on non-number", None)),
     };
 
@@ -161,13 +162,11 @@ fn exec_number_method(
             let max_val = eval_arg(&args_expr[1], ctx)?;
 
             let min = match min_val {
-                Value::Number(n) => n,
-                Value::Currency(c) => c,
+                Value::Number(n) | Value::Currency(n) => n,
                 _ => return Err(Error::new("between min must be a number", None)),
             };
             let max = match max_val {
-                Value::Number(n) => n,
-                Value::Currency(c) => c,
+                Value::Number(n) | Value::Currency(n) => n,
                 _ => return Err(Error::new("between max must be a number", None)),
             };
 

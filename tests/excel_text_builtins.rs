@@ -242,13 +242,13 @@ fn unique_keeps_every_type_in_first_seen_order() {
         eval("UNIQUE([3, 1, 3, 2])"),
         Value::Array(vec![n(3.0), n(1.0), n(2.0)])
     );
+    // ADR-0033: `1::Currency` is the Number 1, so the later `1` is a duplicate.
     assert_eq!(
         eval(r#"UNIQUE([TRUE, NULL, TRUE, NULL, [1], [1], 1::Currency, 1])"#),
         Value::Array(vec![
             Value::Boolean(true),
             Value::Null,
             Value::Array(vec![n(1.0)]),
-            Value::Currency(1.0),
             n(1.0)
         ])
     );

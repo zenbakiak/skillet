@@ -15,10 +15,10 @@ Methods (`:arr.sum()`), operators and the rest of the language: [api.md](api.md)
 
 | Function | Signature | Arity | Summary | Example | Result |
 |---|---|---|---|---|---|
-| `SUM` | `SUM(values…)` | 0+ | Sum of numbers and currency; arrays are flattened, other values ignored. Currency when any value is Currency. | `SUM(1, 2, [3, 4])` | `10` |
-| `AVG`<br>alias `AVERAGE` | `AVG(values…)` | 0+ | Mean of numbers and currency (arrays flattened); Currency when any value is Currency; error when there are none (Excel `#DIV/0!`). | `AVG(2, 4, 6)` | `4` |
-| `MIN` | `MIN(values…)` | 0+ | Smallest number or currency (arrays flattened); Currency when any value is Currency; 0 when there are none. | `MIN(3, 1, 2)` | `1` |
-| `MAX` | `MAX(values…)` | 0+ | Largest number or currency (arrays flattened); Currency when any value is Currency; 0 when there are none. | `MAX([3, 9, 2])` | `9` |
+| `SUM` | `SUM(values…)` | 0+ | Sum of numbers; arrays are flattened, other values ignored. | `SUM(1, 2, [3, 4])` | `10` |
+| `AVG`<br>alias `AVERAGE` | `AVG(values…)` | 0+ | Mean of numbers (arrays flattened); error when there are none (Excel `#DIV/0!`). | `AVG(2, 4, 6)` | `4` |
+| `MIN` | `MIN(values…)` | 0+ | Smallest number (arrays flattened); 0 when there are none. | `MIN(3, 1, 2)` | `1` |
+| `MAX` | `MAX(values…)` | 0+ | Largest number (arrays flattened); 0 when there are none. | `MAX([3, 9, 2])` | `9` |
 | `ROUND` | `ROUND(number, [digits])` | 1-2 | Round half away from zero to `digits` decimals (default 0); negative `digits` round left of the point. | `ROUND(1234.567, -2)` | `1200` |
 | `CEILING`<br>alias `CEIL` | `CEILING(number, [significance])` | 1-2 | Round up to a multiple of `significance` (default 1), Excel rules for negatives. | `CEILING(2.1, 0.5)` | `2.5` |
 | `FLOOR` | `FLOOR(number, [significance])` | 1-2 | Round down to a multiple of `significance` (default 1), Excel rules for negatives. | `FLOOR(7, 5)` | `5` |
@@ -27,8 +27,8 @@ Methods (`:arr.sum()`), operators and the rest of the language: [api.md](api.md)
 | `POW`<br>alias `POWER` | `POW(base, exponent)` | 2 | `base` raised to `exponent`; error for `0^0`, `0` to a negative power, or a non-real result. | `POW(2, 10)` | `1024` |
 | `MOD` | `MOD(number, divisor)` | 2 | Remainder of `number / divisor`; the sign follows the divisor (Excel). Error for 0. | `MOD(-10, 3)` | `2` |
 | `INT` | `INT(number)` | 1 | Round down to an integer: `INT(-3.9)` is -4. | `INT(5.9)` | `5` |
-| `PRODUCT`<br>alias `MULTIPLY` | `PRODUCT(values…)` | 0+ | Product of numbers and currency (arrays flattened); Currency when any value is Currency; 1 when there are none. | `PRODUCT(2, 3, 4)` | `24` |
-| `SUMIF` † | `SUMIF(range, criteria, [sum_range])` | 2-3 | Sum of items meeting an Excel criteria (`">2"`, `5`, `"a*"`) or a lambda over `:x`; Currency when any summed value is Currency. | `SUMIF([1, -2, 3], ">0")` | `4` |
+| `PRODUCT`<br>alias `MULTIPLY` | `PRODUCT(values…)` | 0+ | Product of numbers (arrays flattened); 1 when there are none. | `PRODUCT(2, 3, 4)` | `24` |
+| `SUMIF` † | `SUMIF(range, criteria, [sum_range])` | 2-3 | Sum of items meeting an Excel criteria (`">2"`, `5`, `"a*"`) or a lambda over `:x`. | `SUMIF([1, -2, 3], ">0")` | `4` |
 
 ## Logical
 
@@ -49,7 +49,7 @@ Methods (`:arr.sum()`), operators and the rest of the language: [api.md](api.md)
 | `LENGTH` | `LENGTH(text_or_array)` | 1 | Characters in a string or items in an array; 0 for NULL. | `LENGTH('héllo')` | `5` |
 | `LEN` | `LEN(text)` | 1 | Excel `LEN`: characters in the text; numbers and booleans count as their text, NULL as 0. | `LEN('héllo')` | `5` |
 | `TEXTJOIN` | `TEXTJOIN(delimiter, ignore_empty, text…)` | 3+ | Excel `TEXTJOIN`: join texts, numbers, booleans and dates (arrays flattened) with `delimiter`; skip empty ones when `ignore_empty` is TRUE. | `TEXTJOIN(', ', TRUE, 'a', '', ['b', 'c'])` | `"a, b, c"` |
-| `CONCAT` | `CONCAT(values…)` | 0+ | Join values as text: numbers and currency as numbers, booleans as TRUE/FALSE, a DateTime as ISO 8601 UTC text, arrays flattened; NULL and JSON add nothing. | `CONCAT('a', 1, TRUE)` | `"a1TRUE"` |
+| `CONCAT` | `CONCAT(values…)` | 0+ | Join values as text: numbers as numbers, booleans as TRUE/FALSE, a DateTime as ISO 8601 UTC text, arrays flattened; NULL and JSON add nothing. | `CONCAT('a', 1, TRUE)` | `"a1TRUE"` |
 | `UPPER` | `UPPER(text)` | 1 | Upper-case. | `UPPER('abc')` | `"ABC"` |
 | `LOWER` | `LOWER(text)` | 1 | Lower-case. | `LOWER('ABC')` | `"abc"` |
 | `TRIM` | `TRIM(text)` | 1 | Remove leading and trailing spaces and collapse inner runs of spaces (Excel). `.trim()` keeps inner spaces. | `TRIM('  a   b  ')` | `"a b"` |
@@ -59,7 +59,7 @@ Methods (`:arr.sum()`), operators and the rest of the language: [api.md](api.md)
 | `SUBSTITUTE` | `SUBSTITUTE(text, find, replacement, [instance])` | 3-4 | Replace every occurrence of `find`, or only the `instance`-th. | `SUBSTITUTE('a-b-c', '-', '+', 2)` | `"a-b+c"` |
 | `SUBSTITUTEM` | `SUBSTITUTEM(text, find, replacement)` | 3 | Deprecated since 0.7.0: use `SUBSTITUTE`, which also takes `instance`; removed in a later minor release. Replaces every occurrence of `find`. | `SUBSTITUTEM('a-b-c', '-', '')` | `"abc"` |
 | `ISBLANK` | `ISBLANK(value)` | 1 | TRUE for NULL, a whitespace-only string or an empty array. | `ISBLANK('  ')` | `TRUE` |
-| `ISNUMBER` | `ISNUMBER(value)` | 1 | TRUE for a number or currency. | `ISNUMBER(5)` | `TRUE` |
+| `ISNUMBER` | `ISNUMBER(value)` | 1 | TRUE for a number. | `ISNUMBER(5)` | `TRUE` |
 | `ISTEXT` | `ISTEXT(value)` | 1 | TRUE for a string. | `ISTEXT('x')` | `TRUE` |
 | `INCLUDES` | `INCLUDES(text, substring)` | 2 | TRUE when `text` contains `substring`. | `INCLUDES('hello', 'ell')` | `TRUE` |
 | `LEFT` | `LEFT(text, [count])` | 1-2 | First `count` characters (default 1); a negative `count` is an error (Excel). | `LEFT('hello', 2)` | `"he"` |
@@ -76,7 +76,7 @@ Methods (`:arr.sum()`), operators and the rest of the language: [api.md](api.md)
 | `LAST` | `LAST(array)` | 1 | Last item; error on an empty array. | `LAST([9, 8, 7])` | `7` |
 | `CONTAINS` | `CONTAINS(array, value)` | 2 | TRUE when the array has an item equal to `value`. | `CONTAINS([1, 2, 3], 2)` | `TRUE` |
 | `IN` | `IN(array, value)` | 2 | Same as `CONTAINS`, with an exact argument count. | `IN([1, 2, 3], 4)` | `FALSE` |
-| `COUNT` | `COUNT(values…)` | 1+ | How many numbers (currency, datetime) there are; arrays flattened, other values ignored (Excel). | `COUNT([1, 'a', TRUE], 2)` | `2` |
+| `COUNT` | `COUNT(values…)` | 1+ | How many numbers (and datetimes) there are; arrays flattened, other values ignored (Excel). | `COUNT([1, 'a', TRUE], 2)` | `2` |
 | `COUNTA` | `COUNTA(values…)` | 1+ | How many values are not NULL; arrays flattened (Excel). | `COUNTA([1, 'a', NULL], '')` | `3` |
 | `UNIQUE` | `UNIQUE(array)` | 1 | Distinct values in first-seen order (`==` equality: same type and value, text case-sensitive). | `UNIQUE([1, 'a', 1, 'a'])` | `[1, "a"]` |
 | `SORT` | `SORT(array, [order])` | 1-2 | Sorted ascending (Excel: numbers < text < booleans, text ignores case), or descending with order `-1` or `'DESC'`; other values are an error. | `SORT(['b', 2, 'A', 1])` | `[1, 2, "A", "b"]` |
@@ -119,7 +119,7 @@ Methods (`:arr.sum()`), operators and the rest of the language: [api.md](api.md)
 
 | Function | Signature | Arity | Summary | Example | Result |
 |---|---|---|---|---|---|
-| `MEDIAN` | `MEDIAN(values…)` | 0+ | Median of numbers and currency (arrays flattened); error when there are none. | `MEDIAN(1, 3, 2, 4)` | `2.5` |
+| `MEDIAN` | `MEDIAN(values…)` | 0+ | Median of numbers (arrays flattened); error when there are none. | `MEDIAN(1, 3, 2, 4)` | `2.5` |
 | `MODE_SNGL`<br>alias `MODESNGL`, `MODE.SNGL`, `MODE` | `MODE_SNGL(values…)` | 0+ | Most frequent number (first seen wins a tie); error when no number repeats. | `MODE_SNGL(1, 2, 2, 3)` | `2` |
 | `STDEV_P`<br>alias `STDEVP`, `STDEV.P` | `STDEV_P(values…)` | 0+ | Population standard deviation; error when there are no numbers. | `STDEV_P(2, 4, 4, 4, 5, 5, 7, 9)` | `2` |
 | `VAR_P`<br>alias `VARP`, `VAR.P` | `VAR_P(values…)` | 0+ | Population variance; error when there are no numbers. | `VAR_P(1, 2, 3, 4)` | `1.25` |
@@ -127,7 +127,7 @@ Methods (`:arr.sum()`), operators and the rest of the language: [api.md](api.md)
 | `VAR_S`<br>alias `VAR.S`, `VAR` | `VAR_S(values…)` | 1+ | Sample variance (divides by n - 1); error with fewer than two numbers. | `VAR_S(1, 2, 3, 4)` | `1.6666666666666667` |
 | `PERCENTILE_INC`<br>alias `PERCENTILEINC`, `PERCENTILE.INC`, `PERCENTILE` | `PERCENTILE_INC(values…, k)` | 2+ | Inclusive percentile `k` (0-1) of the values, interpolated. | `PERCENTILE_INC([1, 2, 3, 4], 0.5)` | `2.5` |
 | `QUARTILE_INC`<br>alias `QUARTILEINC`, `QUARTILE.INC`, `QUARTILE` | `QUARTILE_INC(values…, quart)` | 2+ | Inclusive quartile `quart` (0-4) of the values. | `QUARTILE_INC([1, 2, 3, 4, 5], 1)` | `2` |
-| `AVERAGEIF` †<br>alias `AVGIF` | `AVERAGEIF(range, criteria, [average_range])` | 2-3 | Mean of items meeting an Excel criteria or a lambda over `:x`; Currency when any averaged value is Currency; error when none match. | `AVERAGEIF([1, 3, 5, -1], ">0")` | `3` |
+| `AVERAGEIF` †<br>alias `AVGIF` | `AVERAGEIF(range, criteria, [average_range])` | 2-3 | Mean of items meeting an Excel criteria or a lambda over `:x`; error when none match. | `AVERAGEIF([1, 3, 5, -1], ">0")` | `3` |
 | `COUNTIF` † | `COUNTIF(range, criteria)` | 2 | Number of items meeting an Excel criteria (`">2"`, `"<>a"`, `"a*"`) or a lambda over `:x`. | `COUNTIF([1, 2, 3, 4], ">2")` | `2` |
 
 ## JSON

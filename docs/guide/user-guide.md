@@ -253,8 +253,10 @@ fn example_values() {
     // Null
     vars.insert("optional".to_string(), Value::Null);
 
-    // Currency (treated as Number with special formatting)
-    vars.insert("salary".to_string(), Value::Currency(75000.0));
+    // Money is a Number: Skillet has one number type (ADR-0033).
+    // `Value::Currency` is deprecated in 0.7 and read as a Number; use `:salary::Currency`
+    // in the formula to round an amount to 4 decimals.
+    vars.insert("salary".to_string(), Value::Number(75000.0));
 
     // DateTime (Unix timestamp)
     vars.insert("created_at".to_string(), Value::DateTime(1640995200)); // 2022-01-01
@@ -1662,6 +1664,10 @@ sk "=42::String"         # "42"
 sk "=1::Boolean"         # true
 sk "=0::Boolean"         # false
 sk "=DATE(2026,1,1)::String::DateTime"   # casts chain left to right
+# One number type (ADR-0033): these all return a Number
+sk "=-7.9::Integer"            # -7 (toward zero, like Excel TRUNC)
+sk "=1.23456789::Currency"     # 1.2346 (rounded to 4 decimals, half away from zero)
+sk "=(0.1 + 0.2)::Currency"    # 0.3
 # There is no `as` keyword: `=42 as string` is a parse error (before BL-069 it returned 42)
 ```
 

@@ -1,8 +1,8 @@
 //! BL-070, ADR-0027 (maintainer decision 2026-11-21):
 //! 1. In `DateTime ± x` and `x + DateTime`, `x` converts like any operator operand (ADR-0023):
 //!    NULL is 0, numeric text and booleans convert, other text is `#VALUE!`.
-//! 2. Currency works in the arithmetic operators. `+ - * /` and unary minus give Currency, except
-//!    `Currency / Currency` (a Number ratio); `^` and `%` give Number.
+//! 2. ADR-0033 (supersedes ADR-0027's Currency rules): `x::Currency` is a Number rounded to 4
+//!    decimals, so every operator on it follows the Number rules and returns a Number.
 //! 3. Lowercase methods are unchanged (`[1, "2"].sum()` errors).
 
 use skillet::{evaluate, evaluate_with, Value};
@@ -19,8 +19,9 @@ fn err(src: &str) -> String {
     }
 }
 
-fn cur(n: f64) -> Value {
-    Value::Currency(n)
+/// What an expression on `::Currency` values returns since ADR-0033: a Number.
+fn num(n: f64) -> Value {
+    Value::Number(n)
 }
 
 // ---- 1. Date arithmetic --------------------------------------------------------------------
@@ -92,9 +93,15 @@ fn other_date_operations_are_unchanged() {
     assert_eq!(err("=DATE(2026, 1, 1) / TRUE"), e);
     assert_eq!(err("=DATE(2026, 1, 1) ^ NULL"), e);
     assert_eq!(err("=DATE(2026, 1, 1) + [1]"), e);
-    // Currency is money, not a number of days.
-    assert_eq!(err("=DATE(2026, 1, 1) + 1::Currency"), e);
-    assert_eq!(err("=1::Currency + DATE(2026, 1, 1)"), e);
+    // ADR-0033: `1::Currency` is the Number 1, a number of days like any other.
+    assert_eq!(
+        ok("=DATE(2026, 1, 1) + 1::Currency"),
+        ok("=DATE(2026, 1, 2)")
+    );
+    assert_eq!(
+        ok("=1::Currency + DATE(2026, 1, 1)"),
+        ok("=DATE(2026, 1, 2)")
+    );
     assert_eq!(
         err("=DATE(2026, 1, 1) + \"1e300\""),
         "Date arithmetic out of range"
@@ -104,23 +111,22 @@ fn other_date_operations_are_unchanged() {
 // ---- 2. Currency arithmetic ----------------------------------------------------------------
 
 #[test]
-fn currency_with_numbers_is_currency() {
-    assert_eq!(ok("=10::Currency + 2"), cur(12.0));
-    assert_eq!(ok("=2 + 10::Currency"), cur(12.0));
-    assert_eq!(ok("=10::Currency - 2"), cur(8.0));
-    assert_eq!(ok("=2 - 10::Currency"), cur(-8.0));
-    assert_eq!(ok("=10::Currency * 3"), cur(30.0));
-    assert_eq!(ok("=3 * 10::Currency"), cur(30.0));
-    assert_eq!(ok("=10::Currency / 4"), cur(2.5));
-    assert_eq!(ok("=10 / 4::Currency"), cur(2.5));
+fn currency_with_numbers_is_a_number() {
+    assert_eq!(ok("=10::Currency + 2"), num(12.0));
+    assert_eq!(ok("=2 + 10::Currency"), num(12.0));
+    assert_eq!(ok("=10::Currency - 2"), num(8.0));
+    assert_eq!(ok("=2 - 10::Currency"), num(-8.0));
+    assert_eq!(ok("=10::Currency * 3"), num(30.0));
+    assert_eq!(ok("=3 * 10::Currency"), num(30.0));
+    assert_eq!(ok("=10::Currency / 4"), num(2.5));
+    assert_eq!(ok("=10 / 4::Currency"), num(2.5));
 }
 
 #[test]
-fn currency_with_currency() {
-    assert_eq!(ok("=10::Currency + 2::Currency"), cur(12.0));
-    assert_eq!(ok("=10::Currency - 2::Currency"), cur(8.0));
-    assert_eq!(ok("=10::Currency * 2::Currency"), cur(20.0));
-    // A ratio of two amounts is a plain number.
+fn currency_with_currency_is_a_number() {
+    assert_eq!(ok("=10::Currency + 2::Currency"), num(12.0));
+    assert_eq!(ok("=10::Currency - 2::Currency"), num(8.0));
+    assert_eq!(ok("=10::Currency * 2::Currency"), num(20.0));
     assert_eq!(ok("=10::Currency / 4::Currency"), Value::Number(2.5));
 }
 
@@ -135,31 +141,38 @@ fn power_and_modulo_with_currency_are_numbers() {
 }
 
 #[test]
-fn unary_plus_keeps_currency() {
-    assert_eq!(ok("=+(1::Currency)"), cur(1.0));
-    assert_eq!(ok("=+(-2.5::Currency)"), cur(-2.5));
-    assert_eq!(ok("=+(+(3::Currency))"), cur(3.0));
-    assert_eq!(ok("=+(1::Currency) + 1"), cur(2.0));
+fn unary_plus_on_currency_is_a_number() {
+    assert_eq!(ok("=+(1::Currency)"), num(1.0));
+    assert_eq!(ok("=+(-2.5::Currency)"), num(-2.5));
+    assert_eq!(ok("=+(+(3::Currency))"), num(3.0));
+    assert_eq!(ok("=+(1::Currency) + 1"), num(2.0));
 }
 
 #[test]
-fn unary_minus_keeps_currency() {
-    assert_eq!(ok("=-(5::Currency)"), cur(-5.0));
-    assert_eq!(ok("=-(-5::Currency)"), cur(5.0));
-    // `0 - x`, as for numbers: negating zero is 0, not -0.
-    match ok("=-(0::Currency)") {
-        Value::Currency(n) => assert!(n == 0.0 && n.is_sign_positive()),
-        v => panic!("expected currency, got {v:?}"),
+fn unary_minus_on_currency_is_a_number() {
+    assert_eq!(ok("=-(5::Currency)"), num(-5.0));
+    assert_eq!(ok("=-(-5::Currency)"), num(5.0));
+    // ADR-0033 supersedes ADR-0027 decision 4: negating follows the Number rule, as `-(0)`
+    // does (the cast itself gives 0, never -0).
+    match (ok("=-(0::Currency)"), ok("=-(0)")) {
+        (Value::Number(c), Value::Number(n)) => {
+            assert_eq!(c.to_bits(), n.to_bits());
+        }
+        v => panic!("expected numbers, got {v:?}"),
+    }
+    match ok("=0::Currency") {
+        Value::Number(n) => assert!(n == 0.0 && n.is_sign_positive()),
+        v => panic!("expected a number, got {v:?}"),
     }
 }
 
 #[test]
 fn currency_converts_the_other_operand_like_a_number() {
-    assert_eq!(ok("=10::Currency + \"2\""), cur(12.0));
-    assert_eq!(ok("=\"2\" * 10::Currency"), cur(20.0));
-    assert_eq!(ok("=10::Currency + TRUE"), cur(11.0));
-    assert_eq!(ok("=10::Currency + NULL"), cur(10.0));
-    assert_eq!(ok("=NULL - 10::Currency"), cur(-10.0));
+    assert_eq!(ok("=10::Currency + \"2\""), num(12.0));
+    assert_eq!(ok("=\"2\" * 10::Currency"), num(20.0));
+    assert_eq!(ok("=10::Currency + TRUE"), num(11.0));
+    assert_eq!(ok("=10::Currency + NULL"), num(10.0));
+    assert_eq!(ok("=NULL - 10::Currency"), num(-10.0));
     assert_eq!(ok("=10::Currency ^ \"2\""), Value::Number(100.0));
     assert_eq!(
         err("=10::Currency + \"abc\""),
@@ -173,11 +186,11 @@ fn currency_converts_the_other_operand_like_a_number() {
 }
 
 #[test]
-fn currency_is_not_rounded() {
-    // Currency is a tagged f64 (ADR-0003): arithmetic does not round to cents.
-    assert_eq!(ok("=1::Currency / 3"), cur(1.0 / 3.0));
-    assert_eq!(ok("=0.1::Currency + 0.2"), cur(0.1 + 0.2));
-    assert_eq!(ok("=ROUND(1::Currency / 3, 2)"), cur(0.33));
+fn arithmetic_on_currency_is_not_rounded_again() {
+    // ADR-0033 §3: the cast rounds once; arithmetic on the result is plain f64 arithmetic.
+    assert_eq!(ok("=1::Currency / 3"), num(1.0 / 3.0));
+    assert_eq!(ok("=0.1::Currency + 0.2"), num(0.1 + 0.2));
+    assert_eq!(ok("=ROUND(1::Currency / 3, 2)"), num(0.33));
 }
 
 #[test]
@@ -201,11 +214,12 @@ fn currency_keeps_the_arithmetic_errors() {
 }
 
 #[test]
+#[allow(deprecated)] // a host `Value::Currency` is read as a Number (ADR-0033 §5)
 fn currency_from_variables() {
     let mut vars = HashMap::new();
     vars.insert("price".to_string(), Value::Currency(19.5));
     vars.insert("qty".to_string(), Value::Number(2.0));
-    assert_eq!(evaluate_with("=:price * :qty", &vars).unwrap(), cur(39.0));
+    assert_eq!(evaluate_with("=:price * :qty", &vars).unwrap(), num(39.0));
     assert_eq!(
         evaluate_with("=:price * :qty / :price", &vars).unwrap(),
         Value::Number(2.0)

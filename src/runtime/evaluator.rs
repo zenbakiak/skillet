@@ -10,7 +10,7 @@ use crate::runtime::{
     type_casting::cast_value,
     utils::{clamp_index, coerce_to_number, slice_items},
 };
-use crate::types::Value;
+use crate::types::{currency_to_number, holds_currency, Value};
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
@@ -201,28 +201,8 @@ fn date_arithmetic(op: BinaryOp, a: &Value, b: &Value) -> Result<Value, Error> {
     }
 }
 
-/// An arithmetic operator with a Currency operand and no DateTime (ADR-0027). The other operand
-/// converts like a number operand. `+ - * /` give Currency, except `Currency / Currency`, which
-/// is a ratio (Number); `^` and `%` give Number. No rounding: Currency is a tagged `f64`.
-#[cold]
-#[inline(never)]
-fn currency_arithmetic(op: BinaryOp, a: &Value, b: &Value) -> Result<Value, Error> {
-    let operand = |v: &Value| match v {
-        Value::Currency(c) => Ok(*c),
-        _ => coerced_operand(v, "Arithmetic op on non-number"),
-    };
-    let (an, bn) = (operand(a)?, operand(b)?);
-    let r = crate::runtime::arithmetic::checked_binary(op, an, bn)?;
-    let ratio = matches!((a, b), (Value::Currency(_), Value::Currency(_)));
-    Ok(match op {
-        BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul => Value::Currency(r),
-        BinaryOp::Div if !ratio => Value::Currency(r),
-        _ => Value::Number(r),
-    })
-}
-
 /// An arithmetic operator where an operand is not a number (BL-066). A DateTime operand is date
-/// arithmetic and a Currency operand is currency arithmetic (ADR-0027). Otherwise each operand
+/// arithmetic (ADR-0027). Otherwise each operand
 /// converts as in Excel: numeric text, `TRUE`/`FALSE` as 1/0 and NULL (a blank cell) as 0; other
 /// text is `#VALUE!`, and other types stay the arithmetic type error.
 #[cold]
@@ -231,42 +211,34 @@ fn coerced_arithmetic(op: BinaryOp, a: &Value, b: &Value) -> Result<Value, Error
     if matches!(a, Value::DateTime(_)) || matches!(b, Value::DateTime(_)) {
         return date_arithmetic(op, a, b);
     }
-    if matches!(a, Value::Currency(_)) || matches!(b, Value::Currency(_)) {
-        return currency_arithmetic(op, a, b);
-    }
     let operand = |v: &Value| coerced_operand(v, "Arithmetic op on non-number");
     let (an, bn) = (operand(a)?, operand(b)?);
     crate::runtime::arithmetic::checked_binary(op, an, bn).map(Value::Number)
 }
 
-/// Unary plus on a non-number: Currency is kept as it is (ADR-0027); other operands convert as
-/// in `coerced_operand`.
+/// Unary plus on a non-number: operands convert as in `coerced_operand`.
 #[cold]
 #[inline(never)]
 fn coerced_plus(v: &Value) -> Result<Value, Error> {
-    match v {
-        Value::Currency(c) => Ok(Value::Currency(*c)),
-        _ => coerced_operand(v, "Unary '+' on non-number").map(Value::Number),
-    }
+    coerced_operand(v, "Unary '+' on non-number").map(Value::Number)
 }
 
-/// Unary minus on a non-number: Currency stays Currency (ADR-0027); other operands convert as
-/// in `coerced_operand`. `0.0 - n`, not `-n`: `-NULL` and `-FALSE` are 0, not -0.
+/// Unary minus on a non-number: operands convert as in `coerced_operand`. `0.0 - n`, not `-n`:
+/// `-NULL` and `-FALSE` are 0, not -0.
 #[cold]
 #[inline(never)]
 fn coerced_negate(v: &Value) -> Result<Value, Error> {
-    match v {
-        Value::Currency(c) => Ok(Value::Currency(0.0 - *c)),
-        _ => coerced_operand(v, "Unary '-' on non-number").map(|n| Value::Number(0.0 - n)),
-    }
+    coerced_operand(v, "Unary '-' on non-number").map(|n| Value::Number(0.0 - n))
 }
 
-/// An operator operand as a number: numbers as they are, NULL as 0 (a blank cell), numeric text
-/// and booleans as `coerce_to_number`; `type_error` for types that do not convert.
+/// An operator operand as a number: numbers as they are (a deprecated `Currency` too, ADR-0033),
+/// NULL as 0 (a blank cell), numeric text and booleans as `coerce_to_number`; `type_error` for
+/// types that do not convert.
 #[cold]
+#[allow(deprecated)]
 fn coerced_operand(v: &Value, type_error: &str) -> Result<f64, Error> {
     match v {
-        Value::Number(n) => Ok(*n),
+        Value::Number(n) | Value::Currency(n) => Ok(*n),
         Value::Null => Ok(0.0),
         _ => coerce_to_number(v, "")?.ok_or_else(|| Error::new(type_error, None)),
     }
@@ -928,12 +900,12 @@ impl Evaluator {
     }
 
     /// Helper to convert Value to JSON
+    #[allow(deprecated)]
     fn value_to_json(value: &Value) -> Result<serde_json::Value, Error> {
         match value {
-            Value::Number(n) => Ok(serde_json::json!(n)),
+            Value::Number(n) | Value::Currency(n) => Ok(serde_json::json!(n)),
             Value::String(s) => Ok(serde_json::json!(s)),
             Value::Boolean(b) => Ok(serde_json::json!(b)),
-            Value::Currency(c) => Ok(serde_json::json!(c)),
             Value::DateTime(dt) => Ok(serde_json::json!(dt)),
             Value::Null => Ok(serde_json::json!(null)),
             Value::Array(arr) => {
@@ -966,8 +938,22 @@ pub fn eval(expr: &Expr) -> Result<Value, Error> {
     limits::evaluation(|| Evaluator::eval(expr, &EmptyContext))
 }
 
+/// The host's variables with every deprecated `Value::Currency` read as a Number (ADR-0033 §5).
+/// Borrowed as they are when none holds one, which is every JSON entry point; otherwise a copy.
+fn number_vars(vars: &HashMap<String, Value>) -> Cow<'_, HashMap<String, Value>> {
+    if vars.values().any(holds_currency) {
+        Cow::Owned(
+            vars.iter()
+                .map(|(k, v)| (k.clone(), currency_to_number(v.clone())))
+                .collect(),
+        )
+    } else {
+        Cow::Borrowed(vars)
+    }
+}
+
 pub fn eval_with_vars(expr: &Expr, vars: &HashMap<String, Value>) -> Result<Value, Error> {
-    limits::evaluation(|| Evaluator::eval(expr, &VariableContext::new(vars)))
+    eval_with_vars_in(expr, vars, None)
 }
 
 pub fn eval_with_vars_and_custom(
@@ -975,8 +961,20 @@ pub fn eval_with_vars_and_custom(
     vars: &HashMap<String, Value>,
     custom_registry: &Arc<RwLock<FunctionRegistry>>,
 ) -> Result<Value, Error> {
+    eval_with_vars_in(expr, vars, Some(custom_registry))
+}
+
+fn eval_with_vars_in(
+    expr: &Expr,
+    vars: &HashMap<String, Value>,
+    custom_registry: Option<&Arc<RwLock<FunctionRegistry>>>,
+) -> Result<Value, Error> {
     limits::evaluation(|| {
-        Evaluator::eval(expr, &VariableContext::with_custom(vars, custom_registry))
+        let context = VariableContext {
+            variables: number_vars(vars),
+            custom_registry,
+        };
+        Evaluator::eval(expr, &context)
     })
 }
 
@@ -1011,7 +1009,7 @@ fn eval_with_assignments_in(
 ) -> Result<(Value, HashMap<String, Value>), Error> {
     limits::evaluation(|| {
         let mut context = VariableContext {
-            variables: Cow::Owned(vars.clone()),
+            variables: Cow::Owned(number_vars(vars).into_owned()),
             custom_registry,
         };
         let result = eval_with_assignments_context(expr, &mut context)?;

@@ -41,6 +41,12 @@
 - Related: BL-070, ADR-0023 (amended here), ADR-0018 D-5 (date arithmetic), ADR-0003
   (`Currency` is a tagged `f64`), ADR-0004
 
+> **Currency parts superseded by [ADR-0033](0033-one-numeric-type.md) (2026-11-22).** Skillet has
+> one number type; `::Currency` rounds to 4 decimals and returns a Number. Superseded: the
+> Currency bullet of decision 1, decision 2, the `currency_arithmetic` part of the
+> implementation constraint, decision 4, and the Currency rows and consequences. Amendment 1
+> (Currency compares by amount) is moot. Date arithmetic (decision 1) and decision 3 stand.
+
 ## Context
 ADR-0023 decision 6 made the arithmetic operators convert numeric text, booleans and `NULL`
 like Excel, but left two operand types out:

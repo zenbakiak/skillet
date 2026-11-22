@@ -1,6 +1,10 @@
 //! BL-082, ADR-0027 Amendment 1: `==`, `!=`, `<`, `<=`, `>`, `>=` compare a Currency with a
 //! Number by amount, in either order. Every other cross-type comparison keeps its ADR-0023
 //! result. One test per row of the amendment's table, plus the operators inside lambdas.
+//!
+//! ADR-0033 makes the amendment moot (`::Currency` gives a Number): its results all hold, and
+//! the rows that kept a Currency apart (`CONTAINS`, `IN`, `.includes()`, `UNIQUE`, `.sort()`,
+//! `MIN`/`MAX`/`SORT` types) now see two equal Numbers.
 
 use skillet::{evaluate, Value};
 
@@ -30,10 +34,10 @@ fn incompatible(src: &str) {
     );
 }
 
-/// The amount of a Number or Currency result (its type is checked elsewhere).
+/// The amount of a Number result.
 fn amount(src: &str) -> f64 {
     match v(src) {
-        Value::Number(n) | Value::Currency(n) => n,
+        Value::Number(n) => n,
         other => panic!("{src}: expected a number, got {other:?}"),
     }
 }
@@ -99,14 +103,14 @@ fn arrays_compare_items_by_amount() {
 fn lambdas_use_the_same_comparison() {
     assert_eq!(
         v("[10::Currency, 5].filter(:x > 6)"),
-        Value::Array(vec![Value::Currency(10.0)])
+        Value::Array(vec![Value::Number(10.0)])
     );
     assert_eq!(
         v("FILTER([1::Currency, 3], :x >= 2)"),
         Value::Array(vec![Value::Number(3.0)])
     );
     assert_eq!(v("[5::Currency, 1].find(:x < 2)"), Value::Number(1.0));
-    assert_eq!(v("[5, 1::Currency].find(:x == 1)"), Value::Currency(1.0));
+    assert_eq!(v("[5, 1::Currency].find(:x == 1)"), Value::Number(1.0));
     assert_eq!(
         v("[1, 2::Currency, 3].map(:x > 1)"),
         v("[FALSE, TRUE, TRUE]")
@@ -125,19 +129,19 @@ fn text_criteria_are_unchanged() {
 }
 
 #[test]
-fn min_max_and_sort_are_unchanged() {
-    assert_eq!(v("MIN(2::Currency, 1)"), Value::Currency(1.0));
-    assert_eq!(v("MAX(1, 3::Currency)"), Value::Currency(3.0));
+fn min_max_and_sort_see_numbers() {
+    assert_eq!(v("MIN(2::Currency, 1)"), Value::Number(1.0));
+    assert_eq!(v("MAX(1, 3::Currency)"), Value::Number(3.0));
     assert_eq!(
         v("SORT([3, 1::Currency, 2])"),
         Value::Array(vec![
-            Value::Currency(1.0),
+            Value::Number(1.0),
             Value::Number(2.0),
             Value::Number(3.0)
         ])
     );
-    // Methods stay strict (ADR-0027 decision 3).
-    assert!(evaluate("[1::Currency, 2].sort()").is_err());
+    // ADR-0033: the method sees a numeric array (it was `Error: sort expects numeric array`).
+    assert_eq!(v("[1::Currency, 2].sort()"), v("[1, 2]"));
 }
 
 #[test]
@@ -163,23 +167,32 @@ fn currency_against_non_numbers_is_unchanged() {
 }
 
 #[test]
-fn membership_and_unique_are_unchanged() {
-    assert!(!b("CONTAINS([1::Currency], 1)"));
-    assert!(!b("IN([1::Currency], 1)"));
-    assert!(!b("[1::Currency].includes(1)"));
+fn membership_and_unique_see_equal_numbers() {
+    // ADR-0033 §6: these were `false` and `[1, Currency(1)]` under ADR-0027 Amendment 1.
+    assert!(b("CONTAINS([1::Currency], 1)"));
+    assert!(b("IN([1::Currency], 1)"));
+    assert!(b("[1::Currency].includes(1)"));
     assert_eq!(
         v("UNIQUE([1, 1::Currency])"),
-        Value::Array(vec![Value::Number(1.0), Value::Currency(1.0)])
+        Value::Array(vec![Value::Number(1.0)])
     );
 }
 
 #[test]
+#[allow(deprecated)] // a host `Value::Currency` is read as a Number (ADR-0033 §5)
 fn nan_currency_behaves_like_nan() {
-    // NaN only reaches Skillet from a host variable.
+    // NaN only reaches Skillet from a host variable. ADR-0033: a Currency NaN is a Number NaN.
     let mut vars = std::collections::HashMap::new();
     vars.insert("c".to_string(), Value::Currency(f64::NAN));
+    vars.insert("n".to_string(), Value::Number(f64::NAN));
     let eval = |src: &str| skillet::evaluate_with(src, &vars);
     assert_eq!(eval(":c == 1").unwrap(), Value::Boolean(false));
     assert_eq!(eval("1 != :c").unwrap(), Value::Boolean(true));
-    assert!(eval(":c < 1").is_err());
+    for (with_c, with_n) in [(":c < 1", ":n < 1"), ("1 >= :c", "1 >= :n")] {
+        assert_eq!(
+            format!("{:?}", eval(with_c)),
+            format!("{:?}", eval(with_n)),
+            "{with_c}"
+        );
+    }
 }

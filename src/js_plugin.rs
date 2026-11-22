@@ -133,17 +133,17 @@ impl JavaScriptFunction {
 
     /// Convert a Skillet value into a JS value. `depth` is the number of arrays enclosing
     /// `value`; arrays nest at most [`MAX_NESTING_DEPTH`] levels (an empty array adds none).
+    #[allow(deprecated)] // `Value::Currency` is read as a Number (ADR-0033)
     fn value_to_js<'js>(
         ctx: &Ctx<'js>,
         value: &Value,
         depth: usize,
     ) -> Result<rquickjs::Value<'js>, Failure> {
         let js = match value {
-            Value::Number(n) => n.into_js(ctx)?,
+            Value::Number(n) | Value::Currency(n) => n.into_js(ctx)?,
             Value::String(s) | Value::Json(s) => s.as_str().into_js(ctx)?,
             Value::Boolean(b) => b.into_js(ctx)?,
             Value::Null => ().into_js(ctx)?,
-            Value::Currency(c) => c.into_js(ctx)?,
             Value::DateTime(dt) => (*dt as f64).into_js(ctx)?,
             Value::Array(arr) => {
                 if !arr.is_empty() && depth >= MAX_NESTING_DEPTH {

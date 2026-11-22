@@ -8,7 +8,7 @@ use skillet::{evaluate, evaluate_with_json, Value};
 
 fn num(expr: &str) -> f64 {
     match evaluate(expr) {
-        Ok(Value::Number(n)) | Ok(Value::Currency(n)) => n,
+        Ok(Value::Number(n)) => n,
         other => panic!("{expr}: expected a number, got {other:?}"),
     }
 }
@@ -293,9 +293,10 @@ fn round_supports_negative_digits_and_decimal_halves() {
     close("=ROUND(2.5)", 3.0);
     close("=ROUND(-2.5)", -3.0);
     close("=ROUND(2.567, 1.9)", 2.6); // digits are truncated
+                                      // ADR-0033: `::Currency` gives a Number, so ROUND returns a Number.
     assert_eq!(
         evaluate("=ROUND(10.26::Currency, 1)").unwrap(),
-        Value::Currency(10.3)
+        Value::Number(10.3)
     );
 }
 

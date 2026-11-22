@@ -77,7 +77,7 @@ pub fn exec_financial(name: &str, args: &[Value]) -> Result<Value, Error> {
     }
 }
 
-/// A required numeric argument: a number, currency, or a value Excel converts to a number
+/// A required numeric argument: a number or a value Excel converts to a number
 /// (`utils::number_arg`, BL-066).
 fn required(args: &[Value], i: usize, func: &str, what: &str) -> Result<f64, Error> {
     number_arg(func, args, i, what)
@@ -235,7 +235,8 @@ fn exec_pv(args: &[Value]) -> Result<Value, Error> {
 }
 
 /// Excel `NPV(rate, value1, ...)`: `Σ value_i / (1 + rate)^i` for i = 1.., in argument order.
-/// Arrays are flattened; as in `SUM`, only numbers and currency count (Excel audit X-3).
+/// Arrays are flattened; as in `SUM`, only numbers count (Excel audit X-3).
+#[allow(deprecated)] // `Value::Currency` is read as a Number (ADR-0033)
 fn exec_npv(args: &[Value]) -> Result<Value, Error> {
     fn collect(v: &Value, out: &mut Vec<f64>) {
         match v {

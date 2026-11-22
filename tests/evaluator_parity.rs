@@ -37,6 +37,7 @@ fn arr(xs: &[f64]) -> Value {
     Value::Array(xs.iter().map(|x| n(*x)).collect())
 }
 
+#[allow(deprecated)] // `money` is a host Currency, read as a Number (ADR-0033 §5)
 fn fixture_vars() -> HashMap<String, Value> {
     let mut v = HashMap::new();
     v.insert("a".into(), n(10.0));

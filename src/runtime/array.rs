@@ -5,6 +5,7 @@ use crate::types::Value;
 use std::cmp::Ordering;
 use std::collections::HashSet;
 
+#[allow(deprecated)] // `Value::Currency` is read as a Number (ADR-0033)
 pub fn exec_array(name: &str, args: &[Value]) -> Result<Value, Error> {
     match name {
         "ARRAY" => Ok(Value::Array(args.to_vec())),
@@ -62,7 +63,7 @@ pub fn exec_array(name: &str, args: &[Value]) -> Result<Value, Error> {
                 Err(Error::new("IN expects array as first argument", None))
             }
         }
-        // Excel COUNT: how many numbers (currency and datetime count too); arrays are flattened
+        // Excel COUNT: how many numbers (datetimes count too); arrays are flattened
         // and every other value is ignored. COUNTA: how many values are not NULL.
         "COUNT" | "COUNTA" if args.is_empty() => Err(Error::new(
             format!("{name} expects at least 1 argument"),
@@ -145,13 +146,13 @@ pub fn exec_array(name: &str, args: &[Value]) -> Result<Value, Error> {
 
 /// Count the values in `args` (arrays flattened) for which `keep` holds.
 /// The text `JOIN` and `.join()` both write for an item: strings as is, numbers as `to_string`,
-/// Currency with 4 decimals, `NULL` as nothing, dates as ISO 8601 (ADR-0031). `None` for the
-/// items each writes its own way (booleans, JSON, arrays).
+/// `NULL` as nothing, dates as ISO 8601 (ADR-0031). `None` for the items each writes its own
+/// way (booleans, JSON, arrays).
+#[allow(deprecated)] // `Value::Currency` is read as a Number (ADR-0033)
 pub(crate) fn join_text(v: &Value) -> Option<String> {
     match v {
         Value::String(s) => Some(s.clone()),
-        Value::Number(n) => Some(n.to_string()),
-        Value::Currency(n) => Some(format!("{:.4}", n)),
+        Value::Number(n) | Value::Currency(n) => Some(n.to_string()),
         Value::Null => Some(String::new()),
         Value::DateTime(ts) => Some(datetime_text(*ts)),
         Value::Boolean(_) | Value::Json(_) | Value::Array(_) => None,
@@ -170,11 +171,11 @@ fn count_where(args: &[Value], keep: &dyn Fn(&Value) -> bool) -> usize {
 /// Excel `UNIQUE`: every distinct value, in first-seen order, with Skillet's `==` (ADR-0023:
 /// same type and value, text case-sensitive). Scalars are found by hash; arrays and JSON objects
 /// are compared with the values kept so far.
+#[allow(deprecated)] // `Value::Currency` is read as a Number (ADR-0033)
 fn unique(items: &[Value]) -> Result<Vec<Value>, Error> {
     #[derive(PartialEq, Eq, Hash)]
     enum Key<'a> {
         Number(u64),
-        Currency(u64),
         Text(&'a str),
         Boolean(bool),
         DateTime(i64),
@@ -187,8 +188,7 @@ fn unique(items: &[Value]) -> Result<Vec<Value>, Error> {
     for (i, it) in items.iter().enumerate() {
         crate::limits::tick_item(i)?;
         let key = match it {
-            Value::Number(n) if !n.is_nan() => Some(Key::Number(bits(*n))),
-            Value::Currency(n) if !n.is_nan() => Some(Key::Currency(bits(*n))),
+            Value::Number(n) | Value::Currency(n) if !n.is_nan() => Some(Key::Number(bits(*n))),
             Value::String(s) => Some(Key::Text(s)),
             Value::Boolean(b) => Some(Key::Boolean(*b)),
             Value::DateTime(t) => Some(Key::DateTime(*t)),
@@ -210,17 +210,18 @@ fn unique(items: &[Value]) -> Result<Vec<Value>, Error> {
     Ok(out)
 }
 
-/// Excel `SORT(array, [order])` on one column: numbers (and currency) < text < booleans; text
+/// Excel `SORT(array, [order])` on one column: numbers < text < booleans; text
 /// ignores case (Unicode lowercase, then code point); `FALSE < TRUE`. Equal items keep their
 /// order, in both directions. Other values (NULL, DateTime, arrays, JSON) and NaN are an error.
+#[allow(deprecated)] // `Value::Currency` is read as a Number (ADR-0033)
 fn sort(items: &[Value], order: Option<&Value>) -> Result<Value, Error> {
     // Excel's sort_order: 1 ascending, -1 descending; "ASC"/"DESC" are Skillet's.
     let desc = match order {
         None => false,
         Some(Value::String(s)) if s.eq_ignore_ascii_case("DESC") => true,
         Some(Value::String(s)) if s.eq_ignore_ascii_case("ASC") => false,
-        Some(Value::Number(n)) if *n == 1.0 => false,
-        Some(Value::Number(n)) if *n == -1.0 => true,
+        Some(Value::Number(n) | Value::Currency(n)) if *n == 1.0 => false,
+        Some(Value::Number(n) | Value::Currency(n)) if *n == -1.0 => true,
         Some(_) => {
             return Err(Error::new(
                 "SORT order must be 1, -1, \"ASC\" or \"DESC\" (#VALUE!)",

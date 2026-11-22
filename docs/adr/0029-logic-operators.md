@@ -179,8 +179,8 @@ read with the rule of §4 (`logical::condition`), unchanged:
 The error message is `<NAME> condition must be TRUE, FALSE or a number, got <type> (#VALUE!)`,
 with `<type>` from `type_name` (`string`, `datetime`, `array`, `json`). Currency counts as a number
 and a DateTime is an error, as §4 and "Where the Excel documentation was not clear" already say for
-`IF`. Currency is listed separately only until BL-097 makes it a plain Number; the rule for it
-does not change then.
+`IF`. Since BL-097, `::Currency` returns a Number (ADR-0033), so a Currency value is simply a
+Number here; the deprecated `Value::Currency` that a host may still pass is read the same way.
 
 **NaN** (maintainer, 2026-11-22): `<NAME> condition is not a number (#NUM!)`, worded like
 `ROUND num_digits is not a number (#NUM!)`. This is a change to `logical::condition` itself, so it
@@ -274,10 +274,10 @@ with `[10]` 10 or 0, `AVERAGEIF` with `[10]` 10 or `Error: AVERAGEIF: no matchin
 (#DIV/0!)`). `E` is the old type error: `Ternary condition must be boolean`, `Logical op on
 non-boolean`, `Unary '!' on non-boolean` or `<NAME> criteria expression must return TRUE or
 FALSE, got <type>`. `#V` is the condition error of A1 (or `NOT`'s and `AND`'s `#VALUE!`).
-**Bold** cells change. The Currency columns hold until BL-097 makes Currency a plain Number; after
-it they are the `2` and `0` cases.
+**Bold** cells change. Since BL-097 `2::Currency` and `0::Currency` are the Numbers `2` and `0`
+(ADR-0033), so those columns are the same as the number columns.
 
-| Form | `TRUE` | `FALSE` | `NULL` | `0` | `1` | `2.5` | `"a"` | `""` | `2::Currency` (until BL-097) | `0::Currency` (until BL-097) | `DATE(2026,1,1)` | `[1]` |
+| Form | `TRUE` | `FALSE` | `NULL` | `0` | `1` | `2.5` | `"a"` | `""` | `2::Currency` (a Number, ADR-0033) | `0::Currency` (a Number, ADR-0033) | `DATE(2026,1,1)` | `[1]` |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 | `IF(c, "T", "F")`, `IFS(c, "T", TRUE, "F")` | T | F | F | F | T | T | #V | #V | T | F | #V | #V |
 | `NOT c`, `NOT(c)` | F | T | T | T | F | F | #V | #V | F | T | #V | #V |

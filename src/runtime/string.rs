@@ -21,8 +21,9 @@ fn char_count(s: &str) -> usize {
 }
 
 /// Write the `CONCAT` (and `&`) of `args` to `w`. Excel turns every value into text: strings as
-/// is, numbers and currency in Skillet's number format (`1.5::Currency` → `1.5`), booleans as
+/// is, numbers in Skillet's number format (`1.5` → `1.5`), booleans as
 /// `TRUE`/`FALSE`, a DateTime as its `::String` text (ISO 8601 UTC, ADR-0031), arrays flattened. NULL (a blank cell) and JSON objects add nothing.
+#[allow(deprecated)] // `Value::Currency` is read as a Number (ADR-0033)
 fn concat_into(w: &mut impl std::fmt::Write, args: &[Value]) {
     for v in args {
         let _ = match v {
@@ -39,9 +40,10 @@ fn concat_into(w: &mut impl std::fmt::Write, args: &[Value]) {
     }
 }
 
-/// A scalar as Excel's text functions see it: text as is, numbers (and currency) in Skillet's
+/// A scalar as Excel's text functions see it: text as is, numbers in Skillet's
 /// number format, booleans as `TRUE`/`FALSE`, NULL (an empty cell) as `""`. Arrays, dates and
 /// JSON objects have no text form here (`None`).
+#[allow(deprecated)] // `Value::Currency` is read as a Number (ADR-0033)
 fn excel_text(v: &Value) -> Option<Cow<'_, str>> {
     match v {
         Value::String(s) => Some(Cow::Borrowed(s)),
@@ -179,6 +181,7 @@ pub(crate) fn split_charged<'s>(parts: impl Iterator<Item = &'s str>) -> Result<
     Ok(Value::Array(out))
 }
 
+#[allow(deprecated)] // `Value::Currency` is read as a Number (ADR-0033)
 pub fn exec_string(name: &str, args: &[Value]) -> Result<Value, Error> {
     match name {
         "SUBSTITUTE" => substitute(args),

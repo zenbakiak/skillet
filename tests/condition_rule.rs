@@ -374,6 +374,7 @@ fn nan_error(name: &str) -> Result<Value, String> {
 }
 
 #[test]
+#[allow(deprecated)] // a host may still pass the deprecated `Value::Currency`
 fn nan_is_a_num_error() {
     for nan in [Value::Number(f64::NAN), Value::Currency(f64::NAN)] {
         for (src, name) in [

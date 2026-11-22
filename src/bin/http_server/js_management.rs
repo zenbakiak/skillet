@@ -510,9 +510,10 @@ fn parse_function_arguments(args_str: &str) -> Result<Vec<Value>, String> {
     Ok(args)
 }
 
+#[allow(deprecated)] // `Value::Currency` is read as a Number (ADR-0033)
 fn format_value_for_comparison(value: &Value) -> String {
     match value {
-        Value::Number(n) => {
+        Value::Number(n) | Value::Currency(n) => {
             if n.fract() == 0.0 {
                 format!("{}", *n as i64)
             } else {
@@ -526,7 +527,6 @@ fn format_value_for_comparison(value: &Value) -> String {
             let items: Vec<String> = arr.iter().map(format_value_for_comparison).collect();
             format!("[{}]", items.join(", "))
         }
-        Value::Currency(c) => format!("{}", c),
         Value::DateTime(dt) => dt.to_string(),
         Value::Json(json) => json.clone(),
     }

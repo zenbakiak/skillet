@@ -36,6 +36,7 @@ fn budget_error(max: u64) -> String {
     }
 }
 
+#[allow(deprecated)] // `Value::Currency` is read as a Number (ADR-0033)
 fn size(value: &Value, nested_debug: bool, depth: usize) -> u64 {
     match value {
         // Longest f64 / i64 texts, quoted where the servers send a string.

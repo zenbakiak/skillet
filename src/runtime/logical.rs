@@ -3,11 +3,12 @@ use crate::runtime::utils::type_name;
 use crate::types::Value;
 
 /// The one condition rule (ADR-0018 D-8, B-18; ADR-0029 amendment 1): TRUE/FALSE, a number
-/// (non-zero is TRUE, as in Excel; currency counts as a number) or NULL (FALSE, a blank cell,
-/// ADR-0006). NaN is Excel's `#NUM!`; anything else, text included, is `#VALUE!`. Used by
-/// `IF`, `IFS`, `NOT`/`!`, `? :`, the `AND`/`OR` operators, `filter`/`find`/`FILTER`/`FIND`
-/// and lambda criteria; `name` is the form named in the error.
+/// (non-zero is TRUE, as in Excel) or NULL (FALSE, a blank cell, ADR-0006). NaN is Excel's
+/// `#NUM!`; anything else, text included, is `#VALUE!`. Used by `IF`, `IFS`, `NOT`/`!`, `? :`,
+/// the `AND`/`OR` operators, `filter`/`find`/`FILTER`/`FIND` and lambda criteria; `name` is the
+/// form named in the error.
 #[inline]
+#[allow(deprecated)] // `Value::Currency` is read as a Number (ADR-0033)
 pub(crate) fn condition(name: &str, v: &Value) -> Result<bool, Error> {
     match v {
         Value::Boolean(b) => Ok(*b),
@@ -31,6 +32,7 @@ fn not_a_number(name: &str) -> Error {
 
 /// `NOT x`, `NOT(x)` and `!x` (ADR-0029 §5, amendment 1 A2): the negated condition, with
 /// `NOT`'s own message for a value that is not a condition.
+#[allow(deprecated)] // `Value::Currency` is read as a Number (ADR-0033)
 pub(crate) fn not(v: &Value) -> Result<bool, Error> {
     match v {
         Value::Boolean(_) | Value::Number(_) | Value::Currency(_) | Value::Null => {
@@ -79,6 +81,7 @@ pub(crate) fn ifs_no_match() -> Error {
 /// numbers as non-zero. Arrays are flattened and their text, NULL and other non-logical items
 /// are ignored, like a range's text and empty cells. A NULL argument is ignored too (a blank
 /// cell). Text or another type passed directly is `#VALUE!`, and so is having no logical value.
+#[allow(deprecated)] // `Value::Currency` is read as a Number (ADR-0033)
 fn logical_values(name: &str, args: &[Value]) -> Result<Vec<bool>, Error> {
     fn from_array(name: &str, items: &[Value], out: &mut Vec<bool>) -> Result<(), Error> {
         for item in items {
@@ -122,6 +125,7 @@ fn logical_values(name: &str, args: &[Value]) -> Result<Vec<bool>, Error> {
     Ok(out)
 }
 
+#[allow(deprecated)] // `Value::Currency` is read as a Number (ADR-0033)
 pub fn exec_logical(name: &str, args: &[Value]) -> Result<Value, Error> {
     match name {
         "__CONST_TRUE__" => Ok(Value::Boolean(true)),

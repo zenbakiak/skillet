@@ -345,12 +345,12 @@ impl Serialize for Wire {
     }
 }
 
+#[allow(deprecated)] // `Value::Currency` is read as a Number (ADR-0033)
 fn type_name(val: &Value) -> &'static str {
     match val {
-        Value::Number(_) => "Number",
+        Value::Number(_) | Value::Currency(_) => "Number",
         Value::String(_) => "String",
         Value::Boolean(_) => "Boolean",
-        Value::Currency(_) => "Currency",
         Value::DateTime(_) => "DateTime",
         Value::Array(_) => "Array",
         Value::Null => "Null",
@@ -376,12 +376,12 @@ fn to_wire(val: Value, datetime_text: bool) -> Wire {
     }
 }
 
+#[allow(deprecated)] // `Value::Currency` is read as a Number (ADR-0033)
 fn scalar_json(val: Value, datetime_text: bool) -> serde_json::Value {
     match val {
-        Value::Number(n) => serde_json::json!(n),
+        Value::Number(n) | Value::Currency(n) => serde_json::json!(n),
         Value::String(s) => serde_json::json!(s),
         Value::Boolean(b) => serde_json::json!(b),
-        Value::Currency(c) => serde_json::json!(c),
         Value::DateTime(dt) if datetime_text => serde_json::json!(dt.to_string()),
         Value::DateTime(dt) => serde_json::json!(dt),
         Value::Null => serde_json::json!(null),

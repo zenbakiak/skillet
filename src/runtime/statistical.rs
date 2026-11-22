@@ -27,7 +27,8 @@ pub fn exec_statistical(name: &str, args: &[Value]) -> Result<Value, Error> {
     }
 }
 
-/// Every number and currency in the arguments, arrays flattened; other values are ignored.
+/// Every number in the arguments, arrays flattened; other values are ignored.
+#[allow(deprecated)] // `Value::Currency` is read as a Number (ADR-0033)
 fn numbers(args: &[Value]) -> Vec<f64> {
     fn collect(v: &Value, out: &mut Vec<f64>) {
         match v {
@@ -83,6 +84,7 @@ fn variance(nums: &[f64], name: &str) -> Result<f64, Error> {
 }
 
 /// Splits `values…, k`: the data and the last argument as a number.
+#[allow(deprecated)] // `Value::Currency` is read as a Number (ADR-0033)
 fn data_and_last(args: &[Value], name: &str, what: &str) -> Result<(Vec<f64>, f64), Error> {
     let Some((last, data)) = args.split_last().filter(|_| args.len() >= 2) else {
         return Err(Error::new(format!("{name} expects array and {what}"), None));

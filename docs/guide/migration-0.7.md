@@ -17,15 +17,11 @@ Check these first. They change results without an error:
    (was minutes), `"y"` is days (was years), `"w"` adds days (was weeks). Search for them.
 9. **A date as text** is now ISO 8601 UTC (ADR-0031): `DATE(2026, 1, 1)::String`,
    `CONCAT`, `&`, `JOIN` and `.to_s()` give `"2026-01-01T00:00:00Z"` (was `"1767225600"`).
-<<<<<<< HEAD
-10. **`SUM`, `PRODUCT`, `AVERAGE`, `MIN`, `MAX` with a Currency value** now return Currency
-   (was Number), for example `SUM(10::Currency, 5)`.
+10. **`::Currency`** now rounds to 4 decimals and returns a Number (ADR-0033): there is one
+   number type. `1.23456::Currency` is `1.2346`; `(2.5::Currency)::String` is `"2.5"` (was
+   `"2.5000"`). Responses say `"type": "Number"` (was `"Currency"`).
 11. **`filter`, `find`, `FILTER`, `FIND` with a lambda that returns a number** now keep or find the
    items where it is non-zero (ADR-0029 Amendment 1): `[0, 1, 2].filter(:x)` is `[1, 2]` (was `[]`).
-=======
-10. **`SUM`, `PRODUCT`, `AVERAGE`, `MIN`, `MAX`, `SUMIF`, `AVERAGEIF` with a Currency value**
-   now return Currency (was Number), for example `SUM(10::Currency, 5)`.
->>>>>>> origin/develop
 
 ## Expressions
 
@@ -57,7 +53,8 @@ extra token. This also exposed `AND`/`OR`, which were never parsed as operators 
 Like Excel, the arithmetic operators and the scalar math builtins now convert numeric text and
 booleans to numbers, and the operators read `NULL` as `0`. Text that is not a number is a
 `#VALUE!` error. Scientific notation is a number literal. Aggregates over arrays (`SUM`,
-`AVERAGE`, …) still skip text. Date and currency operands follow ADR-0027 (below).
+`AVERAGE`, …) still skip text. Date operands follow ADR-0027, and `::Currency` is a
+conversion to a Number (ADR-0033); both are below.
 
 | Expression | 0.6 | 0.7 |
 |---|---|---|
@@ -200,7 +197,7 @@ the number into text.
 | `DATE(2026, 1, 1).to_json()` | `Json("\"1767225600\"")` | `Json("\"2026-01-01T00:00:00Z\"")` |
 | `[DATE(2026, 1, 1)].join()`, `TEXTJOIN(",", TRUE, DATE(2026, 1, 1))` | `Error` | `"2026-01-01T00:00:00Z"` |
 | `DATE(2026, 1, 1)::String::DateTime` (BL-078) | parse error | `DATE(2026, 1, 1)` |
-| `[2.5::Currency, NULL].join()` (BL-078, as `JOIN`) | `Error` | `"2.5000,"` |
+| `[2.5, NULL].join()` (BL-078, as `JOIN`) | `Error` | `"2.5,"` |
 | `LEN(DATE(2026, 1, 1))`, `FIND("2", DATE(2026, 1, 1))` | `Error` | unchanged; use `LEN(:d::String)` |
 | `"2026-01-01T10:30:00Z"::DateTime` | `Error` | 2026-01-01 10:30 UTC |
 | `DATE(2026, 1, 1)::Json`, server responses, `"1767225600"::DateTime` | Unix seconds | unchanged |
@@ -223,43 +220,37 @@ old result. The new `DATEDIF` has Excel's worksheet codes (`"y"`, `"m"`, `"d"`, 
 | `DATEADD(DATE(2026, 1, 1), 1e15, "m")`, `…, 1e18, "days")` | hang or panic | `Error: DATEADD result is out of range (#NUM!)` | |
 | `DATEADD(…, "q")`, `"yyyy"`, `"ww"`, `"n"` | `Error` | quarters, years, weeks, minutes | |
 
-### Currency in arithmetic (ADR-0027)
-Currency now works in the arithmetic operators instead of failing. The other operand converts as
-for a number (numeric text, booleans, `NULL` as 0). Results are not rounded (Currency is an
-`f64`, ADR-0003); use `ROUND(x, 2)`.
+### Currency is a conversion (ADR-0033)
+Skillet has one number type, as Excel does (currency is a cell format there). `x::Currency`
+rounds `x` to 4 decimals, half away from zero as `ROUND(x, 4)` does, and returns a Number. The
+input rules are as before: numbers, numeric text (no spaces, no `$`), `TRUE`/`FALSE`/`NULL` as
+`1`/`0`/`0`; dates, arrays and JSON are errors. Everything that worked on a number now works on
+the result, and nothing returns Currency any more. Arithmetic on the result is not rounded
+again: round totals with `ROUND(x, 2)` or `(x)::Currency`. To keep an amount unrounded, use
+`::Float`.
+
+The 0.7.0 development builds had Currency rules for the operators, the aggregates and
+comparisons (ADR-0027, ADR-0031); they are replaced by this one and do not ship.
 
 | Expression | 0.6 | 0.7 |
 |---|---|---|
-| `1::Currency + 1`, `3 * 10::Currency`, `10::Currency / 4` | `Error` | `Currency(2)`, `Currency(30)`, `Currency(2.5)` |
-| `10::Currency / 4::Currency` | `Error` | `2.5` (Number, a ratio) |
-| `2::Currency ^ 2`, `7::Currency % 4` | `Error` | `4`, `3` (Number) |
-| `-(5::Currency)`, `+(5::Currency)` | `Error` | `Currency(-5)`, `Currency(5)` |
-| `10::Currency + "2"`, `10::Currency + NULL` | `Error` | `Currency(12)`, `Currency(10)` |
-| `1::Currency / 0` | `Error` | `Error: Division by zero (#DIV/0!)` |
-| `DATE(2026, 1, 1) + 1::Currency` | `Error` | unchanged |
-| `1 == 1::Currency`, `1 != 1::Currency` | `false`, `true` | `true`, `false` (by amount, ADR-0027 Amendment 1) |
-| `1::Currency < 2`, `3 >= 2::Currency` | `Error: Comparison of incompatible types` | `true` |
-| `[10::Currency, 5].filter(:x > 6)`, `SUMIF([1, 2::Currency], :x > 1)` | `Error` | `[Currency(10)]`, `2` |
-| `15::Currency == "15"`, `1::Currency == TRUE`, `1::Currency < NULL` | `false`, `false`, `Error` | unchanged |
-
-### Currency in the aggregates (ADR-0031, B-13)
-`SUM`, `PRODUCT` (`MULTIPLY`), `AVERAGE` (`AVG`), `MIN` and `MAX` return Currency when any value
-they count is Currency, following `Currency + Number` (ADR-0027). `SUMIF` and `AVERAGEIF` do the
-same for the values they sum or average (BL-078, ADR-0031 amendment 1); a Currency that is not
-matched does not count, and `COUNTIF` is unchanged. Use `::Float` on the result to keep a Number.
-The methods (`.sum()`, `.avg()`, `.min()`, `.max()`) are unchanged.
-
-| Expression | 0.6 | 0.7 |
-|---|---|---|
-| `SUM(10::Currency, 5)` | `15` (Number) | `Currency(15)` |
-| `PRODUCT(2::Currency, 3)`, `AVERAGE(10::Currency, 20)` | `6`, `15` (Number) | `Currency(6)`, `Currency(15)` |
-| `MIN(1, 3::Currency)`, `MAX([3::Currency, 9::Currency])` | `1`, `9` (Number) | `Currency(1)`, `Currency(9)` |
-| `SUMIF([1, 2::Currency, 3], ">1")`, `AVERAGEIF([1, 2::Currency, 3], ">1")` (BL-078) | `5`, `2.5` (Number) | `Currency(5)`, `Currency(2.5)` |
-| `SUMIF([1, 2, 3], ">1", [10, 20::Currency, 30])` (BL-078) | `50` (Number) | `Currency(50)` |
-| `SUMIF([1::Currency, 2, 3], ">1")` (the Currency is not matched), `COUNTIF([1::Currency], ">0")` | Number | unchanged |
-| `SUM(1, 2)`, `[1::Currency].sum()` | Number | unchanged |
-| `SUM(10::Currency, 5) > 10`, `SUM(10::Currency, 5) == 15` | `true`, `true` | `true`, `true` (Currency compares with Number by amount, ADR-0027 Amendment 1; without it these were an error and `false`) |
-| `MAX(1, 3::Currency) == 3`, `IF(SUM(:lines) > :limit, …)` | `true`, works | unchanged |
+| `1.23456789::Currency`, `(0.1 + 0.2)::Currency` | `Currency(1.23456789)`, `Currency(0.30000000000000004)` | `1.2346`, `0.3` (Number) |
+| `1.00005::Currency`, `0.00005::Currency` | not rounded | `1.0001`, `0.0001` (half away from zero; VBA `CCur` gives `0`) |
+| `12.5::Currency`, `"12.5"::Currency`, `NULL::Currency` | `Currency(12.5)`, `Currency(12.5)`, `Currency(0)` | `12.5`, `12.5`, `0` |
+| `"$5"::Currency`, `DATE(2026, 1, 1)::Currency` | `Error` | unchanged |
+| `1::Currency + 1`, `10::Currency / 4`, `-(5::Currency)` | `Error` | `2`, `2.5`, `-5` |
+| `0.1::Currency + 0.2::Currency` | `Error` | `0.30000000000000004` (round the result) |
+| `SUM(10::Currency, 5)`, `AVERAGE(10::Currency, 20)`, `MIN(1, 3::Currency)` | `15`, `15`, `1` | unchanged (Numbers) |
+| `SUMIF([1, 2::Currency, 3], ">1")`, `ROUND(10::Currency, 1)` | `5`, `Error` | `5`, `10` |
+| `1 == 1::Currency`, `1::Currency < 2` | `false`, `Error` | `true`, `true` |
+| `CONTAINS([1::Currency], 1)` | `false` | `true` |
+| `DATE(2026, 1, 1) + 1::Currency` | `Error` | 2026-01-02 |
+| `(2.5::Currency)::String`, `JOIN([2.5::Currency])` | `"2.5000"` | `"2.5"` |
+| `(2.5::Currency).to_s()` | `"2.50"` | `"2.5"` |
+| `[2.5::Currency].join()` | `Error` | `"2.5"` |
+| `CONCAT(2.5::Currency)`, `(2.5::Currency).to_json()` | `""`, `Json("2.5")` | `"2.5"`, unchanged |
+| `[1::Currency, 2].sort()`, `(2.5::Currency).abs()` | `Error` | `[1, 2]`, `2.5` |
+| `sk --output-json "=2.5::Currency"`, server responses | `"type": "Currency"` | `"type": "Number"` (same `"result"`) |
 
 ### New names (additive)
 These used to fail with `Unknown function` or a parse error: `STDEV.P`, `STDEV.S`, `STDEV`,
@@ -339,6 +330,7 @@ unchanged at 256 MiB, only now configurable. Details: [Limits](limits.md).
 | `runtime::method_calls::exec_filter`/`exec_map`/`exec_find`/`exec_reduce`, `exec_string_method`, `exec_array_method` | take a variable map | take `&dyn EvaluationContext` |
 | Minimum Rust version | not stated | 1.85 (ADR-0012) |
 | `runtime::builtin_functions::exec_builtin` | public | deprecated (still works); it reports argument errors as `Unknown function`. Use `runtime::function_dispatch::exec_builtin_fast` or `evaluate` |
+| `Value::Currency` | a tagged number | deprecated (ADR-0033), removed in 0.8. Still compiles; a Currency you pass in is read as a Number, and results never contain one. Use `Value::Number` |
 
 ## JSON variables (BL-077)
 Where variables come from a JSON object (`evaluate_with_json`, `evaluate_with_json_custom`,
