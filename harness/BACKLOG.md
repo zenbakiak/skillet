@@ -1231,7 +1231,7 @@ Also decide when rustfmt moves to `style_edition = "2024"` (a fmt-only commit, t
 
 ---
 
-Items BL-080 to BL-094 come from the audit of PRs #73-#109 (2026-11-22, five read-only role
+Items BL-080 to BL-096 come from the audit of PRs #73-#109 (2026-11-22, five read-only role
 reviews). Maintainer decisions of 2026-11-22 are recorded on each item.
 
 ### BL-080 · Criteria wildcard matching ignores the deadline · P1 · `done` (PR #116) · security-reviewer → rust-engineer
@@ -1340,7 +1340,7 @@ Migration-guide row (some large requests now fail with the budget error).
 - PERF-2: `AND`/`OR`/`XOR` allocate a `Vec<bool>` per call (+18-24% in filters).
 - PERF-4: date to text is 2x slower (chrono re-parses the pattern; `.to_s()`/`CONCAT` format twice).
 
-### BL-089 · One truth rule for conditions · P2 · `in-progress` (spec done on feature/bl-089-truth-rule; implementation after #116) · language-designer (ADR-0029 amendment) → rust-engineer
+### BL-089 · One truth rule for conditions · P2 · `review` (PR #120, ADR-0029 amendment 1) · language-designer (ADR-0029 amendment) → rust-engineer
 LANG-2, LANG-3, QA-9. A NULL flag (e.g. from `&.`) gets different answers by form: `AND()` TRUE
 (NULL skipped), the `AND`/`&&` operators an error, `IF` FALSE, `? :` an error, `NOT` TRUE but `!`
 an error; `FALSE AND NULL` is false but `NULL AND FALSE` errors. `? :` rejects numbers that `IF`
@@ -1406,3 +1406,10 @@ Currency precision) and returns a Number. `Value::Currency` is deprecated in 0.7
 Exact decimal money math is not built now; a later ADR can add a real decimal type.
 Supersedes the BL-082 follow-up (`CONTAINS`/`IN`/`UNIQUE` with Currency) and the Currency part of BL-091.
 Implement after #112 and #115 merge (they touch the same Currency code).
+
+### BL-098 · A TRUE criterion matches only TRUE · P3 · `todo` · rust-engineer
+From BL-089: `COUNTIF([TRUE, 1], TRUE)` gives 2; Excel gives 1, because a boolean criterion matches
+only booleans. Fix `Criterion::from_value`/`matches` in `src/runtime/criteria.rs` (same for FALSE
+and 0), with a migration-guide row. No decision needed (Excel behaviour is clear).
+Also: the eager `__TERNARY__` arm in `src/runtime/logical.rs` is unreachable from expressions;
+delete it in the same PR.
