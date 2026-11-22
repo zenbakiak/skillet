@@ -3,6 +3,7 @@ use super::{arithmetic, array, datetime, financial, logical, statistical, string
 use crate::error::Error;
 use crate::types::Value;
 use std::collections::HashMap;
+use std::sync::LazyLock;
 
 /// Builtin dispatch driven by the single table in `builtin_table.rs` (BL-010): one hash lookup
 /// from name (or alias) to the category whose module runs it.
@@ -66,9 +67,7 @@ impl Default for FunctionDispatch {
 }
 
 // Global function dispatch table for optimal performance
-lazy_static::lazy_static! {
-    static ref GLOBAL_DISPATCH: FunctionDispatch = FunctionDispatch::new();
-}
+static GLOBAL_DISPATCH: LazyLock<FunctionDispatch> = LazyLock::new(FunctionDispatch::new);
 
 /// Optimized builtin function execution using category-based dispatch
 pub fn exec_builtin_fast(name: &str, args: &[Value]) -> Result<Value, Error> {

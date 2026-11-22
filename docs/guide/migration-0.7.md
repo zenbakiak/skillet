@@ -158,8 +158,9 @@ tight precedence (`!:a == :b` is `(!:a) == :b`). To keep a 0.6 `NOT (x) == y`, r
 
 ### Dates as text (ADR-0031)
 Every path that turns a DateTime into text writes ISO 8601 in UTC, with whole seconds.
-`::DateTime` reads that form back, so `(DATE(2026, 1, 1)::String)::DateTime` is
-`DATE(2026, 1, 1)`. Integer text still casts as Unix seconds. To keep the old text, use
+`::DateTime` reads that form back, so `DATE(2026, 1, 1)::String::DateTime` is
+`DATE(2026, 1, 1)` (casts chain left to right since BL-078; before, the second cast needed
+parentheses). Integer text still casts as Unix seconds. To keep the old text, use
 `DATEDIFF(DATE(1970, 1, 1), :d, "seconds")`, or `(:d - DATE(1970, 1, 1)) * 86400`, then turn
 the number into text.
 
@@ -170,6 +171,9 @@ the number into text.
 | `JOIN([DATE(2026, 1, 1)])`, `[DATE(2026, 1, 1)].to_s()` | `"1767225600"`, `"[1767225600]"` | `"2026-01-01T00:00:00Z"`, `"[2026-01-01T00:00:00Z]"` |
 | `DATE(2026, 1, 1).to_json()` | `Json("\"1767225600\"")` | `Json("\"2026-01-01T00:00:00Z\"")` |
 | `[DATE(2026, 1, 1)].join()`, `TEXTJOIN(",", TRUE, DATE(2026, 1, 1))` | `Error` | `"2026-01-01T00:00:00Z"` |
+| `DATE(2026, 1, 1)::String::DateTime` (BL-078) | parse error | `DATE(2026, 1, 1)` |
+| `[2.5, NULL].join()` (BL-078, as `JOIN`) | `Error` | `"2.5,"` |
+| `LEN(DATE(2026, 1, 1))`, `FIND("2", DATE(2026, 1, 1))` | `Error` | unchanged; use `LEN(:d::String)` |
 | `"2026-01-01T10:30:00Z"::DateTime` | `Error` | 2026-01-01 10:30 UTC |
 | `DATE(2026, 1, 1)::Json`, server responses, `"1767225600"::DateTime` | Unix seconds | unchanged |
 
@@ -302,6 +306,16 @@ unchanged at 256 MiB, only now configurable. Details: [Limits](limits.md).
 | Minimum Rust version | not stated | 1.85 (ADR-0012) |
 | `runtime::builtin_functions::exec_builtin` | public | deprecated (still works); it reports argument errors as `Unknown function`. Use `runtime::function_dispatch::exec_builtin_fast` or `evaluate` |
 | `Value::Currency` | a tagged number | deprecated (ADR-0033), removed in 0.8. Still compiles; a Currency you pass in is read as a Number, and results never contain one. Use `Value::Number` |
+
+## JSON variables (BL-077)
+Where variables come from a JSON object (`evaluate_with_json`, `evaluate_with_json_custom`,
+`sk --json`, `sk_http_server` `arguments` and `GET /eval` parameters), the whole object is the
+reserved `:arguments`, for `JQ`.
+
+| Input | 0.6 | 0.7 |
+|---|---|---|
+| A key named `arguments`, e.g. `{"x": 1, "arguments": {"a": 2}}` | `:arguments` is that key's value (`{"a": 2}`) | `:arguments` is the whole object; the key's value is `:arguments.arguments` |
+| Two keys that give the same variable, e.g. `{"a-b": 1, "a_b": 2}` | one value silently replaces the other | `Error: JSON keys "a-b" and "a_b" both map to variable :a_b` (HTTP 400 on `sk_http_server`); rename one key. `sk_server` does not rename keys and is unchanged |
 
 ## Servers
 | Change | 0.6 | 0.7 |

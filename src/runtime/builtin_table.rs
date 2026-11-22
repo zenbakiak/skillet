@@ -124,7 +124,7 @@ pub(crate) static BUILTINS: &[Builtin] = &[
     f("MOD", Arithmetic, 2, n(2), "number, divisor", "Remainder of `number / divisor`; the sign follows the divisor (Excel). Error for 0.", "MOD(-10, 3)"),
     f("INT", Arithmetic, 1, n(1), "number", "Round down to an integer: `INT(-3.9)` is -4.", "INT(5.9)"),
     f("PRODUCT", Arithmetic, 0, ANY, "values…", "Product of numbers and currency (arrays flattened); Currency when any value is Currency; 1 when there are none.", "PRODUCT(2, 3, 4)").aliases(&["MULTIPLY"]),
-    f("SUMIF", Arithmetic, 2, n(3), "range, criteria, [sum_range]", "Sum of items meeting an Excel criteria (`\">2\"`, `5`, `\"a*\"`) or a lambda over `:x`.", "SUMIF([1, -2, 3], \">0\")").evaluator(),
+    f("SUMIF", Arithmetic, 2, n(3), "range, criteria, [sum_range]", "Sum of items meeting an Excel criteria (`\">2\"`, `5`, `\"a*\"`) or a lambda over `:x`; Currency when any summed value is Currency.", "SUMIF([1, -2, 3], \">0\")").evaluator(),
     // Logical
     f("AND", Logical, 1, ANY, "logical…", "Excel `AND`: TRUE when every logical value is TRUE (numbers: non-zero). Text and NULL inside arrays are ignored; direct text, or no logical value at all, is an error. Every argument is evaluated.", "AND(TRUE, 1)"),
     f("OR", Logical, 1, ANY, "logical…", "Excel `OR`: TRUE when any logical value is TRUE. Same argument rules as `AND`; every argument is evaluated.", "OR(FALSE, 1)"),
@@ -199,7 +199,7 @@ pub(crate) static BUILTINS: &[Builtin] = &[
     f("VAR_S", Statistical, 1, ANY, "values…", "Sample variance (divides by n - 1); error with fewer than two numbers.", "VAR_S(1, 2, 3, 4)").aliases(&["VAR.S", "VAR"]),
     f("PERCENTILE_INC", Statistical, 2, ANY, "values…, k", "Inclusive percentile `k` (0-1) of the values, interpolated.", "PERCENTILE_INC([1, 2, 3, 4], 0.5)").aliases(&["PERCENTILEINC", "PERCENTILE.INC", "PERCENTILE"]),
     f("QUARTILE_INC", Statistical, 2, ANY, "values…, quart", "Inclusive quartile `quart` (0-4) of the values.", "QUARTILE_INC([1, 2, 3, 4, 5], 1)").aliases(&["QUARTILEINC", "QUARTILE.INC", "QUARTILE"]),
-    f("AVERAGEIF", Statistical, 2, n(3), "range, criteria, [average_range]", "Mean of items meeting an Excel criteria or a lambda over `:x`; error when none match.", "AVERAGEIF([1, 3, 5, -1], \">0\")").aliases(&["AVGIF"]).evaluator(),
+    f("AVERAGEIF", Statistical, 2, n(3), "range, criteria, [average_range]", "Mean of items meeting an Excel criteria or a lambda over `:x`; Currency when any averaged value is Currency; error when none match.", "AVERAGEIF([1, 3, 5, -1], \">0\")").aliases(&["AVGIF"]).evaluator(),
     f("COUNTIF", Statistical, 2, n(2), "range, criteria", "Number of items meeting an Excel criteria (`\">2\"`, `\"<>a\"`, `\"a*\"`) or a lambda over `:x`.", "COUNTIF([1, 2, 3, 4], \">2\")").evaluator(),
     // JSON
     f("DIG", Json, 2, n(3), "json, path, [default]", "Value at `path` (array of keys and indexes) in a JSON object, else `default` or NULL.", "DIG(:obj, ['user', 'tags', 1])"),

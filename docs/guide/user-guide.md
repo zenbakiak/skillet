@@ -1255,7 +1255,7 @@ sk ":obj := NULL; :obj&.dig(['a','b'])"
 
 ### JSONPath Queries (JQ Function)
 
-Use `JQ(json_data, "$.path.expression")` to perform powerful JSONPath queries on JSON data. The JQ function provides JSONPath syntax for complex data extraction and filtering. When using `--json` flag, the JSON data is automatically available as the `:arguments` variable.
+Use `JQ(json_data, "$.path.expression")` to perform powerful JSONPath queries on JSON data. The JQ function provides JSONPath syntax for complex data extraction and filtering. When using `--json` flag, the JSON data is automatically available as the `:arguments` variable. That name is reserved: a key named `arguments` does not replace it, and its value is read as `:arguments.arguments` (BL-077).
 
 ```bash
 # Basic JSONPath queries with aggregation functions
@@ -1655,6 +1655,7 @@ sk "=\"42\"::Number"      # 42.0
 sk "=42::String"         # "42"
 sk "=1::Boolean"         # true
 sk "=0::Boolean"         # false
+sk "=DATE(2026,1,1)::String::DateTime"   # casts chain left to right
 # One number type (ADR-0033): these all return a Number
 sk "=-7.9::Integer"            # -7 (toward zero, like Excel TRUNC)
 sk "=1.23456789::Currency"     # 1.2346 (rounded to 4 decimals, half away from zero)

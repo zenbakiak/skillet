@@ -32,7 +32,7 @@ Skillet is a high-performance, embeddable expression engine written in Rust, ins
 
 ## Build
 
-- Requirements: Rust stable (2021 edition)
+- Requirements: Rust 1.85 or newer (edition 2024)
 - Build and test:
 
 ```
