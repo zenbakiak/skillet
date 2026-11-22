@@ -546,12 +546,19 @@ echo '{"expression": "=SUM(:a, :b)", "variables": {"a": 10, "b": 20}}' | nc loca
 # Complex JSON data
 echo '{"expression": "=:user.age * 12", "variables": {"user": {"name": "Alice", "age": 25}}}' | nc localhost 8080
 
-# JSONPath queries with JQ function
-echo '{"expression": "SUM(JQ(:arguments, \"$.accounts[*].amount\"))", "variables": {"accounts": [{"amount": 100}, {"amount": 200}, {"amount": 300}]}}' | nc localhost 8080
+# JSONPath queries with JQ: sk_server has no :arguments, so name the object
+echo '{"expression": "=SUM(JQ(:data, \"$.accounts[*].amount\"))", "variables": {"data": {"accounts": [{"amount": 100}, {"amount": 200}, {"amount": 300}]}}}' | nc localhost 8080
 
 # JSONPath with filtering
-echo '{"expression": "AVG(JQ(:arguments, \"$.scores[?(@.subject == '\''math'\'')].value\"))", "variables": {"scores": [{"subject": "math", "value": 85}, {"subject": "english", "value": 92}, {"subject": "math", "value": 78}]}}' | nc localhost 8080
+echo '{"expression": "=AVG(JQ(:data, \"$.scores[?(@.subject == '\''math'\'')].value\"))", "variables": {"data": {"scores": [{"subject": "math", "value": 85}, {"subject": "english", "value": 92}, {"subject": "math", "value": 78}]}}}' | nc localhost 8080
+
+# Or use plain variables and methods
+echo '{"expression": "=SUM(:accounts.map(:x.amount))", "variables": {"accounts": [{"amount": 100}, {"amount": 200}, {"amount": 300}]}}' | nc localhost 8080
 ```
+
+These answer `600.0`, `81.5` and `600.0` (debug build of `bugfix/bl-077-arguments-reload-hooks`).
+`JQ(:arguments, …)` works on `sk_http_server` only; on `sk_server` it answers
+`Missing variable: :arguments`.
 
 ### 4. Bash Function
 
