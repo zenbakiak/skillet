@@ -46,6 +46,30 @@ pub(crate) fn not(v: &Value) -> Result<bool, Error> {
     }
 }
 
+/// `IF` with more than 3 arguments (ADR-0029 amendment 1 A7), checked before any is evaluated.
+#[inline]
+pub(crate) fn if_arity(len: usize) -> Result<(), Error> {
+    if len < 2 {
+        return Err(Error::new("IF expects at least 2 arguments", None));
+    }
+    if len > 3 {
+        return Err(Error::new("IF expects at most 3 arguments", None));
+    }
+    Ok(())
+}
+
+/// `IFS` takes condition/value pairs, at least one (ADR-0029 amendment 1 A7).
+#[inline]
+pub(crate) fn ifs_arity(len: usize) -> Result<(), Error> {
+    if len == 0 || len % 2 != 0 {
+        return Err(Error::new(
+            "IFS expects pairs of condition,value arguments",
+            None,
+        ));
+    }
+    Ok(())
+}
+
 /// `IFS` when no condition is TRUE (Excel `#N/A`).
 pub(crate) fn ifs_no_match() -> Error {
     Error::new("IFS: no condition is TRUE (#N/A)", None)
@@ -135,9 +159,7 @@ pub fn exec_logical(name: &str, args: &[Value]) -> Result<Value, Error> {
             Ok(Value::Boolean(not(v)?))
         }
         "IF" => {
-            if args.len() < 2 {
-                return Err(Error::new("IF expects at least 2 arguments", None));
-            }
+            if_arity(args.len())?;
             if condition(name, &args[0])? {
                 Ok(args[1].clone())
             } else {
@@ -145,14 +167,9 @@ pub fn exec_logical(name: &str, args: &[Value]) -> Result<Value, Error> {
             }
         }
         "IFS" => {
-            if args.len() % 2 != 0 {
-                return Err(Error::new(
-                    "IFS expects pairs of condition,value arguments",
-                    None,
-                ));
-            }
+            ifs_arity(args.len())?;
             for chunk in args.chunks(2) {
-                if chunk.len() == 2 && condition(name, &chunk[0])? {
+                if condition(name, &chunk[0])? {
                     return Ok(chunk[1].clone());
                 }
             }

@@ -696,9 +696,7 @@ impl Evaluator {
     ) -> Result<Value, Error> {
         let truthy = |e: &Expr| Self::eval(e, context).and_then(|v| logical::condition(name, &v));
         if name == "IF" {
-            if args.len() < 2 {
-                return Err(Error::new("IF expects at least 2 arguments", None));
-            }
+            logical::if_arity(args.len())?;
             return if truthy(&args[0])? {
                 Self::eval(&args[1], context)
             } else {
@@ -706,12 +704,7 @@ impl Evaluator {
                     .map_or(Ok(Value::Boolean(false)), |e| Self::eval(e, context))
             };
         }
-        if args.len() % 2 != 0 {
-            return Err(Error::new(
-                "IFS expects pairs of condition,value arguments",
-                None,
-            ));
-        }
+        logical::ifs_arity(args.len())?;
         for pair in args.chunks(2) {
             if truthy(&pair[0])? {
                 return Self::eval(&pair[1], context);
