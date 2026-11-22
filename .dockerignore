@@ -21,6 +21,11 @@ logs/
 .DS_Store
 Thumbs.db
 
-# Large test/bench files (not needed for build)
-benches/
+# Large test/bench output (not needed for build). benches/ must stay in the context:
+# Cargo.toml declares [[bench]] targets, and cargo refuses to parse the manifest without them.
 performance_results/
+
+# Local secrets never enter the build context.
+.env
+.env.*
+!.env.example
