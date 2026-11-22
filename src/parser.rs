@@ -248,12 +248,15 @@ impl<'a> Parser<'a> {
         Ok((node, depth))
     }
 
-    /// Prefix `-`, `+` and `!` bind tightest (Excel: `-2^2` is 4).
+    /// Prefix `-`, `+`, `!` and the `NOT` keyword bind tightest (Excel: `-2^2` is 4).
     fn parse_unary(&mut self) -> Parsed {
-        let op = match self.lookahead {
+        let op = match &self.lookahead {
             Token::Plus => UnaryOp::Plus,
             Token::Minus => UnaryOp::Minus,
             Token::Bang => UnaryOp::Not,
+            Token::Identifier(name) if name.eq_ignore_ascii_case("NOT") && !self.call_follows() => {
+                return self.parse_not_keyword();
+            }
             _ => return self.parse_postfix(),
         };
         self.bump()?;
@@ -263,6 +266,34 @@ impl<'a> Parser<'a> {
         let (expr, d) = operand?;
         let depth = self.node_depth(Some(d))?;
         Ok((Expr::Unary(op, Rc::new(expr)), depth))
+    }
+
+    /// With a name as the lookahead: does `(` follow it directly, with no space? Then it is a
+    /// call (`NOT(x)`); otherwise `NOT` is the prefix keyword (`NOT x`, `NOT (x)`).
+    #[inline(never)]
+    fn call_follows(&self) -> bool {
+        let end = self.lexer.last_end();
+        let mut next = self.lexer.clone();
+        matches!(next.next_token(), Ok(Token::LParen)) && next.last_start() == end
+    }
+
+    /// `NOT operand` (ADR-0029): the `NOT` builtin applied to the operand, with the precedence
+    /// of `!`, so it gives the same result as `NOT(operand)`.
+    #[inline(never)]
+    fn parse_not_keyword(&mut self) -> Parsed {
+        self.bump()?; // 'NOT'
+        self.enter()?;
+        let operand = self.parse_unary();
+        self.nesting -= 1;
+        let (expr, d) = operand?;
+        let depth = self.node_depth(Some(d))?;
+        Ok((
+            Expr::FunctionCall {
+                name: "NOT".to_string(),
+                args: vec![expr],
+            },
+            depth,
+        ))
     }
 
     /// `atom postfix* (:: type)?`: the postfix chain, then an optional cast.
