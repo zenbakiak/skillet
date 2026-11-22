@@ -118,10 +118,10 @@ for a number (numeric text, booleans, `NULL` as 0). Results are not rounded (Cur
 | `1::Currency + 1`, `3 * 10::Currency`, `10::Currency / 4` | `Error` | `Currency(2)`, `Currency(30)`, `Currency(2.5)` |
 | `10::Currency / 4::Currency` | `Error` | `2.5` (Number, a ratio) |
 | `2::Currency ^ 2`, `7::Currency % 4` | `Error` | `4`, `3` (Number) |
-| `-(5::Currency)` | `Error` | `Currency(-5)` |
+| `-(5::Currency)`, `+(5::Currency)` | `Error` | `Currency(-5)`, `Currency(5)` |
 | `10::Currency + "2"`, `10::Currency + NULL` | `Error` | `Currency(12)`, `Currency(10)` |
 | `1::Currency / 0` | `Error` | `Error: Division by zero (#DIV/0!)` |
-| `DATE(2026, 1, 1) + 1::Currency`, `+(1::Currency)`, `1 == 1::Currency` | `Error`, `Error`, `false` | unchanged |
+| `DATE(2026, 1, 1) + 1::Currency`, `1 == 1::Currency` | `Error`, `false` | unchanged |
 
 ### New names (additive)
 These used to fail with `Unknown function` or a parse error: `STDEV.P`, `STDEV.S`, `STDEV`,

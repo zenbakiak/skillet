@@ -135,6 +135,14 @@ fn power_and_modulo_with_currency_are_numbers() {
 }
 
 #[test]
+fn unary_plus_keeps_currency() {
+    assert_eq!(ok("=+(1::Currency)"), cur(1.0));
+    assert_eq!(ok("=+(-2.5::Currency)"), cur(-2.5));
+    assert_eq!(ok("=+(+(3::Currency))"), cur(3.0));
+    assert_eq!(ok("=+(1::Currency) + 1"), cur(2.0));
+}
+
+#[test]
 fn unary_minus_keeps_currency() {
     assert_eq!(ok("=-(5::Currency)"), cur(-5.0));
     assert_eq!(ok("=-(-5::Currency)"), cur(5.0));

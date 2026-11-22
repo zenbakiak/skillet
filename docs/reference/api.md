@@ -118,7 +118,7 @@ number (numeric text, booleans, `NULL` as 0):
 | `/` with one Currency operand | Currency |
 | `Currency / Currency` | Number (a ratio) |
 | `^` or `%` (modulo) with a Currency operand | Number |
-| unary `-` on Currency, percent suffix on Currency | Currency |
+| unary `-` or `+` on Currency, percent suffix on Currency | Currency |
 
 ```bash
 10::Currency + 2               # Currency(12)
@@ -126,12 +126,13 @@ number (numeric text, booleans, `NULL` as 0):
 10::Currency / 4::Currency     # 2.5
 2::Currency ^ 2                # 4
 -(5::Currency)                 # Currency(-5)
++(5::Currency)                 # Currency(5)
 10::Currency + "2"             # Currency(12)
 1::Currency / 3                # Currency(0.333…): not rounded; use ROUND(x, 2)
 ```
 
 Currency is a tagged `f64` (ADR-0003): the operators do not round to cents. Comparisons do not
-change: `1 == 1::Currency` is `FALSE`. Unary `+` on Currency is still an error.
+change: `1 == 1::Currency` is `FALSE`.
 
 The arithmetic operators never produce NaN or infinity (BL-054, ADR-0018). Division or `%` by 0
 and `0 ^` a negative number are `Error: Division by zero (#DIV/0!)`; `0 ^ 0` and any result that

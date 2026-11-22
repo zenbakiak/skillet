@@ -35,7 +35,7 @@ output writes the plain `f64`.
 - `DateTime - DateTime` is unchanged (days, a Number). Every other DateTime operation stays an
   error: `x - DateTime`, `DateTime + DateTime`, `*`, `/`, `%`, `^` with a DateTime.
 - Currency is not a number of days: `DATE(2026,1,1) + 1::Currency` stays
-  `Arithmetic op on non-number`. A DateTime operand is checked first, so this holds for either
+  `Arithmetic op on non-number` (confirmed by the maintainer on 2026-11-21). A DateTime operand is checked first, so this holds for either
   order.
 - Out-of-range shifts stay `Date arithmetic out of range` (`DATE(2026,1,1) + "1e300"`).
 
@@ -51,6 +51,7 @@ With a Currency operand (and no DateTime), the other operand converts as a Numbe
 | `Currency / Currency` | Number (a ratio) |
 | `^` or `%` (modulo) with any Currency operand | Number |
 | unary `-` on Currency | Currency (`0 - x`, so `-(0::Currency)` is `0`, not `-0`) |
+| unary `+` on Currency | Currency, unchanged (the identity) |
 | percent suffix on Currency (`(10::Currency)%`) | Currency (it is `/ 100`) |
 
 "Number" here also means converted text, booleans and `NULL`: `10::Currency + "2"` is
@@ -74,7 +75,11 @@ the methods "ignore" text is corrected here: they reject it.
 ### Implementation constraint
 `Number op Number` keeps its current code path. Date and currency arithmetic run only after
 that path fails, in out-of-line `#[cold]` functions (`date_arithmetic`, `currency_arithmetic`,
-`coerced_negate` in `src/runtime/evaluator.rs`).
+`coerced_negate`, `coerced_plus` in `src/runtime/evaluator.rs`).
+
+### 4. Follow-up decisions (maintainer, 2026-11-21)
+- Unary `+` on Currency is the identity and keeps Currency: `+(1::Currency)` is `Currency(1)`.
+- A Currency operand in date arithmetic stays an error, in either order (decision 1).
 
 ## Amends ADR-0023
 Decision 6 said "DateTime operands are never coerced (date arithmetic is unchanged), and Currency
@@ -91,12 +96,11 @@ decision 6 (what converts, `NULL` strict in builtins, aggregates skip text) is u
 | `1::Currency + 1`, `2 * 1::Currency` | `Error` | `Currency(2)` |
 | `10::Currency / 4::Currency` | `Error` | `2.5` (Number) |
 | `2::Currency ^ 2`, `7::Currency % 4` | `Error` | `4`, `3` (Number) |
-| `-(5::Currency)` | `Error` | `Currency(-5)` |
+| `-(5::Currency)`, `+(5::Currency)` | `Error` | `Currency(-5)`, `Currency(5)` |
 
 ## Consequences
 - \+ Dates from data with blank (`NULL`) or text day counts work like a spreadsheet.
 - \+ Money values work in formulas (`:price * :qty`) without a `::Float` cast, and keep their type.
-- − `+(1::Currency)` (unary plus) is still an error; the decision covered unary minus only.
 - − Currency results are unrounded `f64`; exact money math still needs `ROUND` or a future
   decimal type (ADR-0003).
 - − `Currency * Currency` is Currency, although money times money has no unit. This follows

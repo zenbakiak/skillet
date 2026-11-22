@@ -225,6 +225,17 @@ fn coerced_arithmetic(op: BinaryOp, a: &Value, b: &Value) -> Result<Value, Error
     crate::runtime::arithmetic::checked_binary(op, an, bn).map(Value::Number)
 }
 
+/// Unary plus on a non-number: Currency is kept as it is (ADR-0027); other operands convert as
+/// in `coerced_operand`.
+#[cold]
+#[inline(never)]
+fn coerced_plus(v: &Value) -> Result<Value, Error> {
+    match v {
+        Value::Currency(c) => Ok(Value::Currency(*c)),
+        _ => coerced_operand(v, "Unary '+' on non-number").map(Value::Number),
+    }
+}
+
 /// Unary minus on a non-number: Currency stays Currency (ADR-0027); other operands convert as
 /// in `coerced_operand`. `0.0 - n`, not `-n`: `-NULL` and `-FALSE` are 0, not -0.
 #[cold]
@@ -400,7 +411,7 @@ impl Evaluator {
         match op {
             UnaryOp::Plus => match v {
                 Value::Number(n) => Ok(Value::Number(*n)),
-                _ => coerced_operand(v, "Unary '+' on non-number").map(Value::Number),
+                _ => coerced_plus(v),
             },
             UnaryOp::Minus => match v {
                 Value::Number(n) => Ok(Value::Number(-*n)),
