@@ -113,8 +113,10 @@ lazy_static::lazy_static! {
 ///
 /// Accepts the full language (operators, function and method calls, lambdas, variables,
 /// assignments and `;` sequences, object and array literals, casts, …). Leading whitespace and
-/// one leading `=` are ignored. Syntax errors and expressions nested deeper than
-/// [`MAX_NESTING_DEPTH`] return an [`Error`], usually with the byte position of the problem.
+/// one leading `=` are ignored. The whole input must be one expression (or a `;` sequence):
+/// anything left after it is an error (`Unexpected token after end of expression`). Syntax
+/// errors and expressions nested deeper than [`MAX_NESTING_DEPTH`] return an [`Error`], usually
+/// with the byte position of the problem in `input`.
 ///
 /// ```rust
 /// use skillet::{parse, Expr};
@@ -127,17 +129,21 @@ lazy_static::lazy_static! {
 ///
 /// let err = parse("2 +").unwrap_err();
 /// assert!(err.position.is_some());
+///
+/// let err = parse("=1 2").unwrap_err();
+/// assert_eq!(err.message, "Unexpected token after end of expression");
+/// assert_eq!(err.position, Some(3));
 /// ```
 pub fn parse(input: &str) -> Result<Expr, Error> {
     // Allow optional leading '=' after whitespace
     let trimmed = input.trim_start();
-    let input2: std::borrow::Cow<'_, str> = if let Some(rest) = trimmed.strip_prefix('=') {
-        std::borrow::Cow::from(rest)
-    } else {
-        std::borrow::Cow::from(input)
-    };
-    let mut parser = parser::Parser::new(&input2);
-    parser.parse()
+    let body = trimmed.strip_prefix('=').unwrap_or(input);
+    // Error positions index `input`, not the text after the `=` (BL-069).
+    let offset = input.len() - body.len();
+    parser::Parser::new(body).parse().map_err(|mut e| {
+        e.position = e.position.map(|p| p + offset);
+        e
+    })
 }
 
 /// Parse and evaluate an expression that uses no variables.
