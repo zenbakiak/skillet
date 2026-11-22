@@ -202,6 +202,40 @@ the number into text.
 | `"2026-01-01T10:30:00Z"::DateTime` | `Error` | 2026-01-01 10:30 UTC |
 | `DATE(2026, 1, 1)::Json`, server responses, `"1767225600"::DateTime` | Unix seconds | unchanged |
 
+### Dates in aggregates, sorting and criteria (ADR-0031 amendment 2, BL-090)
+Functions that pick or order values accept dates and compare them by instant: `MIN`, `MAX`,
+`SORT`, `.sort()`, `.min()`, `.max()`, `BETWEEN` and the criteria of `COUNTIF`/`SUMIF`/`AVERAGEIF`.
+Functions that do arithmetic reject a date with `#VALUE!`: `SUM`, `PRODUCT`, `AVERAGE`, `MEDIAN`,
+`MODE.SNGL`, `STDEV.*`, `VAR.*`, `PERCENTILE.INC`, `QUARTILE.INC`, and `SUMIF`/`AVERAGEIF` when
+they would sum a date. A date and a number are never compared, so a mix of both is an error
+where they meet. In 0.6 the aggregates skipped dates, so these gave `0` or a number without the
+dates. `COUNT` still counts dates.
+
+A criterion reads the ISO text that `::DateTime` reads, so the Excel idiom `">" & DATE(…)`
+works, and so does a date as the criterion. Date-only text (`">2026-01-01"`) is not a date, as
+for `::DateTime`; build the criterion with `DATE`. Text items in that ISO form compare as dates.
+
+| Expression | 0.6 | 0.7 |
+|---|---|---|
+| `MAX(DATE(2026, 1, 1), DATE(2027, 1, 1))`, `MIN(…)` | `0` | 2027-01-01, 2026-01-01 (a DateTime) |
+| `MAX(DATE(2026, 1, 1), 5)` | `5` | `Error: MAX cannot compare dates with numbers (#VALUE!)` |
+| `SUM(DATE(2026, 1, 1), 1)` | `1` | `Error: SUM does not accept dates (#VALUE!)` |
+| `AVERAGE(DATE(2026, 1, 1))`, `MEDIAN(1, DATE(2026, 1, 1))` | `#DIV/0!` error, `1` | `Error: AVERAGE does not accept dates (#VALUE!)`, `MEDIAN …` |
+| `SORT([DATE(2027, 1, 1), DATE(2026, 1, 1)])`, `[…].sort()` | `Error` | `[2026-01-01, 2027-01-01]` |
+| `SORT([DATE(2026, 1, 1), 5])` | `Error: SORT expects numbers, text or booleans` | `Error: SORT cannot compare dates with numbers (#VALUE!)` |
+| `SORT([1, NULL])` | `Error: SORT expects numbers, text or booleans` | `Error: SORT expects numbers, dates, text or booleans` |
+| `[DATE(2027, 1, 1), DATE(2026, 1, 1)].max()` | `Error: max method expects numeric array` | 2027-01-01 |
+| `["b", "a"].sort()`, `[DATE(2026, 1, 1), 1].max()` | `Error: sort expects numeric array`, `max method expects numeric array` | `Error: sort expects an array of numbers or of dates`, `max method expects an array of numbers or of dates` |
+| `BETWEEN(DATE(2026, 1, 1), DATE(2027, 1, 1), DATE(2026, 6, 1))` | `Error` | `true` |
+| `COUNTIF([DATE(2026, 1, 1), DATE(2027, 1, 1)], ">" & DATE(2026, 6, 1))` | `0` | `1` |
+| `COUNTIF([DATE(2026, 1, 1), DATE(2027, 1, 1)], DATE(2026, 1, 1))` | `Error` | `1` |
+| `COUNTIF([DATE(2026, 1, 1), DATE(2027, 1, 1)], "<>2026-01-01T00:00:00Z")` | `2` | `1` |
+| `SUMIF([DATE(2026, 1, 1), DATE(2027, 1, 1)], ">2026-06-01T00:00:00Z", [10, 20])` | `0` | `20` |
+| `SUMIF([DATE(2026, 1, 1)], ">2025-01-01T00:00:00Z")` (sums the date) | `0` | `Error: SUMIF does not accept dates (#VALUE!)` |
+| `COUNTIF(["2026-01-01t00:00:00z"], "=2026-01-01T00:00:00Z")` | `1` (text match) | `0` (lowercase text is not a date) |
+
+For a mean date, average the day counts: `DATE(1970, 1, 1) + AVERAGE(MAP(:dates, :x - DATE(1970, 1, 1)))`.
+
 ### Date units follow Excel (B-15)
 `DATEADD` and `DATEDIFF` read the unit codes of VBA's `DateAdd`/`DateDiff`, case-insensitively.
 The long words (`"months"`, `"minutes"`, …) are unchanged. Use them, or the new codes, to keep the

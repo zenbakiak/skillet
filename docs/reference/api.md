@@ -322,6 +322,12 @@ UPPERCASE builtins follow Excel's documented behaviour (BL-054). Where Excel ret
 A wrong-typed or missing argument is an error, never a silent 0. Inside arrays, text, booleans
 and `NULL` are ignored by the aggregates, as Excel ignores them in a range.
 
+Dates (ADR-0031 amendment 2): `MIN` and `MAX` of dates return a date. The aggregates that do
+arithmetic (`SUM`, `PRODUCT`, `AVERAGE`, `MEDIAN`, `MODE.SNGL`, `STDEV.*`, `VAR.*`,
+`PERCENTILE.INC`, `QUARTILE.INC`) return `Error: <NAME> does not accept dates (#VALUE!)` when a
+DateTime is among their values. `COUNT` counts dates. Excel treats a date as a serial number;
+Skillet has a DateTime type, so a date and a number are never compared or added together.
+
 #### `AVERAGE(...)`
 Average of the numbers in the arguments. No numbers is an error (Excel `#DIV/0!`).
 ```bash
@@ -333,12 +339,16 @@ AVERAGE([])                  # Error: AVERAGE of no numbers (#DIV/0!)
 ```
 
 #### `MAX(...)`, `MIN(...)`
-Maximum/minimum value from arguments. As in Excel, no numbers gives 0.
+Maximum/minimum value from arguments. As in Excel, no numbers gives 0. With only dates (and
+ignored values), the latest/earliest date; dates mixed with numbers are an error.
 ```bash
 MAX(1, 5, 3, 9, 2)           # 9
 MIN([1, 5, 3, 9, 2])         # 1 (works with arrays too)
 MIN(1, 3::Currency)          # 1
 MAX()                        # 0
+MAX(DATE(2026,1,1), DATE(2027,1,1))  # DateTime for 2027-01-01
+MAX(DATE(2026,1,1), 5)       # Error: MAX cannot compare dates with numbers (#VALUE!)
+SUM(DATE(2026,1,1))          # Error: SUM does not accept dates (#VALUE!)
 ```
 
 #### `COUNT(...)`, `COUNTA(...)`
@@ -821,7 +831,8 @@ REDUCE(orders, :acc + :x.total, 0)
 #### `COUNTIF(range, criteria)`, `SUMIF(range, criteria, [sum_range])`, `AVERAGEIF(range, criteria, [average_range])`
 Count, sum or average the items that meet `criteria`. `AVGIF` is an alias of `AVERAGEIF`. The
 range is an array, or a single value (treated as a one-item range). With a sum or average range,
-the item at the same position is summed; only numbers are summed or averaged.
+the item at the same position is summed; only numbers are summed or averaged, and a matched date
+that would be summed is an error (`SUMIF does not accept dates (#VALUE!)`).
 `AVERAGEIF` with no matching number is an error (`#DIV/0!`); `SUMIF` and `COUNTIF` give 0.
 
 `criteria` is either an Excel criterion (a string or a number) or a lambda over `:x`:
@@ -836,6 +847,7 @@ the item at the same position is summed; only numbers are summed or averaged.
 | `">b"` | text after `b` (ignoring case) |
 | `"TRUE"`, `"FALSE"` | booleans |
 | `""`, `"="` | blanks (`NULL` or `""`); `"<>"` matches everything else |
+| `DATE(2026,1,1)`, `">" & DATE(2026,1,1)`, `">=2026-01-01T00:00:00Z"` | dates by instant, with any operator; also text items in that exact ISO form. The operand must be the ISO text `::DateTime` reads: date-only text (`">2026-01-01"`) is text and matches no date. `"<>…"` also matches every non-date |
 | `:x > 2` (lambda) | items for which the expression is a true condition, as in `IF`: `TRUE` or a non-zero number; `FALSE`, 0 and `NULL` do not match; text, a date or an array is an error |
 
 ```bash
@@ -847,6 +859,8 @@ COUNTIF(5, ">2")                                  # 1 (a single value is a one-i
 COUNTIF([1, 2, 3, 4], :x % 2 == 0)                # 2 (lambda)
 COUNTIF([0, 1, 2], :x)                            # 2 (non-zero numbers match)
 COUNTIF(["a"], :x)                                # Error: COUNTIF condition must be TRUE, FALSE or a number, got string (#VALUE!)
+COUNTIF([DATE(2026,1,1), DATE(2027,1,1)], ">" & DATE(2026,6,1))  # 1
+COUNTIF([DATE(2026,1,1), DATE(2027,1,1)], DATE(2026,1,1))        # 1
 
 SUMIF([1, -2, 3, -4], :x > 0)                     # 4
 SUMIF([10, 20, 30, 40], ">25")                    # 70
@@ -860,10 +874,11 @@ AVERAGEIF([1, 2], ">5")                           # Error: AVERAGEIF: no matchin
 ```
 
 #### `BETWEEN(min, max, value)`
-Range checking.
+Range checking, both bounds inclusive. Three numbers, or three dates (compared by instant).
 ```bash
 BETWEEN(10, 20, 15)          # true
 BETWEEN(1, 10, 15)           # false
+BETWEEN(DATE(2026,1,1), DATE(2027,1,1), DATE(2026,6,1))  # true
 ```
 
 #### `FLATTEN(array)`
@@ -884,13 +899,15 @@ UNIQUE(["a", "A"])           # ["a", "A"]
 #### `SORT(array, [order])`
 Sort ascending, or descending with `order` `-1` (Excel) or `"DESC"` (Skillet). As in Excel, numbers
 come before text and text before booleans; text ignores case, and `FALSE` comes before `TRUE`.
-Equal items keep their order. `NULL`, DateTime, arrays, JSON
-objects and NaN are an error.
+Dates take the place of numbers and sort by instant; an array with both dates and numbers is an
+error. Equal items keep their order. `NULL`, arrays, JSON objects and NaN are an error.
 ```bash
 SORT([3, 1, 2])                    # [1, 2, 3]
 SORT([3, 1, 2], -1)                # [3, 2, 1]
 SORT(["banana", "Apple", "cherry"])  # ["Apple", "banana", "cherry"]
 SORT([TRUE, "b", 2, "A", 1])       # [1, 2, "A", "b", TRUE]
+SORT([DATE(2027,1,1), "a", DATE(2026,1,1)])  # [2026-01-01, 2027-01-01, "a"]
+SORT([DATE(2026,1,1), 5])          # Error: SORT cannot compare dates with numbers (#VALUE!)
 ```
 
 #### `REVERSE(array_or_text)`
@@ -1038,19 +1055,23 @@ Remove duplicates.
 ```
 
 #### `.sort([order])`
-Sort array.
+Sort an array of numbers, or an array of dates (by instant). Anything else, a mix of the two
+included, is `Error: sort expects an array of numbers or of dates`.
 ```bash
 [3,1,2].sort()               # [1, 2, 3]
 [3,1,2].sort("DESC")         # [3, 2, 1]
+[DATE(2027,1,1), DATE(2026,1,1)].sort()  # [2026-01-01, 2027-01-01]
 ```
 
 #### `.sum()`, `.avg()`, `.min()`, `.max()`
-Numeric operations.
+Numeric operations. `.min()` and `.max()` also take an array of dates and return a date; an empty
+array gives `NULL`. `.sum()` and `.avg()` take numbers only.
 ```bash
 [1,2,3,4,5].sum()            # 15
 [1,2,3,4,5].avg()            # 3.0
 [5,1,9].min()                # 1
 [5,1,9].max()                # 9
+[DATE(2027,1,1), DATE(2026,1,1)].max()  # DateTime for 2027-01-01
 ```
 
 #### `.join([separator])`
