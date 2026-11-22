@@ -7,13 +7,22 @@
 # `verify` fails before anything is built or published if the tag does not match the
 # Cargo.toml version or the CHANGELOG.md section is missing or empty. crates.io is last
 # because it is the only step that cannot be undone.
-# workflow_dispatch runs verify and the builds against the Cargo.toml version; it never publishes.
+#
+# Dry runs (BL-083): a pull request into `main` (the release PR) and workflow_dispatch run
+# `verify`, `build-binaries` and `crate-check` (which includes `cargo publish --dry-run`) against
+# the Cargo.toml version. The two publish jobs run only for `v*` tag pushes; they are the only
+# jobs with `contents: write` or a secret. `crates-io` also runs in the protected `crates-io`
+# environment (required reviewer, tags `v*` only), which holds CRATES_IO_TOKEN, so nothing is
+# published to crates.io until the maintainer approves the deployment.
 name: Release
 
 on:
   push:
     tags:
       - 'v*'
+  # The release PR (`release/X.Y.Z` or `hotfix/X.Y.Z` into `main`) is the full dry run.
+  pull_request:
+    branches: [ "main" ]
   workflow_dispatch:
 
 permissions:
@@ -21,7 +30,8 @@ permissions:
 
 concurrency:
   group: release-${{ github.ref }}
-  cancel-in-progress: false
+  # A new push to the release PR replaces its dry run; a tag run is never cancelled.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -55,7 +65,7 @@ jobs:
               exit 1
             fi
           else
-            echo "Not a tag push: dry run for $CARGO_VER, nothing will be published."
+            echo "Not a tag push ($GITHUB_EVENT_NAME): dry run for $CARGO_VER, nothing will be published."
           fi
           echo "version=$CARGO_VER" >> "$GITHUB_OUTPUT"
 
@@ -183,6 +193,10 @@ jobs:
       - name: Package (builds the packaged crate)
         run: cargo package --locked --verbose
 
+      # Everything `cargo publish` checks short of uploading; needs no token.
+      - name: Publish dry run
+        run: cargo publish --dry-run --locked --verbose
+
   github-release:
     name: Publish GitHub release
     needs: [verify, build-binaries, crate-check]
@@ -231,6 +245,9 @@ jobs:
     needs: [verify, github-release]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    # Protected environment (BL-083): waits for the maintainer's approval, accepts only `v*` tags,
+    # and is the only place CRATES_IO_TOKEN is stored.
+    environment: crates-io
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0

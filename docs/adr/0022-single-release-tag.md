@@ -43,6 +43,23 @@ nothing about the build except that it stops moving. Pinning only the commit is 
 build of cross always pulls the `:main` image tags, so the images are pinned by digest as well.
 `--locked` makes `cargo install` use cross's own `Cargo.lock`.
 
+## Amendment (BL-083, 2026-11-22): PR dry run and protected crates.io environment
+Status: Accepted (maintainer, 2026-11-22; settings applied and verified in BL-083).
+- `release.yml` also runs on `pull_request` into `main`, so the release PR (`release/X.Y.Z` or
+  `hotfix/X.Y.Z`) is a full dry run: `verify` against the `Cargo.toml` version, every binary
+  target with its archive and checksum, and `crate-check`, which now also runs
+  `cargo publish --dry-run`. `github-release` and `crates-io` stay gated on
+  `startsWith(github.ref, 'refs/tags/v')`; they are the only jobs with `contents: write` or a
+  secret, so none of that runs for a PR.
+- The `crates-io` job runs in the GitHub environment `crates-io`: required reviewer (the
+  maintainer), deployment rule "tags `v*`", and the only copy of `CRATES_IO_TOKEN` (the
+  repository-level secret is deleted). A tag push therefore creates the GitHub release and then
+  waits for the maintainer to approve the crates.io deployment.
+- A tag ruleset restricts creating, updating and deleting `refs/tags/v*` to the repository
+  admin, so nobody else can start a release.
+- Consequence: a release needs one more click (approve the deployment). A crate that fails after
+  the GitHub release exists is still fixed by re-running `crates-io`.
+
 ## Consequences
 - + One action per release; the binaries, the GitHub release and the crate always carry the same,
   checked version.
