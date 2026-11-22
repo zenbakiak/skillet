@@ -1,6 +1,7 @@
 # 0018. Excel compatibility: Excel is the contract for builtins and operators
 
-- Status: Accepted
+- Status: Accepted; amended by ADR-0023 (`==` ignores case in text, `%` percent vs modulo,
+  number coercion in arithmetic)
 - Date: 2026-11-21
 - Deciders: Maintainer
 - Related: BL-054, BL-020 (audit: [`docs/reference/excel-compat.md`](../reference/excel-compat.md)),
