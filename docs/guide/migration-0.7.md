@@ -17,8 +17,9 @@ Check these first. They change results without an error:
    (was minutes), `"y"` is days (was years), `"w"` adds days (was weeks). Search for them.
 9. **A date as text** is now ISO 8601 UTC (ADR-0031): `DATE(2026, 1, 1)::String`,
    `CONCAT`, `&`, `JOIN` and `.to_s()` give `"2026-01-01T00:00:00Z"` (was `"1767225600"`).
-10. **`SUM`, `PRODUCT`, `AVERAGE`, `MIN`, `MAX` with a Currency value** now return Currency
-   (was Number), for example `SUM(10::Currency, 5)`.
+10. **`::Currency`** now rounds to 4 decimals and returns a Number (ADR-0033): there is one
+   number type. `1.23456::Currency` is `1.2346`; `(2.5::Currency)::String` is `"2.5"` (was
+   `"2.5000"`). Responses say `"type": "Number"` (was `"Currency"`).
 
 ## Expressions
 
@@ -50,7 +51,8 @@ extra token. This also exposed `AND`/`OR`, which were never parsed as operators 
 Like Excel, the arithmetic operators and the scalar math builtins now convert numeric text and
 booleans to numbers, and the operators read `NULL` as `0`. Text that is not a number is a
 `#VALUE!` error. Scientific notation is a number literal. Aggregates over arrays (`SUM`,
-`AVERAGE`, …) still skip text. Date and currency operands follow ADR-0027 (below).
+`AVERAGE`, …) still skip text. Date operands follow ADR-0027, and `::Currency` is a
+conversion to a Number (ADR-0033); both are below.
 
 | Expression | 0.6 | 0.7 |
 |---|---|---|
@@ -189,32 +191,37 @@ old result. The new `DATEDIF` has Excel's worksheet codes (`"y"`, `"m"`, `"d"`, 
 | `DATEADD(DATE(2026, 1, 1), 1e15, "m")`, `…, 1e18, "days")` | hang or panic | `Error: DATEADD result is out of range (#NUM!)` | |
 | `DATEADD(…, "q")`, `"yyyy"`, `"ww"`, `"n"` | `Error` | quarters, years, weeks, minutes | |
 
-### Currency in arithmetic (ADR-0027)
-Currency now works in the arithmetic operators instead of failing. The other operand converts as
-for a number (numeric text, booleans, `NULL` as 0). Results are not rounded (Currency is an
-`f64`, ADR-0003); use `ROUND(x, 2)`.
+### Currency is a conversion (ADR-0033)
+Skillet has one number type, as Excel does (currency is a cell format there). `x::Currency`
+rounds `x` to 4 decimals, half away from zero as `ROUND(x, 4)` does, and returns a Number. The
+input rules are as before: numbers, numeric text (no spaces, no `$`), `TRUE`/`FALSE`/`NULL` as
+`1`/`0`/`0`; dates, arrays and JSON are errors. Everything that worked on a number now works on
+the result, and nothing returns Currency any more. Arithmetic on the result is not rounded
+again: round totals with `ROUND(x, 2)` or `(x)::Currency`. To keep an amount unrounded, use
+`::Float`.
+
+The 0.7.0 development builds had Currency rules for the operators, the aggregates and
+comparisons (ADR-0027, ADR-0031); they are replaced by this one and do not ship.
 
 | Expression | 0.6 | 0.7 |
 |---|---|---|
-| `1::Currency + 1`, `3 * 10::Currency`, `10::Currency / 4` | `Error` | `Currency(2)`, `Currency(30)`, `Currency(2.5)` |
-| `10::Currency / 4::Currency` | `Error` | `2.5` (Number, a ratio) |
-| `2::Currency ^ 2`, `7::Currency % 4` | `Error` | `4`, `3` (Number) |
-| `-(5::Currency)`, `+(5::Currency)` | `Error` | `Currency(-5)`, `Currency(5)` |
-| `10::Currency + "2"`, `10::Currency + NULL` | `Error` | `Currency(12)`, `Currency(10)` |
-| `1::Currency / 0` | `Error` | `Error: Division by zero (#DIV/0!)` |
-| `DATE(2026, 1, 1) + 1::Currency`, `1 == 1::Currency` | `Error`, `false` | unchanged |
-
-### Currency in the aggregates (ADR-0031, B-13)
-`SUM`, `PRODUCT` (`MULTIPLY`), `AVERAGE` (`AVG`), `MIN` and `MAX` return Currency when any value
-they count is Currency, following `Currency + Number` (ADR-0027). Use `::Float` on the result to
-keep a Number. The methods (`.sum()`, `.avg()`, `.min()`, `.max()`) are unchanged.
-
-| Expression | 0.6 | 0.7 |
-|---|---|---|
-| `SUM(10::Currency, 5)` | `15` (Number) | `Currency(15)` |
-| `PRODUCT(2::Currency, 3)`, `AVERAGE(10::Currency, 20)` | `6`, `15` (Number) | `Currency(6)`, `Currency(15)` |
-| `MIN(1, 3::Currency)`, `MAX([3::Currency, 9::Currency])` | `1`, `9` (Number) | `Currency(1)`, `Currency(9)` |
-| `SUM(1, 2)`, `[1::Currency].sum()` | Number | unchanged |
+| `1.23456789::Currency`, `(0.1 + 0.2)::Currency` | `Currency(1.23456789)`, `Currency(0.30000000000000004)` | `1.2346`, `0.3` (Number) |
+| `1.00005::Currency`, `0.00005::Currency` | not rounded | `1.0001`, `0.0001` (half away from zero; VBA `CCur` gives `0`) |
+| `12.5::Currency`, `"12.5"::Currency`, `NULL::Currency` | `Currency(12.5)`, `Currency(12.5)`, `Currency(0)` | `12.5`, `12.5`, `0` |
+| `"$5"::Currency`, `DATE(2026, 1, 1)::Currency` | `Error` | unchanged |
+| `1::Currency + 1`, `10::Currency / 4`, `-(5::Currency)` | `Error` | `2`, `2.5`, `-5` |
+| `0.1::Currency + 0.2::Currency` | `Error` | `0.30000000000000004` (round the result) |
+| `SUM(10::Currency, 5)`, `AVERAGE(10::Currency, 20)`, `MIN(1, 3::Currency)` | `15`, `15`, `1` | unchanged (Numbers) |
+| `SUMIF([1, 2::Currency, 3], ">1")`, `ROUND(10::Currency, 1)` | `5`, `Error` | `5`, `10` |
+| `1 == 1::Currency`, `1::Currency < 2` | `false`, `Error` | `true`, `true` |
+| `CONTAINS([1::Currency], 1)` | `false` | `true` |
+| `DATE(2026, 1, 1) + 1::Currency` | `Error` | 2026-01-02 |
+| `(2.5::Currency)::String`, `JOIN([2.5::Currency])` | `"2.5000"` | `"2.5"` |
+| `(2.5::Currency).to_s()` | `"2.50"` | `"2.5"` |
+| `[2.5::Currency].join()` | `Error` | `"2.5"` |
+| `CONCAT(2.5::Currency)`, `(2.5::Currency).to_json()` | `""`, `Json("2.5")` | `"2.5"`, unchanged |
+| `[1::Currency, 2].sort()`, `(2.5::Currency).abs()` | `Error` | `[1, 2]`, `2.5` |
+| `sk --output-json "=2.5::Currency"`, server responses | `"type": "Currency"` | `"type": "Number"` (same `"result"`) |
 
 ### New names (additive)
 These used to fail with `Unknown function` or a parse error: `STDEV.P`, `STDEV.S`, `STDEV`,
@@ -294,6 +301,7 @@ unchanged at 256 MiB, only now configurable. Details: [Limits](limits.md).
 | `runtime::method_calls::exec_filter`/`exec_map`/`exec_find`/`exec_reduce`, `exec_string_method`, `exec_array_method` | take a variable map | take `&dyn EvaluationContext` |
 | Minimum Rust version | not stated | 1.85 (ADR-0012) |
 | `runtime::builtin_functions::exec_builtin` | public | deprecated (still works); it reports argument errors as `Unknown function`. Use `runtime::function_dispatch::exec_builtin_fast` or `evaluate` |
+| `Value::Currency` | a tagged number | deprecated (ADR-0033), removed in 0.8. Still compiles; a Currency you pass in is read as a Number, and results never contain one. Use `Value::Number` |
 
 ## Servers
 | Change | 0.6 | 0.7 |

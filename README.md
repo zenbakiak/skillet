@@ -24,7 +24,7 @@ Skillet is a high-performance, embeddable expression engine written in Rust, ins
 - 🦀 **Rust-powered**: Memory safe with zero-cost abstractions
 - 🎯 **Type Smart**: Ruby-style conversions with automatic type coercion
 
-**Supported Types**: Numbers, strings, booleans, nulls, arrays, JSON objects, dates, currency
+**Supported Types**: Numbers (one number type; `::Currency` rounds to 4 decimals), strings, booleans, nulls, arrays, JSON objects, dates
 **Operations**: Arithmetic, logical, comparisons, method chaining, array operations, lambdas
 **Extensions**: JavaScript plugins, Rust custom functions, HTTP/TCP server modes
 
@@ -343,7 +343,7 @@ Scripts:
   - `unregister_function(name: &str) -> bool`
   - `list_custom_functions() -> Vec<String>`
 - Types:
-  - `Value` enum: `Number(f64) | Array(Vec<Value>) | Boolean(bool) | String(String) | Null | Currency(f64) | DateTime(i64) | Json(String)`
+  - `Value` enum: `Number(f64) | Array(Vec<Value>) | Boolean(bool) | String(String) | Null | DateTime(i64) | Json(String)` (`Currency(f64)` is deprecated since 0.7, ADR-0033)
   - `Error` with `message` and optional `position`
 
 
