@@ -225,8 +225,14 @@ fn sort_descending_keeps_ties_in_order() {
 
 #[test]
 fn sort_rejects_values_without_an_excel_order() {
-    err("SORT([1, NULL])", "SORT expects numbers, text or booleans");
-    err("SORT([[1], 2])", "SORT expects numbers, text or booleans");
+    err(
+        "SORT([1, NULL])",
+        "SORT expects numbers, dates, text or booleans",
+    );
+    err(
+        "SORT([[1], 2])",
+        "SORT expects numbers, dates, text or booleans",
+    );
     err("SORT([1, 2], 2)", "SORT order must be");
 }
 

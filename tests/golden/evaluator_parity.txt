@@ -845,10 +845,10 @@ vars ":arr.sort()" => Ok Array([Number(1.0), Number(2.0), Number(3.0), Number(4.
 custom ":arr.sort()" => Ok Array([Number(1.0), Number(2.0), Number(3.0), Number(4.0), Number(5.0)])
 assign ":arr.sort()" => Ok Array([Number(1.0), Number(2.0), Number(3.0), Number(4.0), Number(5.0)])
 context ":arr.sort()" => Ok Array([Number(1.0), Number(2.0), Number(3.0), Number(4.0), Number(5.0)]) | money=Some(Number(19.99))
-vars ":words.sort()" => Err "sort expects numeric array"
-custom ":words.sort()" => Err "sort expects numeric array"
-assign ":words.sort()" => Err "sort expects numeric array"
-context ":words.sort()" => Err "sort expects numeric array"
+vars ":words.sort()" => Err "sort expects an array of numbers or of dates"
+custom ":words.sort()" => Err "sort expects an array of numbers or of dates"
+assign ":words.sort()" => Err "sort expects an array of numbers or of dates"
+context ":words.sort()" => Err "sort expects an array of numbers or of dates"
 vars ":words.join('|')" => Ok String("b|a|c")
 custom ":words.join('|')" => Ok String("b|a|c")
 assign ":words.join('|')" => Ok String("b|a|c")

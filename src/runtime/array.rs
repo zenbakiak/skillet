@@ -183,9 +183,10 @@ fn unique(items: &[Value]) -> Result<Vec<Value>, Error> {
     Ok(out)
 }
 
-/// Excel `SORT(array, [order])` on one column: numbers < text < booleans; text
-/// ignores case (Unicode lowercase, then code point); `FALSE < TRUE`. Equal items keep their
-/// order, in both directions. Other values (NULL, DateTime, arrays, JSON) and NaN are an error.
+/// Excel `SORT(array, [order])` on one column: numbers or dates < text < booleans; dates
+/// compare by instant; text ignores case (Unicode lowercase, then code point); `FALSE < TRUE`.
+/// Equal items keep their order, in both directions. Numbers and dates together, other values
+/// (NULL, arrays, JSON) and NaN are an error (ADR-0031 amendment 2, B4).
 #[allow(deprecated)] // `Value::Currency` is read as a Number (ADR-0033)
 fn sort(items: &[Value], order: Option<&Value>) -> Result<Value, Error> {
     // Excel's sort_order: 1 ascending, -1 descending; "ASC"/"DESC" are Skillet's.
@@ -204,9 +205,12 @@ fn sort(items: &[Value], order: Option<&Value>) -> Result<Value, Error> {
     };
     enum Key {
         Number(f64),
+        Date(i64),
         Text(String),
         Boolean(bool),
     }
+    let mixed = || Error::new("SORT cannot compare dates with numbers (#VALUE!)", None);
+    let (mut has_number, mut has_date) = (false, false);
     let mut keyed = Vec::with_capacity(items.len());
     for it in items {
         crate::limits::tick_item(keyed.len())?;
@@ -214,19 +218,39 @@ fn sort(items: &[Value], order: Option<&Value>) -> Result<Value, Error> {
             Value::Number(n) | Value::Currency(n) if n.is_nan() => {
                 return Err(Error::new("Cannot sort NaN values", None))
             }
-            Value::Number(n) | Value::Currency(n) => Key::Number(*n),
+            Value::Number(_) | Value::Currency(_) if has_date => return Err(mixed()),
+            Value::Number(n) | Value::Currency(n) => {
+                has_number = true;
+                Key::Number(*n)
+            }
+            Value::DateTime(_) if has_number => return Err(mixed()),
+            Value::DateTime(t) => {
+                has_date = true;
+                Key::Date(*t)
+            }
             Value::String(s) => Key::Text(s.to_lowercase()),
             Value::Boolean(b) => Key::Boolean(*b),
-            _ => return Err(Error::new("SORT expects numbers, text or booleans", None)),
+            _ => {
+                return Err(Error::new(
+                    "SORT expects numbers, dates, text or booleans",
+                    None,
+                ))
+            }
         };
         keyed.push((key, it));
     }
+    // Numbers and dates never meet (rejected above), so they share the first place.
+    let rank = |k: &Key| match k {
+        Key::Number(_) | Key::Date(_) => 0,
+        Key::Text(_) => 1,
+        Key::Boolean(_) => 2,
+    };
     let cmp = |a: &Key, b: &Key| match (a, b) {
         (Key::Number(x), Key::Number(y)) => x.partial_cmp(y).unwrap_or(Ordering::Equal),
+        (Key::Date(x), Key::Date(y)) => x.cmp(y),
         (Key::Text(x), Key::Text(y)) => x.cmp(y),
         (Key::Boolean(x), Key::Boolean(y)) => x.cmp(y),
-        (Key::Number(_), _) | (Key::Text(_), Key::Boolean(_)) => Ordering::Less,
-        _ => Ordering::Greater,
+        _ => rank(a).cmp(&rank(b)),
     };
     if desc {
         keyed.sort_by(|a, b| cmp(&b.0, &a.0));

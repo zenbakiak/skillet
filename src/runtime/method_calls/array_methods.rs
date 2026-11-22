@@ -60,17 +60,7 @@ pub fn exec_array_method(
                 false
             };
 
-            let mut nums = Vec::with_capacity(recv_array.len());
-            for val in recv_array {
-                crate::limits::tick_item(nums.len())?;
-                match val {
-                    Value::Number(n) | Value::Currency(n) => nums.push(*n),
-                    _ => return Err(Error::new("sort expects numeric array", None)),
-                }
-            }
-
-            crate::runtime::utils::sort_numbers(&mut nums, desc)?;
-            Ok(Value::Array(nums.into_iter().map(Value::Number).collect()))
+            sort_method(recv_array, desc)
         }
 
         "sum" => {
@@ -98,43 +88,9 @@ pub fn exec_array_method(
             Ok(Value::Number(total / recv_array.len() as f64))
         }
 
-        "min" => {
-            if recv_array.is_empty() {
-                return Ok(Value::Null);
-            }
-            let mut min_val = None;
-            for val in recv_array {
-                match val {
-                    Value::Number(n) | Value::Currency(n) => {
-                        min_val = Some(match min_val {
-                            None => *n,
-                            Some(current) => n.min(current),
-                        });
-                    }
-                    _ => return Err(Error::new("min method expects numeric array", None)),
-                }
-            }
-            Ok(Value::Number(min_val.unwrap_or(0.0)))
-        }
+        "min" => extreme_method(recv_array, "min", f64::min, i64::min),
 
-        "max" => {
-            if recv_array.is_empty() {
-                return Ok(Value::Null);
-            }
-            let mut max_val = None;
-            for val in recv_array {
-                match val {
-                    Value::Number(n) | Value::Currency(n) => {
-                        max_val = Some(match max_val {
-                            None => *n,
-                            Some(current) => n.max(current),
-                        });
-                    }
-                    _ => return Err(Error::new("max method expects numeric array", None)),
-                }
-            }
-            Ok(Value::Number(max_val.unwrap_or(0.0)))
-        }
+        "max" => extreme_method(recv_array, "max", f64::max, i64::max),
 
         "join" => {
             let separator = if !args_expr.is_empty() {
@@ -216,5 +172,82 @@ pub fn exec_array_method(
         }
 
         _ => Err(Error::new(format!("Unknown array method: {}", name), None)),
+    }
+}
+
+/// `.sort([order])`: an array of only numbers or of only dates (ADR-0031 amendment 2, B5),
+/// ascending or, with `"DESC"`, descending. Equal dates keep their order.
+#[allow(deprecated)] // `Value::Currency` is read as a Number (ADR-0033)
+fn sort_method(items: &[Value], desc: bool) -> Result<Value, Error> {
+    let wrong = || Error::new("sort expects an array of numbers or of dates", None);
+    if let Some(Value::DateTime(_)) = items.first() {
+        let mut dates = Vec::with_capacity(items.len());
+        for val in items {
+            crate::limits::tick_item(dates.len())?;
+            match val {
+                Value::DateTime(t) => dates.push(*t),
+                _ => return Err(wrong()),
+            }
+        }
+        if desc {
+            dates.sort_by(|a, b| b.cmp(a));
+        } else {
+            dates.sort();
+        }
+        return Ok(Value::Array(
+            dates.into_iter().map(Value::DateTime).collect(),
+        ));
+    }
+    let mut nums = Vec::with_capacity(items.len());
+    for val in items {
+        crate::limits::tick_item(nums.len())?;
+        match val {
+            Value::Number(n) | Value::Currency(n) => nums.push(*n),
+            _ => return Err(wrong()),
+        }
+    }
+    crate::runtime::utils::sort_numbers(&mut nums, desc)?;
+    Ok(Value::Array(nums.into_iter().map(Value::Number).collect()))
+}
+
+/// `.min()`/`.max()`: the smallest/largest of an array of only numbers, or the earliest/latest
+/// of an array of only dates (ADR-0031 amendment 2, B5); `NULL` for an empty array.
+#[allow(deprecated)] // `Value::Currency` is read as a Number (ADR-0033)
+fn extreme_method(
+    items: &[Value],
+    name: &str,
+    pick: impl Fn(f64, f64) -> f64,
+    pick_date: impl Fn(i64, i64) -> i64,
+) -> Result<Value, Error> {
+    let wrong = || {
+        Error::new(
+            format!("{name} method expects an array of numbers or of dates"),
+            None,
+        )
+    };
+    match items.first() {
+        None => Ok(Value::Null),
+        Some(Value::DateTime(first)) => {
+            let mut best = *first;
+            for val in items {
+                match val {
+                    Value::DateTime(t) => best = pick_date(best, *t),
+                    _ => return Err(wrong()),
+                }
+            }
+            Ok(Value::DateTime(best))
+        }
+        Some(_) => {
+            let mut best: Option<f64> = None;
+            for val in items {
+                match val {
+                    Value::Number(n) | Value::Currency(n) => {
+                        best = Some(best.map_or(*n, |c| pick(*n, c)))
+                    }
+                    _ => return Err(wrong()),
+                }
+            }
+            Ok(Value::Number(best.unwrap_or(0.0)))
+        }
     }
 }

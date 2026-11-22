@@ -15,10 +15,10 @@ Methods (`:arr.sum()`), operators and the rest of the language: [api.md](api.md)
 
 | Function | Signature | Arity | Summary | Example | Result |
 |---|---|---|---|---|---|
-| `SUM` | `SUM(values…)` | 0+ | Sum of numbers; arrays are flattened, other values ignored. | `SUM(1, 2, [3, 4])` | `10` |
-| `AVG`<br>alias `AVERAGE` | `AVG(values…)` | 0+ | Mean of numbers (arrays flattened); error when there are none (Excel `#DIV/0!`). | `AVG(2, 4, 6)` | `4` |
-| `MIN` | `MIN(values…)` | 0+ | Smallest number (arrays flattened); 0 when there are none. | `MIN(3, 1, 2)` | `1` |
-| `MAX` | `MAX(values…)` | 0+ | Largest number (arrays flattened); 0 when there are none. | `MAX([3, 9, 2])` | `9` |
+| `SUM` | `SUM(values…)` | 0+ | Sum of numbers; arrays are flattened, other values ignored; a date is an error (`#VALUE!`). | `SUM(1, 2, [3, 4])` | `10` |
+| `AVG`<br>alias `AVERAGE` | `AVG(values…)` | 0+ | Mean of numbers (arrays flattened); error when there are none (Excel `#DIV/0!`) or for a date (`#VALUE!`). | `AVG(2, 4, 6)` | `4` |
+| `MIN` | `MIN(values…)` | 0+ | Smallest number, or earliest date when there are only dates (arrays flattened); 0 when there are none; numbers and dates together are an error (`#VALUE!`). | `MIN(3, 1, 2)` | `1` |
+| `MAX` | `MAX(values…)` | 0+ | Largest number, or latest date when there are only dates (arrays flattened); 0 when there are none; numbers and dates together are an error (`#VALUE!`). | `MAX([3, 9, 2])` | `9` |
 | `ROUND` | `ROUND(number, [digits])` | 1-2 | Round half away from zero to `digits` decimals (default 0); negative `digits` round left of the point. | `ROUND(1234.567, -2)` | `1200` |
 | `CEILING`<br>alias `CEIL` | `CEILING(number, [significance])` | 1-2 | Round up to a multiple of `significance` (default 1), Excel rules for negatives. | `CEILING(2.1, 0.5)` | `2.5` |
 | `FLOOR` | `FLOOR(number, [significance])` | 1-2 | Round down to a multiple of `significance` (default 1), Excel rules for negatives. | `FLOOR(7, 5)` | `5` |
@@ -27,8 +27,8 @@ Methods (`:arr.sum()`), operators and the rest of the language: [api.md](api.md)
 | `POW`<br>alias `POWER` | `POW(base, exponent)` | 2 | `base` raised to `exponent`; error for `0^0`, `0` to a negative power, or a non-real result. | `POW(2, 10)` | `1024` |
 | `MOD` | `MOD(number, divisor)` | 2 | Remainder of `number / divisor`; the sign follows the divisor (Excel). Error for 0. | `MOD(-10, 3)` | `2` |
 | `INT` | `INT(number)` | 1 | Round down to an integer: `INT(-3.9)` is -4. | `INT(5.9)` | `5` |
-| `PRODUCT`<br>alias `MULTIPLY` | `PRODUCT(values…)` | 0+ | Product of numbers (arrays flattened); 1 when there are none. | `PRODUCT(2, 3, 4)` | `24` |
-| `SUMIF` † | `SUMIF(range, criteria, [sum_range])` | 2-3 | Sum of items meeting an Excel criteria (`">2"`, `5`, `"a*"`) or a lambda over `:x`. | `SUMIF([1, -2, 3], ">0")` | `4` |
+| `PRODUCT`<br>alias `MULTIPLY` | `PRODUCT(values…)` | 0+ | Product of numbers (arrays flattened); 1 when there are none; a date is an error (`#VALUE!`). | `PRODUCT(2, 3, 4)` | `24` |
+| `SUMIF` † | `SUMIF(range, criteria, [sum_range])` | 2-3 | Sum of items meeting an Excel criteria (`">2"`, `5`, `"a*"`, a date or ISO date text) or a lambda over `:x`; a matched date to sum is an error (`#VALUE!`). | `SUMIF([1, -2, 3], ">0")` | `4` |
 
 ## Logical
 
@@ -40,7 +40,7 @@ Methods (`:arr.sum()`), operators and the rest of the language: [api.md](api.md)
 | `XOR` | `XOR(logical…)` | 1+ | Excel `XOR`: TRUE when an odd number of the logical values are TRUE. Same argument rules as `AND`. | `XOR(TRUE, TRUE, TRUE)` | `TRUE` |
 | `IF` | `IF(condition, then, [else])` | 2-3 | `then` when `condition` is TRUE or a non-zero number, otherwise `else` (default FALSE). NULL is FALSE; a text condition is an error. Only the chosen branch is evaluated. | `IF(1 > 0, 'yes', 'no')` | `"yes"` |
 | `IFS` | `IFS(condition, value, …)` | 2+ | Value of the first TRUE condition (conditions as in `IF`); an error (`#N/A`) when none is TRUE. Conditions are evaluated in order up to the first TRUE one, and only its value is evaluated. | `IFS(FALSE, 'a', TRUE, 'b')` | `"b"` |
-| `BETWEEN` | `BETWEEN(min, max, value)` | 3 | TRUE when `min <= value <= max` (both bounds inclusive). All three arguments must be numbers. | `BETWEEN(10, 20, 15)` | `TRUE` |
+| `BETWEEN` | `BETWEEN(min, max, value)` | 3 | TRUE when `min <= value <= max` (both bounds inclusive). All three arguments must be numbers, or all three dates (compared by instant). | `BETWEEN(10, 20, 15)` | `TRUE` |
 
 ## String
 
@@ -79,7 +79,7 @@ Methods (`:arr.sum()`), operators and the rest of the language: [api.md](api.md)
 | `COUNT` | `COUNT(values…)` | 1+ | How many numbers (and datetimes) there are; arrays flattened, other values ignored (Excel). | `COUNT([1, 'a', TRUE], 2)` | `2` |
 | `COUNTA` | `COUNTA(values…)` | 1+ | How many values are not NULL; arrays flattened (Excel). | `COUNTA([1, 'a', NULL], '')` | `3` |
 | `UNIQUE` | `UNIQUE(array)` | 1 | Distinct values in first-seen order (`==` equality: same type and value, text case-sensitive). | `UNIQUE([1, 'a', 1, 'a'])` | `[1, "a"]` |
-| `SORT` | `SORT(array, [order])` | 1-2 | Sorted ascending (Excel: numbers < text < booleans, text ignores case), or descending with order `-1` or `'DESC'`; other values are an error. | `SORT(['b', 2, 'A', 1])` | `[1, 2, "A", "b"]` |
+| `SORT` | `SORT(array, [order])` | 1-2 | Sorted ascending (Excel: numbers or dates < text < booleans, dates by instant, text ignores case), or descending with order `-1` or `'DESC'`; numbers with dates, and other values, are an error. | `SORT(['b', 2, 'A', 1])` | `[1, 2, "A", "b"]` |
 | `REVERSE` | `REVERSE(array or text)` | 1 | Items of an array, or characters of a string, in reverse order. | `REVERSE([1, 2, 3])` | `[3, 2, 1]` |
 | `JOIN` | `JOIN(array, [separator])` | 1-2 | The text of each item joined with `separator` (default `,`); nested arrays are an error. | `JOIN([1, 'a', TRUE], '-')` | `"1-a-TRUE"` |
 | `MERGE` | `MERGE(values…)` | 0+ | Arrays concatenated; scalar arguments are appended as items. | `MERGE([1, 2], 3, [4])` | `[1, 2, 3, 4]` |
@@ -119,16 +119,16 @@ Methods (`:arr.sum()`), operators and the rest of the language: [api.md](api.md)
 
 | Function | Signature | Arity | Summary | Example | Result |
 |---|---|---|---|---|---|
-| `MEDIAN` | `MEDIAN(values…)` | 0+ | Median of numbers (arrays flattened); error when there are none. | `MEDIAN(1, 3, 2, 4)` | `2.5` |
-| `MODE_SNGL`<br>alias `MODESNGL`, `MODE.SNGL`, `MODE` | `MODE_SNGL(values…)` | 0+ | Most frequent number (first seen wins a tie); error when no number repeats. | `MODE_SNGL(1, 2, 2, 3)` | `2` |
-| `STDEV_P`<br>alias `STDEVP`, `STDEV.P` | `STDEV_P(values…)` | 0+ | Population standard deviation; error when there are no numbers. | `STDEV_P(2, 4, 4, 4, 5, 5, 7, 9)` | `2` |
-| `VAR_P`<br>alias `VARP`, `VAR.P` | `VAR_P(values…)` | 0+ | Population variance; error when there are no numbers. | `VAR_P(1, 2, 3, 4)` | `1.25` |
-| `STDEV_S`<br>alias `STDEV.S`, `STDEV` | `STDEV_S(values…)` | 1+ | Sample standard deviation (divides by n - 1); error with fewer than two numbers. | `STDEV_S(2, 4, 4, 4, 5, 5, 7, 9)` | `2.138089935299395` |
-| `VAR_S`<br>alias `VAR.S`, `VAR` | `VAR_S(values…)` | 1+ | Sample variance (divides by n - 1); error with fewer than two numbers. | `VAR_S(1, 2, 3, 4)` | `1.6666666666666667` |
-| `PERCENTILE_INC`<br>alias `PERCENTILEINC`, `PERCENTILE.INC`, `PERCENTILE` | `PERCENTILE_INC(values…, k)` | 2+ | Inclusive percentile `k` (0-1) of the values, interpolated. | `PERCENTILE_INC([1, 2, 3, 4], 0.5)` | `2.5` |
-| `QUARTILE_INC`<br>alias `QUARTILEINC`, `QUARTILE.INC`, `QUARTILE` | `QUARTILE_INC(values…, quart)` | 2+ | Inclusive quartile `quart` (0-4) of the values. | `QUARTILE_INC([1, 2, 3, 4, 5], 1)` | `2` |
-| `AVERAGEIF` †<br>alias `AVGIF` | `AVERAGEIF(range, criteria, [average_range])` | 2-3 | Mean of items meeting an Excel criteria or a lambda over `:x`; error when none match. | `AVERAGEIF([1, 3, 5, -1], ">0")` | `3` |
-| `COUNTIF` † | `COUNTIF(range, criteria)` | 2 | Number of items meeting an Excel criteria (`">2"`, `"<>a"`, `"a*"`) or a lambda over `:x`. | `COUNTIF([1, 2, 3, 4], ">2")` | `2` |
+| `MEDIAN` | `MEDIAN(values…)` | 0+ | Median of numbers (arrays flattened); error when there are none or for a date. | `MEDIAN(1, 3, 2, 4)` | `2.5` |
+| `MODE_SNGL`<br>alias `MODESNGL`, `MODE.SNGL`, `MODE` | `MODE_SNGL(values…)` | 0+ | Most frequent number (first seen wins a tie); error when no number repeats or for a date. | `MODE_SNGL(1, 2, 2, 3)` | `2` |
+| `STDEV_P`<br>alias `STDEVP`, `STDEV.P` | `STDEV_P(values…)` | 0+ | Population standard deviation; error when there are no numbers or for a date. | `STDEV_P(2, 4, 4, 4, 5, 5, 7, 9)` | `2` |
+| `VAR_P`<br>alias `VARP`, `VAR.P` | `VAR_P(values…)` | 0+ | Population variance; error when there are no numbers or for a date. | `VAR_P(1, 2, 3, 4)` | `1.25` |
+| `STDEV_S`<br>alias `STDEV.S`, `STDEV` | `STDEV_S(values…)` | 1+ | Sample standard deviation (divides by n - 1); error with fewer than two numbers or for a date. | `STDEV_S(2, 4, 4, 4, 5, 5, 7, 9)` | `2.138089935299395` |
+| `VAR_S`<br>alias `VAR.S`, `VAR` | `VAR_S(values…)` | 1+ | Sample variance (divides by n - 1); error with fewer than two numbers or for a date. | `VAR_S(1, 2, 3, 4)` | `1.6666666666666667` |
+| `PERCENTILE_INC`<br>alias `PERCENTILEINC`, `PERCENTILE.INC`, `PERCENTILE` | `PERCENTILE_INC(values…, k)` | 2+ | Inclusive percentile `k` (0-1) of the values, interpolated; a date is an error. | `PERCENTILE_INC([1, 2, 3, 4], 0.5)` | `2.5` |
+| `QUARTILE_INC`<br>alias `QUARTILEINC`, `QUARTILE.INC`, `QUARTILE` | `QUARTILE_INC(values…, quart)` | 2+ | Inclusive quartile `quart` (0-4) of the values; a date is an error. | `QUARTILE_INC([1, 2, 3, 4, 5], 1)` | `2` |
+| `AVERAGEIF` †<br>alias `AVGIF` | `AVERAGEIF(range, criteria, [average_range])` | 2-3 | Mean of items meeting an Excel criteria (as `SUMIF`) or a lambda over `:x`; error when none match or a matched date is to be averaged. | `AVERAGEIF([1, 3, 5, -1], ">0")` | `3` |
+| `COUNTIF` † | `COUNTIF(range, criteria)` | 2 | Number of items meeting an Excel criteria (`">2"`, `"<>a"`, `"a*"`, `">" & DATE(2026, 1, 1)`) or a lambda over `:x`; dates compare by instant. | `COUNTIF([1, 2, 3, 4], ">2")` | `2` |
 
 ## JSON
 

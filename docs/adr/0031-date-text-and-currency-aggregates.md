@@ -100,6 +100,150 @@
 > This replaces "`SUMIF`/`AVERAGEIF` … are not part of this decision" in decision 3; the
 > statistical builtins (`MEDIAN`, `STDEV.*`, …) and the methods are still not part of it.
 
+> **Amendment 2 (maintainer, 2026-11-22, BL-090; audit LANG-5, LANG-6):** dates in the
+> aggregates, in sorting and in criteria. The maintainer decided the direction on 2026-11-22:
+> `MAX`/`MIN` and every sort accept dates, `SUM` of dates is an error, and criteria read ISO date
+> text and compare dates by instant. The details below (mixes, the other aggregates, messages,
+> text cells) are the Language Designer's and wait for acceptance. This amendment sits here, not
+> in ADR-0027, because it is about this ADR's two subjects: what the aggregates count, and the
+> ISO text that decision 2 lets `::DateTime` read. ADR-0027 is about the arithmetic operators,
+> which do not change.
+>
+> **Problem.** `MAX(DATE(2026,1,1), DATE(2027,1,1))` is `0` and `SUM(DATE(2026,1,1))` is `0`: the
+> aggregates skip dates as if they were text, so "latest date" silently gives a number.
+> `SORT` and `.sort()` reject dates although `<` orders them (ADR-0023 §3).
+> `COUNTIF(r, ">" & DATE(2026,1,1))`, the usual Excel idiom, builds the text
+> `">2026-01-01T00:00:00Z"`, which compares as text and never matches a date.
+>
+> **The rule in one line.** Functions that pick or order values (`MIN`, `MAX`, `SORT`, `.sort()`,
+> `.min()`, `.max()`, `BETWEEN`, criteria) accept dates and compare them by instant; functions
+> that do arithmetic on values (`SUM`, `AVERAGE`, `MEDIAN`, …) reject them with `#VALUE!`. A date
+> and a number are never compared (ADR-0023 §3): where both meet, it is an error. Skillet has a
+> DateTime type and no date serial numbers, so this differs from Excel on purpose: in Excel a date
+> is a number, `SUM` of dates is a (meaningless) number and dates mix freely with numbers.
+>
+> **B1. `MIN` and `MAX` return a date for dates.** They count Numbers and DateTimes, arrays
+> flattened at any depth. Text, booleans, `NULL` and JSON are still ignored.
+> - Only DateTimes counted (at least one): the earliest (`MIN`) or latest (`MAX`) DateTime.
+> - DateTimes and Numbers both counted: `Error: MAX cannot compare dates with numbers (#VALUE!)`
+>   (`MIN …` for `MIN`). Ignored values never cause it.
+> - Nothing counted: `0`, as now.
+>
+> **B2. The number aggregates reject dates.** `SUM`, `PRODUCT` (`MULTIPLY`), `AVERAGE` (`AVG`),
+> `MEDIAN`, `MODE.SNGL`, `STDEV.P`, `STDEV.S`, `VAR.P`, `VAR.S`, `PERCENTILE.INC` and
+> `QUARTILE.INC` (each with its aliases) return `Error: <NAME> does not accept dates (#VALUE!)` when
+> a DateTime is among their data, arrays flattened. `<NAME>` is the one in the left column of this
+> list, whichever alias was called. The check is made while the data is collected, so it comes
+> before the "no numbers" errors (`AVERAGE(DATE(2026,1,1))` is this error, not `#DIV/0!`), and for
+> `PERCENTILE.INC`/`QUARTILE.INC` after the `k`/`quart` argument checks of today. `COUNT` still
+> counts dates and `COUNTA` is unchanged. A mean date is still one line away:
+> `DATE(1970,1,1) + AVERAGE(MAP(:dates, :x - DATE(1970,1,1)))`.
+>
+> **B3. `SUMIF` and `AVERAGEIF` reject a date they would sum.** A matched value that is summed or
+> averaged (from the sum range when given, otherwise the item) and is a DateTime gives
+> `Error: SUMIF does not accept dates (#VALUE!)` (`AVERAGEIF`, also when called as `AVGIF`).
+> Dates that are not summed (not matched, or in the criteria range while a sum range is given) do
+> not count. `COUNTIF` counts dates as before. This makes `SUMIF(:dates, ">2026-01-01T00:00:00Z")`
+> an error instead of `0`.
+>
+> **B4. `SORT` orders dates.** A DateTime takes the number place of Excel's type order: numbers
+> and dates first, then text, then booleans. Two DateTimes compare by instant; equal ones keep
+> their order, in both directions. An array that holds both a Number and a DateTime is
+> `Error: SORT cannot compare dates with numbers (#VALUE!)`. `NULL`, arrays and JSON stay errors,
+> and the message names dates: `SORT expects numbers, dates, text or booleans`.
+>
+> **B5. `.sort()`, `.min()` and `.max()` accept an array of dates.** As in Ruby, an array of Times
+> sorts and a mix with numbers does not. An array of only Numbers works as now; an array of only
+> DateTimes gives the DateTimes sorted (`.sort("DESC")` descending) or the earliest/latest
+> DateTime. Anything else (a mix, text, `NULL`, …) is an error:
+> `sort expects an array of numbers or of dates`, `min method expects an array of numbers or of
+> dates`, `max method expects an array of numbers or of dates`. The empty array keeps its
+> results: `[].sort()` is `[]`, `[].min()` and `[].max()` are `NULL`. `.sum()` and `.avg()` are
+> unchanged (dates are an error, with today's messages).
+>
+> **B6. `BETWEEN` accepts three dates.** `BETWEEN(min, max, value)` with three DateTimes is
+> `min <= value <= max` by instant. Any other mix keeps today's number rule and messages
+> (`BETWEEN(DATE(2026,1,1), 10, 5)` is `Error: BETWEEN min must be a number`). The `.between()`
+> number method is unchanged.
+>
+> **B7. Equality is already by instant (no change).** `==`, `!=`, `UNIQUE`, `.unique()`,
+> `CONTAINS`, `IN` and `.includes()` compare two DateTimes by their seconds, whatever made them:
+> `DATE(2026,1,1) == "2026-01-01T00:00:00Z"::DateTime` and `== 1767225600::DateTime` are `true`.
+> A DateTime never equals another type: `DATE(2026,1,1) == "2026-01-01T00:00:00Z"` and
+> `== 1767225600` stay `false` (ADR-0023 §3). Whether the date builtins (`YEAR`, `DATEADD`, …)
+> read ISO text is not part of this amendment.
+>
+> **B8. Criteria compare dates.** `COUNTIF`, `SUMIF` and `AVERAGEIF` get a date operand.
+> - A static DateTime criterion means `=` that instant: `COUNTIF(r, DATE(2026,1,1))`. Today it is
+>   `Error: COUNTIF condition must be TRUE, FALSE or a number, got datetime (#VALUE!)`.
+> - A text criterion is read as today (optional operator, then: empty is blank, a number, `TRUE`/
+>   `FALSE`), with one new step before "anything else is text": an operand that is exactly the
+>   ISO text of decision 2 is a date. The test is the one `::DateTime` makes, minus integer text
+>   (which is already a number operand, so `">1767225600"` stays a number): sign and long years
+>   allowed; no date-only text, no offsets, no fractions, no spaces, uppercase `T`/`Z`, no
+>   rollover. So `">" & DATE(2026,1,1)` and `"=" & DATE(2026,1,1)` work, and every operator
+>   (`=`, none, `<>`, `<`, `<=`, `>`, `>=`) applies. Text with `*` or `?` is never a date; it
+>   stays a wildcard pattern.
+> - Date-only text (`">2026-01-01"`) is not a date, as for `::DateTime`, so it stays a text
+>   operand and matches no date. Use `">" & DATE(2026,1,1)`. If date-only text is ever accepted,
+>   the cast and criteria change together (one parser, `parse_datetime_text`).
+> - A date operand matches: a DateTime item, compared by instant; a text item that is exactly the
+>   ISO form (not integer text), read as its instant, for every operator; nothing else, except
+>   that `<>` matches every item that is not equal (numbers, other text, booleans, `NULL`), as
+>   `"<>5"` does. Text items are read because data from JSON holds dates as text, and today's
+>   text comparison already matched ISO text of the same shape; it now compares the instant.
+> - The other operands do not change: a number operand never matches a date (except `<>`), a text
+>   or pattern operand never matches a date (except `<>`), and a date is not blank.
+> - Lambda criteria are unchanged (`COUNTIF(r, :x > DATE(2026,1,1))` already works).
+>
+> | Expression | Before | After |
+> |---|---|---|
+> | `MAX(DATE(2026,1,1), DATE(2027,1,1))` | `0` | `DateTime(1798761600)` (2027-01-01) |
+> | `MIN([DATE(2026,1,1), DATE(2025,6,1)])`, `MAX([DATE(2026,1,1), [DATE(2027,3,1)]])` | `0`, `0` | 2025-06-01, 2027-03-01 |
+> | `MAX(DATE(2026,1,1), NULL)`, `MAX(DATE(2026,1,1), "x", TRUE)`, `MAX(DATE(2026,1,1), [])` | `0` | 2026-01-01 (ignored values do not count) |
+> | `MAX(DATE(2026,1,1), 5)`, `MIN(DATE(2026,1,1), 5)` | `5` | `Error: MAX cannot compare dates with numbers (#VALUE!)`, `MIN …` |
+> | `MAX()`, `MAX([])`, `MAX(NULL)`, `MAX(1, 5)` | `0`, `0`, `0`, `5` | unchanged |
+> | `SUM(DATE(2026,1,1))`, `SUM(DATE(2026,1,1), 1)`, `SUM([1, DATE(2026,1,1)])` | `0`, `1`, `1` | `Error: SUM does not accept dates (#VALUE!)` |
+> | `PRODUCT(DATE(2026,1,1))`, `MULTIPLY(…)` | `1` | `Error: PRODUCT does not accept dates (#VALUE!)` |
+> | `AVERAGE(DATE(2026,1,1), DATE(2026,1,3))`, `AVG(DATE(2026,1,1))` | `Error: AVERAGE of no numbers (#DIV/0!)` | `Error: AVERAGE does not accept dates (#VALUE!)` |
+> | `MEDIAN(DATE(2026,1,1), DATE(2026,1,3))`, `MEDIAN(1, DATE(2026,1,3))` | `Error: MEDIAN of no numbers (#NUM!)`, `1` | `Error: MEDIAN does not accept dates (#VALUE!)` |
+> | `STDEV.P(1, 2, DATE(2026,1,3))`, `STDEV(DATE(2026,1,1), 1)` | `0.5`, `Error: STDEV needs at least two numbers` | `Error: STDEV.P does not accept dates (#VALUE!)`, `Error: STDEV.S …` |
+> | `PERCENTILE.INC([DATE(2026,1,1)], 0.5)` | `Error: PERCENTILE.INC of no numbers (#NUM!)` | `Error: PERCENTILE.INC does not accept dates (#VALUE!)` |
+> | `COUNT(DATE(2026,1,1), 1, "a")` | `2` | unchanged |
+> | `SORT([DATE(2027,1,1), DATE(2026,1,1)])`, `… , -1)` | `Error: SORT expects numbers, text or booleans` | `[2026-01-01, 2027-01-01]`, `[2027-01-01, 2026-01-01]` |
+> | `SORT([DATE(2026,1,1), "a", TRUE])` | `Error` | `[2026-01-01, "a", TRUE]` |
+> | `SORT([DATE(2026,1,1), 5])` | `Error: SORT expects numbers, text or booleans` | `Error: SORT cannot compare dates with numbers (#VALUE!)` |
+> | `SORT([1, NULL])` | `Error: SORT expects numbers, text or booleans` | `Error: SORT expects numbers, dates, text or booleans` |
+> | `[DATE(2027,1,1), DATE(2026,1,1)].sort()`, `.sort("DESC")` | `Error: sort expects numeric array` | `[2026-01-01, 2027-01-01]`, `[2027-01-01, 2026-01-01]` |
+> | `[DATE(2027,1,1), DATE(2026,1,1)].max()`, `.min()` | `Error: max method expects numeric array`, `min …` | 2027-01-01, 2026-01-01 |
+> | `[DATE(2027,1,1), 1].max()`, `["b", "a"].sort()` | `Error: max method expects numeric array`, `Error: sort expects numeric array` | `Error: max method expects an array of numbers or of dates`, `Error: sort expects an array of numbers or of dates` |
+> | `[DATE(2026,1,1)].sum()`, `.avg()` | `Error: sum method expects numeric array`, `avg …` | unchanged |
+> | `BETWEEN(DATE(2026,1,1), DATE(2027,1,1), DATE(2026,6,1))` | `Error: BETWEEN min must be a number` | `true` |
+> | `UNIQUE([DATE(2026,1,1), DATE(2026,1,1), DATE(2027,1,1)])`, `CONTAINS([DATE(2026,1,1)], DATE(2026,1,1))` | two dates, `true` | unchanged |
+> | `COUNTIF([DATE(2026,1,1), DATE(2027,1,1)], ">" & DATE(2026,6,1))` | `0` | `1` |
+> | `COUNTIF(…same…, ">=2026-01-01T00:00:00Z")`, `"<2027-01-01T00:00:00Z"`, `"<=2027-01-01T00:00:00Z"` | `0`, `0`, `0` | `2`, `1`, `2` |
+> | `COUNTIF(…same…, "2026-01-01T00:00:00Z")`, `"=" & DATE(2026,1,1)`, `DATE(2026,1,1)` | `0`, `0`, `Error: COUNTIF condition must be …, got datetime (#VALUE!)` | `1`, `1`, `1` |
+> | `COUNTIF(…same…, "<>2026-01-01T00:00:00Z")` | `2` | `1` |
+> | `COUNTIF(…same…, ">2026-06-01")` (date-only) | `0` | unchanged (text operand) |
+> | `COUNTIF([DATE(2026,1,1), 5, "a", NULL], ">2025-01-01T00:00:00Z")` | `1` (`"a"` as text) | `1` (the date) |
+> | `COUNTIF([DATE(2026,1,1), 5, "a", NULL], "<>2026-01-01T00:00:00Z")` | `4` | `3` |
+> | `COUNTIF([DATE(2026,1,1), 5], ">0")`, `">1767225599"` | `1`, `0` | unchanged (a number never matches a date) |
+> | `COUNTIF(["2026-02-01T00:00:00Z", "2025-02-01T00:00:00Z"], ">2026-01-01T00:00:00Z")` | `1` (as text) | `1` (by instant) |
+> | `COUNTIF(["2026-01-01T00:00:00Z"], DATE(2026,1,1))` | `Error` | `1` |
+> | `COUNTIF(["2026-01-01t00:00:00z"], "=2026-01-01T00:00:00Z")` | `1` (text, ignoring case) | `0` (not ISO text, so not a date) |
+> | `COUNTIF(["1767225600"], DATE(2026,1,1))` | `Error` | `0` (integer text is not a date) |
+> | `COUNTIF([DATE(2026,1,1)], "2026-01-01T00:00:00*")`, `COUNTIF([DATE(2026,1,1)], ">2026-02-30T00:00:00Z")` | `0`, `0` | unchanged (a pattern; rollover is text) |
+> | `COUNTIF([DATE(2026,1,1)], ">+10000-01-01T00:00:00Z")` | `0` | unchanged (now by instant) |
+> | `SUMIF([DATE(2026,1,1), DATE(2027,1,1)], ">2026-06-01T00:00:00Z", [10, 20])` | `0` | `20` |
+> | `AVERAGEIF([DATE(2026,1,1), DATE(2027,1,1)], ">2025-06-01T00:00:00Z", [10, 20])` | `Error: AVERAGEIF: no matching numbers (#DIV/0!)` | `15` |
+> | `SUMIF([DATE(2026,1,1), DATE(2027,1,1)], ">2026-06-01T00:00:00Z")` | `0` | `Error: SUMIF does not accept dates (#VALUE!)` |
+> | `SUMIF([1, 2], ">0", [DATE(2026,1,1), 5])`, `SUMIF([1, 2], ">1", [DATE(2026,1,1), 5])` | `5`, `5` | `Error: SUMIF does not accept dates (#VALUE!)`, `5` (the date is not matched) |
+> | `COUNTIF([DATE(2026,1,1), DATE(2027,1,1)], :x > DATE(2026,6,1))` | `1` | unchanged |
+>
+> Breaking in 0.7.0: results that used to be a silent `0` (or a number that skipped the dates)
+> become a date or an error, and three error messages change (`SORT`, `.sort()`, `.min()`/
+> `.max()`).
+
 - Status: Accepted
 - Date: 2026-11-21
 - Deciders: Maintainer

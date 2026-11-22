@@ -6,6 +6,9 @@
 //!   as a number also compares as that number, as Excel's `COUNTIF` does.
 //! - `TRUE` / `FALSE` compare with booleans.
 //! - An empty operand (`""`, `"="`) matches blank values (`NULL`, `""`); `"<>"` matches the rest.
+//! - An operand that is exactly ISO 8601 UTC text (`2026-01-01T00:00:00Z`), or a DateTime
+//!   criterion, is a date: it compares by instant with DateTimes and with text items in that
+//!   same ISO form (ADR-0031 amendment 2, B8).
 //! - Any other operand is text: case-insensitive, with the wildcards `*` (any run), `?` (one
 //!   character) and `~` (escapes the next `*`, `?` or `~`) for `=` and `<>`. `<`, `>` compare
 //!   text case-insensitively, without wildcards.
@@ -13,6 +16,8 @@
 use crate::ast::Expr;
 use crate::error::Error;
 use crate::limits;
+use crate::runtime::arithmetic::dates_not_accepted;
+use crate::runtime::datetime::parse_iso_datetime;
 use crate::types::Value;
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -45,6 +50,8 @@ enum Operand {
     Number(f64),
     Bool(bool),
     Blank,
+    /// A DateTime, as Unix seconds.
+    Date(i64),
     /// Lower-cased text, compared with `<`, `<=`, `>`, `>=`.
     Text(String),
     /// Lower-cased wildcard pattern, for `=` and `<>`.
@@ -69,6 +76,10 @@ impl Criterion {
                 operand: Operand::Number(*n),
             }),
             Value::String(s) => Some(Self::parse(s)),
+            Value::DateTime(t) => Some(Criterion {
+                op: Op::Eq,
+                operand: Operand::Date(*t),
+            }),
             _ => None,
         }
     }
@@ -117,6 +128,10 @@ impl Criterion {
                     _ => false,
                 }
             }
+            Operand::Date(t) => match date_of(item) {
+                Some(d) => op.accepts(d.cmp(t)),
+                None => op == Op::Ne,
+            },
             Operand::Pattern(pat) => match item {
                 Value::String(s) => pat.matches(&s.to_lowercase())? == (op == Op::Eq),
                 _ => op == Op::Ne,
@@ -142,6 +157,10 @@ fn parse_operand(rest: &str) -> Operand {
     if rest.eq_ignore_ascii_case("FALSE") {
         return Operand::Bool(false);
     }
+    // ISO text never holds `*` or `?`, so a wildcard pattern is never a date.
+    if let Some(t) = parse_iso_datetime(rest) {
+        return Operand::Date(t);
+    }
     Operand::Text(rest.to_lowercase())
 }
 
@@ -160,6 +179,16 @@ fn number_of(item: &Value, op: Op) -> Option<f64> {
     match item {
         Value::Number(n) | Value::Currency(n) => Some(*n),
         Value::String(s) if matches!(op, Op::Eq | Op::Ne) => parse_number(s),
+        _ => None,
+    }
+}
+
+/// The instant an item compares as against a date operand: a DateTime, or text in exactly the
+/// ISO 8601 UTC form (data from JSON holds dates as text). Integer text is not a date.
+fn date_of(item: &Value) -> Option<i64> {
+    match item {
+        Value::DateTime(t) => Some(*t),
+        Value::String(s) => parse_iso_datetime(s),
         _ => None,
     }
 }
@@ -428,7 +457,8 @@ pub(crate) fn range_items(v: Value) -> Vec<Value> {
 }
 
 /// `COUNTIF`/`SUMIF`/`AVERAGEIF` over `range`. `values` is the optional sum or average range,
-/// paired with `range` by position. Only numbers are summed or averaged (ADR-0033).
+/// paired with `range` by position. Only numbers are summed or averaged (ADR-0033); a matched
+/// DateTime that would be summed or averaged is an error (ADR-0031 amendment 2, B3).
 #[allow(deprecated)] // `Value::Currency` is read as a Number (ADR-0033)
 pub(crate) fn aggregate(
     kind: Aggregate,
@@ -448,6 +478,9 @@ pub(crate) fn aggregate(
         };
         match target {
             Some(Value::Number(n) | Value::Currency(n)) => sum += n,
+            Some(Value::DateTime(_)) if kind != Aggregate::Count => {
+                return Err(dates_not_accepted(kind.name()))
+            }
             _ => continue,
         }
         numbers += 1;

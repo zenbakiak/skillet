@@ -300,6 +300,37 @@ fn round_supports_negative_digits_and_decimal_halves() {
     );
 }
 
+/// BL-088 (maintainer decision): `.round([digits])` is `ROUND`, half away from zero on the
+/// 15-digit decimal form. Before, it scaled with `f64`, so `1.005.round(2)` was 1.0.
+#[test]
+fn round_method_is_round() {
+    for (n, d) in [
+        ("1.005", "2"),
+        ("0.285", "2"),
+        ("1.015", "2"),
+        ("2.15", "1"),
+        ("-1.475", "2"),
+        ("1234.567", "-2"),
+        ("2.5", "0"),
+        ("-2.5", "0"),
+        ("0.49999999999999994", "0"),
+        ("2.567", "1.9"),
+        ("1e307", "5"),
+        ("(0.1 + 0.2)", "16"),
+    ] {
+        let method = evaluate(&format!("=({n}).round({d})")).unwrap();
+        let function = evaluate(&format!("=ROUND({n}, {d})")).unwrap();
+        assert_eq!(method, function, "({n}).round({d})");
+    }
+    assert_eq!(evaluate("=1.005.round(2)").unwrap(), Value::Number(1.01));
+    assert_eq!(evaluate("=0.285.round(2)").unwrap(), Value::Number(0.29));
+    assert_eq!(evaluate("=1e307.round(5)").unwrap(), Value::Number(1e307));
+    assert_eq!(evaluate("=(2.5).round(NULL)").unwrap(), Value::Number(3.0));
+    assert_eq!(evaluate("=(2.5).round(\"1\")").unwrap(), Value::Number(2.5));
+    err("=(2.5).round(\"x\")", "round num_digits: cannot convert");
+    err("=(2.5).round(1, 2)", "round expects ([num_digits])");
+}
+
 #[test]
 fn int_rounds_down() {
     close("=INT(8.9)", 8.0); // Microsoft example

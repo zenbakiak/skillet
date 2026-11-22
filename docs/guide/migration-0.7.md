@@ -22,7 +22,10 @@ Check these first. They change results without an error:
    `"2.5000"`). Responses say `"type": "Number"` (was `"Currency"`).
 11. **`filter`, `find`, `FILTER`, `FIND` with a lambda that returns a number** now keep or find the
    items where it is non-zero (ADR-0029 Amendment 1): `[0, 1, 2].filter(:x)` is `[1, 2]` (was `[]`).
-12. **Values as text** have one form each (ADR-0034): numbers with 15 significant digits
+12. **`.round(digits)`** is now `ROUND` (BL-088): halves round away from zero on the number's
+   15-digit decimal form, so `1.005.round(2)` is `1.01` (was `1.0`). About 3 in 100 two-decimal
+   halves change; see the table below.
+13. **Values as text** have one form each (ADR-0034): numbers with 15 significant digits
    (`"Total: " & 3 * 0.1` is `"Total: 0.3"`, was `"Total: 0.30000000000000004"`), `.to_s()` and
    `.join()` write `TRUE`/`FALSE`, an array is its JSON text, and `"héllo".length()` is `5` (was
    `6`).
@@ -110,6 +113,10 @@ To keep a default, test first: `IF(:n == 0, 0, :total / :n)` (now lazy, see belo
 | `TRIM("  a   b  ")` | `"a   b"` | `"a b"` |
 | `ROUND(1234.567, -2)`, `ROUND(15, -1)` | `1235`, `15` | `1200`, `20` |
 | `ROUND(1.005, 2)` | `1.0` | `1.01` |
+| `1.005.round(2)`, `0.285.round(2)`, `1.015.round(2)`, `0.145.round(2)` (BL-088) | `1.0`, `0.28`, `1.01`, `0.14` | `1.01`, `0.29`, `1.02`, `0.15` (as `ROUND`) |
+| `0.49999999999999994.round()`, `1e307.round(5)` (BL-088) | `0`, `inf` | `1`, `1e307` (as `ROUND`) |
+| `(2.5).round(NULL)`, `(2.5).round("1")` (BL-088) | `Error: round precision must be number` | `3`, `2.5` (as `ROUND`) |
+| `(2.5).round(1, 2)` (BL-088) | `2.5` (extra argument ignored) | `Error: round expects ([num_digits])` |
 | `CEILING(2.1, 0.5)`, `CEILING(7, 5)` | `3`, `7` | `2.5`, `10` |
 | `FLOOR(7, 5)` | `7` | `5` |
 | `TIME(14, 30, 0)` | current time (0.6.3) | `0.6041666666666666` (fraction of a day) |
@@ -120,8 +127,9 @@ To keep a default, test first: `IF(:n == 0, 0, :total / :n)` (now lazy, see belo
 | `SORT(["b", "a"])` (#96) | `Error` | `["a", "b"]` (text ignores case) |
 | `UNIQUE(["a", "a", 1])`, `REVERSE("abc")` (#96) | `[1]`, `Error` | `["a", 1]`, `"cba"` |
 
-The methods keep Ruby semantics and do not change: `"  a   b  ".trim()` is still `"a   b"`, and
-`(-3.7).int()` is still `-3` (while `INT(-3.7)` is `-4`).
+The other methods keep Ruby semantics and do not change: `"  a   b  ".trim()` is still `"a   b"`,
+and `(-3.7).int()` is still `-3` (while `INT(-3.7)` is `-4`). `.round()` is the exception: it is
+`ROUND` (BL-088, maintainer decision).
 
 ### Logical functions and operators (ADR-0018 D-8, ADR-0029)
 Every condition follows one rule, the `IF` rule (ADR-0029 Amendment 1): `TRUE`/`FALSE` as they
@@ -247,6 +255,40 @@ builds.
 
 `(0.1 + 0.2)::String::Float` is now `0.3`, not `0.1 + 0.2`; `"1E+21"::Integer` is `1` (use
 `::Float`).
+
+### Dates in aggregates, sorting and criteria (ADR-0031 amendment 2, BL-090)
+Functions that pick or order values accept dates and compare them by instant: `MIN`, `MAX`,
+`SORT`, `.sort()`, `.min()`, `.max()`, `BETWEEN` and the criteria of `COUNTIF`/`SUMIF`/`AVERAGEIF`.
+Functions that do arithmetic reject a date with `#VALUE!`: `SUM`, `PRODUCT`, `AVERAGE`, `MEDIAN`,
+`MODE.SNGL`, `STDEV.*`, `VAR.*`, `PERCENTILE.INC`, `QUARTILE.INC`, and `SUMIF`/`AVERAGEIF` when
+they would sum a date. A date and a number are never compared, so a mix of both is an error
+where they meet. In 0.6 the aggregates skipped dates, so these gave `0` or a number without the
+dates. `COUNT` still counts dates.
+
+A criterion reads the ISO text that `::DateTime` reads, so the Excel idiom `">" & DATE(…)`
+works, and so does a date as the criterion. Date-only text (`">2026-01-01"`) is not a date, as
+for `::DateTime`; build the criterion with `DATE`. Text items in that ISO form compare as dates.
+
+| Expression | 0.6 | 0.7 |
+|---|---|---|
+| `MAX(DATE(2026, 1, 1), DATE(2027, 1, 1))`, `MIN(…)` | `0` | 2027-01-01, 2026-01-01 (a DateTime) |
+| `MAX(DATE(2026, 1, 1), 5)` | `5` | `Error: MAX cannot compare dates with numbers (#VALUE!)` |
+| `SUM(DATE(2026, 1, 1), 1)` | `1` | `Error: SUM does not accept dates (#VALUE!)` |
+| `AVERAGE(DATE(2026, 1, 1))`, `MEDIAN(1, DATE(2026, 1, 1))` | `#DIV/0!` error, `1` | `Error: AVERAGE does not accept dates (#VALUE!)`, `MEDIAN …` |
+| `SORT([DATE(2027, 1, 1), DATE(2026, 1, 1)])`, `[…].sort()` | `Error` | `[2026-01-01, 2027-01-01]` |
+| `SORT([DATE(2026, 1, 1), 5])` | `Error: SORT expects numbers, text or booleans` | `Error: SORT cannot compare dates with numbers (#VALUE!)` |
+| `SORT([1, NULL])` | `Error: SORT expects numbers, text or booleans` | `Error: SORT expects numbers, dates, text or booleans` |
+| `[DATE(2027, 1, 1), DATE(2026, 1, 1)].max()` | `Error: max method expects numeric array` | 2027-01-01 |
+| `["b", "a"].sort()`, `[DATE(2026, 1, 1), 1].max()` | `Error: sort expects numeric array`, `max method expects numeric array` | `Error: sort expects an array of numbers or of dates`, `max method expects an array of numbers or of dates` |
+| `BETWEEN(DATE(2026, 1, 1), DATE(2027, 1, 1), DATE(2026, 6, 1))` | `Error` | `true` |
+| `COUNTIF([DATE(2026, 1, 1), DATE(2027, 1, 1)], ">" & DATE(2026, 6, 1))` | `0` | `1` |
+| `COUNTIF([DATE(2026, 1, 1), DATE(2027, 1, 1)], DATE(2026, 1, 1))` | `Error` | `1` |
+| `COUNTIF([DATE(2026, 1, 1), DATE(2027, 1, 1)], "<>2026-01-01T00:00:00Z")` | `2` | `1` |
+| `SUMIF([DATE(2026, 1, 1), DATE(2027, 1, 1)], ">2026-06-01T00:00:00Z", [10, 20])` | `0` | `20` |
+| `SUMIF([DATE(2026, 1, 1)], ">2025-01-01T00:00:00Z")` (sums the date) | `0` | `Error: SUMIF does not accept dates (#VALUE!)` |
+| `COUNTIF(["2026-01-01t00:00:00z"], "=2026-01-01T00:00:00Z")` | `1` (text match) | `0` (lowercase text is not a date) |
+
+For a mean date, average the day counts: `DATE(1970, 1, 1) + AVERAGE(MAP(:dates, :x - DATE(1970, 1, 1)))`.
 
 ### Date units follow Excel (B-15)
 `DATEADD` and `DATEDIFF` read the unit codes of VBA's `DateAdd`/`DateDiff`, case-insensitively.
