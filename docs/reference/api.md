@@ -240,7 +240,7 @@ TRUE ? 1 : 1/0             # 1
 ### Special Operators
 - `&.` - Safe navigation operator
 - `::` - Type casting operator
-- `...` - Spread operator
+- `...` - Spread operator (in argument lists and array literals)
 
 ### Precedence
 Tightest first, as in Excel. Operators on the same row are left-associative.
@@ -1523,9 +1523,12 @@ The `::Json` cast and the server responses still write a DateTime as its Unix se
 ```
 
 ### Spread Operator
+Allowed in function argument lists and array literals (ADR-0005 amendment 1). The operand
+must be an array (otherwise `Spread expects array`); its items are added one level deep.
 ```bash
 ...array                     # Spread array elements
 # Example: SUM(...[1,2,3])  # Same as SUM(1,2,3)
+[0, ...[1, 2], 3]            # [0, 1, 2, 3]
 ```
 
 ### Object Literals
