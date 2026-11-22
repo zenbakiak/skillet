@@ -311,6 +311,7 @@ unchanged at 256 MiB, only now configurable. Details: [Limits](limits.md).
 | A server evaluation that runs longer than 20 s (or `--eval-timeout`) | runs | `Evaluation timed out (max 20 s)` (HTTP 400) |
 | Expressions nested deeper than 128 | stack overflow (crash) | `Expression nested too deeply (max 128)` |
 | `with_limits` budgets near a boundary with many small strings (#105) | 32 + length per string | 48 + length per string (the real heap size), so the same formula reaches a tight budget sooner |
+| JSON variables: `evaluate_with_json*`, `sk --json`, `sk_server` `variables`, `sk_http_server` `arguments` and `GET /eval` parameters (BL-086) | not counted | charged to the budget before the formula runs (`:arguments` too, 48 + the JSON length), so a large request under a small `--max-eval-bytes` or a tight `with_limits` can fail with `Evaluation budget exceeded (max …)` (HTTP 400). Raise the budget; with the default 256 MiB every request under the 1 MiB cap fits. A `HashMap` passed to `evaluate_with` is not charged |
 
 ## JavaScript plugins (ADR-0017)
 | Situation | 0.6 | 0.7 |

@@ -285,6 +285,8 @@ fn process_request(req: EvalRequest, request_id: u64) -> EvalResponse {
 
     // Evaluate expression
     let result = skillet::with_limits(server_limits(), || {
+        // Charged in the evaluation's budget scope (ADR-0011 amendment 5).
+        skillet::charge_variables(&vars)?;
         let expr = parsed(&req.expression)?;
         if req.expression.contains(";") || req.expression.contains(":=") {
             evaluate_parsed_with_assignments(&expr, &vars)
@@ -435,10 +437,12 @@ fn print_eval_limits(num_threads: usize) {
         eval_limits::describe_timeout(&limits)
     );
     eprintln!(
-        "💾 Eval budget: {} per evaluation, up to about {} with {} threads (--max-eval-bytes or SKILLET_MAX_EVAL_BYTES)",
+        "💾 Eval budget: {} per evaluation, request variables included (--max-eval-bytes or SKILLET_MAX_EVAL_BYTES)",
         eval_limits::describe_bytes(limits.max_bytes),
-        eval_limits::describe_bytes(limits.max_bytes.saturating_mul(num_threads as u64)),
-        num_threads
+    );
+    eprintln!(
+        "🧮 {}",
+        eval_limits::describe_worst_case(&limits, num_threads, MAX_REQUEST_SIZE, 0)
     );
 }
 
