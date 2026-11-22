@@ -43,6 +43,30 @@ fn power_is_left_associative() {
     close("4^0.5^2", 4.0);
 }
 
+/// BL-060: a unary minus right after `^` negates the exponent only, as in Excel.
+#[test]
+fn power_followed_by_unary_minus_matches_excel() {
+    close("=2^-2", 0.25);
+    close("=-2^-2", 0.25); // (-2)^(-2)
+    close("=2^-1^2", 0.25); // (2^-1)^2
+    close("2^--2", 4.0);
+    close("2^-2%", 2f64.powf(-0.02)); // percent before ^
+    let err = evaluate("=0^-1").unwrap_err();
+    assert_eq!(err.message, "Division by zero (#DIV/0!)");
+
+    use skillet::ast::{BinaryOp::Pow, UnaryOp::Minus};
+    use skillet::{parse, Expr};
+    let n = |v: f64| std::rc::Rc::new(Expr::Number(v));
+    let neg = |e: std::rc::Rc<Expr>| std::rc::Rc::new(Expr::Unary(Minus, e));
+    let pow = |a, b| Expr::Binary(a, Pow, b);
+    assert_eq!(parse("2^-2").unwrap(), pow(n(2.0), neg(n(2.0))));
+    assert_eq!(parse("-2^-2").unwrap(), pow(neg(n(2.0)), neg(n(2.0))));
+    assert_eq!(
+        parse("2^-1^2").unwrap(),
+        pow(std::rc::Rc::new(pow(n(2.0), neg(n(1.0)))), n(2.0))
+    );
+}
+
 #[test]
 fn power_binds_tighter_than_multiplication() {
     close("2 * 3^2", 18.0);

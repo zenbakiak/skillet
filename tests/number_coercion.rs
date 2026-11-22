@@ -142,18 +142,15 @@ fn other_types_keep_the_type_error() {
 }
 
 #[test]
-fn date_arithmetic_is_unchanged() {
+fn date_arithmetic_converts_the_other_operand() {
     let jan2 = evaluate("=DATE(2026, 1, 1) + 1").unwrap();
     assert_eq!(jan2, evaluate("=DATE(2026, 1, 2)").unwrap());
     close("=DATE(2026, 1, 2) - DATE(2026, 1, 1)", 1.0);
-    // A date operand is not coerced: the date rules (ADR-0018 D-5) apply as before.
+    // ADR-0027: the non-date operand converts like any operator operand.
+    assert_eq!(evaluate("=DATE(2026, 1, 1) + \"1\"").unwrap(), jan2);
     assert_eq!(
-        err("=DATE(2026, 1, 1) + \"1\""),
-        "Arithmetic op on non-number"
-    );
-    assert_eq!(
-        err("=DATE(2026, 1, 1) + NULL"),
-        "Arithmetic op on non-number"
+        evaluate("=DATE(2026, 1, 1) + NULL").unwrap(),
+        evaluate("=DATE(2026, 1, 1)").unwrap()
     );
 }
 

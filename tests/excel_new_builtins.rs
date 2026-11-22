@@ -455,8 +455,12 @@ fn other_date_arithmetic_is_still_an_error() {
     assert_eq!(err("=1 - DATE(2026, 1, 1)"), e);
     assert_eq!(err("=DATE(2026, 1, 1) * 2"), e);
     assert_eq!(err("=DATE(2026, 1, 1) / 2"), e);
-    assert_eq!(err("=DATE(2026, 1, 1) + 'x'"), e);
-    assert_eq!(err("=DATE(2026, 1, 1) + NULL"), e);
+    assert_eq!(err("=DATE(2026, 1, 1) + [1]"), e);
+    // ADR-0027: non-numeric text is #VALUE!; NULL and numeric text convert.
+    assert_eq!(
+        err("=DATE(2026, 1, 1) + 'x'"),
+        "Cannot convert \"x\" to a number (#VALUE!)"
+    );
     assert_eq!(
         err("=DATE(2026, 1, 1) + 10 ^ 300"),
         "Date arithmetic out of range"
