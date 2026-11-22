@@ -202,7 +202,11 @@ for a number (numeric text, booleans, `NULL` as 0). Results are not rounded (Cur
 | `-(5::Currency)`, `+(5::Currency)` | `Error` | `Currency(-5)`, `Currency(5)` |
 | `10::Currency + "2"`, `10::Currency + NULL` | `Error` | `Currency(12)`, `Currency(10)` |
 | `1::Currency / 0` | `Error` | `Error: Division by zero (#DIV/0!)` |
-| `DATE(2026, 1, 1) + 1::Currency`, `1 == 1::Currency` | `Error`, `false` | unchanged |
+| `DATE(2026, 1, 1) + 1::Currency` | `Error` | unchanged |
+| `1 == 1::Currency`, `1 != 1::Currency` | `false`, `true` | `true`, `false` (by amount, ADR-0027 Amendment 1) |
+| `1::Currency < 2`, `3 >= 2::Currency` | `Error: Comparison of incompatible types` | `true` |
+| `[10::Currency, 5].filter(:x > 6)`, `SUMIF([1, 2::Currency], :x > 1)` | `Error` | `[Currency(10)]`, `2` |
+| `15::Currency == "15"`, `1::Currency == TRUE`, `1::Currency < NULL` | `false`, `false`, `Error` | unchanged |
 
 ### Currency in the aggregates (ADR-0031, B-13)
 `SUM`, `PRODUCT` (`MULTIPLY`), `AVERAGE` (`AVG`), `MIN` and `MAX` return Currency when any value
@@ -215,6 +219,8 @@ keep a Number. The methods (`.sum()`, `.avg()`, `.min()`, `.max()`) are unchange
 | `PRODUCT(2::Currency, 3)`, `AVERAGE(10::Currency, 20)` | `6`, `15` (Number) | `Currency(6)`, `Currency(15)` |
 | `MIN(1, 3::Currency)`, `MAX([3::Currency, 9::Currency])` | `1`, `9` (Number) | `Currency(1)`, `Currency(9)` |
 | `SUM(1, 2)`, `[1::Currency].sum()` | Number | unchanged |
+| `SUM(10::Currency, 5) > 10`, `SUM(10::Currency, 5) == 15` | `true`, `true` | `true`, `true` (Currency compares with Number by amount, ADR-0027 Amendment 1; without it these were an error and `false`) |
+| `MAX(1, 3::Currency) == 3`, `IF(SUM(:lines) > :limit, …)` | `true`, works | unchanged |
 
 ### New names (additive)
 These used to fail with `Unknown function` or a parse error: `STDEV.P`, `STDEV.S`, `STDEV`,

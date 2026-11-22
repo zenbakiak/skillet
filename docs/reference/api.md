@@ -131,8 +131,9 @@ number (numeric text, booleans, `NULL` as 0):
 1::Currency / 3                # Currency(0.333…): not rounded; use ROUND(x, 2)
 ```
 
-Currency is a tagged `f64` (ADR-0003): the operators do not round to cents. Comparisons do not
-change: `1 == 1::Currency` is `FALSE`.
+Currency is a tagged `f64` (ADR-0003): the operators do not round to cents. The comparison
+operators compare Currency with a Number by amount: `1 == 1::Currency` is `TRUE` and
+`SUM(10::Currency, 5) > 10` is `TRUE` (ADR-0027 Amendment 1).
 
 The arithmetic operators never produce NaN or infinity (BL-054, ADR-0018). Division or `%` by 0
 and `0 ^` a negative number are `Error: Division by zero (#DIV/0!)`; `0 ^ 0` and any result that
@@ -160,17 +161,19 @@ is not a finite number (overflow, a non-real power) are a `#NUM!` error.
 
 `==` is strict: a value equals only a value of the same type with the same value, and text is
 case-sensitive (`"a" == "A"` is `FALSE`). No comparison converts between types: `1 == "1"`,
-`TRUE == 1` and `1 == 1::Currency` are `FALSE` (conversion happens only in arithmetic,
-ADR-0023).
+`TRUE == 1` and `15::Currency == "15"` are `FALSE` (conversion happens only in arithmetic,
+ADR-0023). Currency is the one exception: it is a tagged number, so Currency and Number
+compare by amount in every comparison operator, in either order (`15 == 15::Currency` is
+`TRUE`, `1::Currency < 2` is `TRUE`; ADR-0027 Amendment 1).
 
 - Arrays are equal when they have the same length and equal items, in order
-  (`[1, 2] == [1, 2]`). JSON objects are equal when they have the same keys and equal values;
-  key order does not matter. Two `Currency` values compare by amount.
+  (`[1, 2] == [1, 2]`, `[1::Currency] == [1]`). JSON objects are equal when they have the same
+  keys and equal values; key order does not matter.
 - Two DateTimes compare by timestamp (`DATE(2026,1,1) == DATE(2026,1,1)`). A DateTime never
   equals a value of another type (`DATE(2026,1,1) == 0` is `FALSE`).
 - `NULL == NULL` is `TRUE` and `NULL` is unequal to every other value (`NULL == 0` is `FALSE`,
   ADR-0013).
-- `<`, `<=`, `>`, `>=` need two values of the same type: numbers, currency, booleans
+- `<`, `<=`, `>`, `>=` need two values of the same type: numbers or currency (mixed freely), booleans
   (`FALSE < TRUE`), text, or DateTimes (earlier is less). Text orders by Unicode code point,
   case-sensitive (`"B" < "a"`), as text even when it looks like a number (`"10" < "9"`). Any
   other pair, including a `NULL` operand, is an error.
