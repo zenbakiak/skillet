@@ -36,7 +36,9 @@ Agents prepare steps 1–3; **only a human publishes, tags, or pushes to `main`.
 
 ## Current state (2026-11)
 - Targets: macOS x86_64/arm64, Linux musl x86_64/arm64. Windows dropped (`libc` daemon) → BL-013.
-  `Dockerfile.alpine-builder` builds only aarch64 (x86_64 is an open decision, BL-050).
+  `Dockerfile.alpine-builder` takes the musl target from `--platform` (`TARGETARCH`);
+  `scripts/build_alpine_binaries.sh` builds aarch64 and x86_64 into `dist/alpine/<arch>/`
+  (BL-065). It needs `benches/` in the context (`[[bench]]` targets). Not built in CI.
 - Toolchain (ADR-0012): MSRV 1.85 (`rust-version`, checked by the `msrv` job). The CI gate
   (`rust.yml`) and `release.yml` pin Rust 1.89.0 via `RUST_TOOLCHAIN`; bump both together.
   `.tool-versions` is gitignored, local only.
@@ -59,8 +61,12 @@ Agents prepare steps 1–3; **only a human publishes, tags, or pushes to `main`.
   the ruleset is updated.
 - `cross` is pinned (ADR-0022): `CROSS_REV` commit in `release.yml`, installed `--locked`, and the
   musl images pinned by digest in `Cross.toml`. Bump the commit and the digests together.
-- Actions are pinned by tag (`@v4`, `@v2`, `dtolnay/rust-toolchain@master`), not by SHA (BL-056
-  follow-up).
+- Every action is pinned to a full commit SHA with the tag as a comment (`@<sha> # v4.4.0`, BL-065),
+  the latest release of its major. `dtolnay/rust-toolchain` is pinned to a `master` commit and
+  always gets `toolchain:` (the MSRV job passes `1.85.0`). New actions are pinned the same way;
+  resolve with `gh api repos/<owner>/<repo>/git/ref/tags/<tag>` and dereference annotated tags.
+  `release.yml` has never run on GitHub yet; the first tag (or a `workflow_dispatch` dry run) is
+  its first real test.
 - `Dockerfile` (sk_http_server): builder `rust:1.89.0-slim-bookworm` (bump with `RUST_TOOLCHAIN`),
   runtime `debian:bookworm-slim`, `cargo build --locked`, no `curl` (health check is
   `docker/healthcheck.sh` over bash `/dev/tcp`). `docker/entrypoint.sh` fails closed without

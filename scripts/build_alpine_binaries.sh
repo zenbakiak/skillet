@@ -1,57 +1,66 @@
 #!/bin/bash
 # Build Skillet binaries for Alpine Linux (musl)
 # These binaries will work on Alpine, ruby:3.4.8-alpine, and other musl-based systems
+#
+# Builds aarch64 and x86_64 into dist/alpine/<arch>/. Each arch builds natively in a
+# `--platform` container; the non-native one runs under emulation (slow, needs binfmt/QEMU,
+# which Docker Desktop has). Build one arch only with: ALPINE_ARCHES=x86_64 $0
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-DIST_DIR="$PROJECT_DIR/dist/alpine"
+ALPINE_ARCHES="${ALPINE_ARCHES:-aarch64 x86_64}"
 
-echo "🏗️  Building Skillet binaries for Alpine Linux (musl)..."
+echo "🏗️  Building Skillet binaries for Alpine Linux (musl): $ALPINE_ARCHES"
 
-# Create distribution directory
-mkdir -p "$DIST_DIR"
-
-# Use custom dockerignore for Alpine builds
+# Use custom dockerignore for Alpine builds; restore it on exit, also when a build fails
 echo "📋 Preparing Docker context..."
 cp "$PROJECT_DIR/.dockerignore" "$PROJECT_DIR/.dockerignore.backup" 2>/dev/null || true
 cp "$PROJECT_DIR/.dockerignore.alpine" "$PROJECT_DIR/.dockerignore"
+trap 'mv "$PROJECT_DIR/.dockerignore.backup" "$PROJECT_DIR/.dockerignore" 2>/dev/null || true' EXIT
 
-# Build using Docker multi-stage build
-echo "📦 Building binaries with Docker (native build)..."
-docker build \
-    --target binaries \
-    -f "$PROJECT_DIR/Dockerfile.alpine-builder" \
-    -t skillet-alpine-binaries \
-    "$PROJECT_DIR"
+for ARCH in $ALPINE_ARCHES; do
+    case "$ARCH" in
+        aarch64) PLATFORM=linux/arm64 ;;
+        x86_64) PLATFORM=linux/amd64 ;;
+        *) echo "unsupported arch: $ARCH (use aarch64 or x86_64)" >&2; exit 1 ;;
+    esac
+    DIST_DIR="$PROJECT_DIR/dist/alpine/$ARCH"
+    IMAGE="skillet-alpine-binaries:$ARCH"
+    mkdir -p "$DIST_DIR"
 
-# Restore original dockerignore
-echo "📋 Restoring Docker context..."
-mv "$PROJECT_DIR/.dockerignore.backup" "$PROJECT_DIR/.dockerignore" 2>/dev/null || true
+    # Build using Docker multi-stage build
+    echo "📦 Building $ARCH binaries with Docker ($PLATFORM)..."
+    docker build \
+        --platform "$PLATFORM" \
+        --target binaries \
+        -f "$PROJECT_DIR/Dockerfile.alpine-builder" \
+        -t "$IMAGE" \
+        "$PROJECT_DIR"
 
-# Extract binaries from the Docker image
-echo "📤 Extracting binaries..."
-CONTAINER_ID=$(docker create skillet-alpine-binaries)
-docker cp "$CONTAINER_ID:/binaries/." "$DIST_DIR/"
-docker rm "$CONTAINER_ID"
+    # Extract binaries from the Docker image
+    echo "📤 Extracting binaries..."
+    CONTAINER_ID=$(docker create --platform "$PLATFORM" "$IMAGE")
+    docker cp "$CONTAINER_ID:/binaries/." "$DIST_DIR/"
+    docker rm "$CONTAINER_ID"
 
-# Make binaries executable
-chmod +x "$DIST_DIR"/*
+    # Make binaries executable
+    chmod +x "$DIST_DIR"/*
 
-# Display results
-echo ""
+    echo ""
+    echo "Built $ARCH binaries in $DIST_DIR:"
+    ls -lh "$DIST_DIR"
+    echo ""
+    echo "🧪 Testing $ARCH sk binary..."
+    docker run --rm --platform "$PLATFORM" -v "$DIST_DIR:/test" ruby:3.4.8-alpine /test/sk "2 + 3 * 4"
+    echo ""
+done
+
 echo "✅ Alpine Linux binaries built successfully!"
-echo "📁 Location: $DIST_DIR"
-echo ""
-echo "Built binaries:"
-ls -lh "$DIST_DIR"
-echo ""
-echo "🧪 Testing sk binary..."
-docker run --rm --platform linux/arm64 -v "$DIST_DIR:/test" ruby:3.4.8-alpine /test/sk "2 + 3 * 4"
-
+echo "📁 Location: $PROJECT_DIR/dist/alpine/<arch>/"
 echo ""
 echo "📋 Next steps:"
-echo "1. Copy binaries to your project: cp $DIST_DIR/* /path/to/your/project/"
-echo "2. Or create a tarball: tar -czf skillet-alpine-binaries.tar.gz -C $DIST_DIR ."
+echo "1. Copy binaries to your project: cp $PROJECT_DIR/dist/alpine/<arch>/* /path/to/your/project/"
+echo "2. Or create a tarball: tar -czf skillet-alpine-x86_64.tar.gz -C $PROJECT_DIR/dist/alpine/x86_64 ."
 echo "3. See docs/ops/alpine.md for Docker integration instructions"
