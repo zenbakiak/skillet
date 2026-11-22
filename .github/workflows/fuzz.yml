@@ -78,3 +78,32 @@ jobs:
           path: fuzz/artifacts/${{ matrix.target }}/
           if-no-files-found: ignore
           retention-days: 30
+
+  # Open (or update) one issue when any target fails, so a crash is not missed (ADR-0028).
+  report:
+    name: report fuzz failure
+    needs: fuzz
+    if: failure()
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Open or update the fuzz issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          ASSIGNEE: ${{ github.repository_owner }}
+        run: |
+          gh label create fuzz --color B60205 --description "Fuzzer found a crash" 2>/dev/null || true
+          existing=$(gh issue list --label fuzz --state open --json number --jq '.[0].number')
+          body="The scheduled fuzz run failed: $RUN_URL
+
+          Download the \`fuzz-artifacts-<target>\` artifact from the run, then reproduce and
+          minimize the input as described in docs/adr/0028-fuzzing.md."
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --title "Fuzzing found a failure" --label fuzz \
+              --assignee "$ASSIGNEE" --body "$body"
+          fi

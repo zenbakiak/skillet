@@ -39,6 +39,9 @@ published crate, the stable gate or the MSRV build.
   `fuzz/Cargo.lock` is checked with `cargo fetch --locked`. On failure the job uploads
   `fuzz/artifacts/<target>/`. It runs on no push or pull request, so it is not a required check
   and `rust.yml` is unchanged.
+- **Alerting** (maintainer, 2026-11-21): when any target fails, a `report` job opens one issue
+  labelled `fuzz` and assigned to the repository owner, or comments on the open one, with the run
+  link. The issue is closed by hand once the finding is fixed.
 - **Findings**: each crash gets a backlog item and, with its fix, a regression test with the
   minimized input in `tests/fuzz_regressions.rs` (stable toolchain, part of the gate).
 
