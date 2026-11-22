@@ -414,3 +414,23 @@ fn representative_calls_keep_their_results() {
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
+
+/// BL-057: the old `builtin_functions::exec_builtin` is deprecated, not removed. It still
+/// evaluates builtins, but reports an argument error as an unknown function, unlike the
+/// dispatch the evaluator uses.
+#[test]
+#[allow(deprecated)]
+fn deprecated_exec_builtin_still_works() {
+    use skillet::runtime::builtin_functions::exec_builtin;
+    let nums = [Value::Number(1.0), Value::Number(2.0)];
+    assert_eq!(exec_builtin("SUM", &nums).unwrap(), Value::Number(3.0));
+    assert_eq!(
+        exec_builtin("LENGTH", &[Value::String("abc".into())]).unwrap(),
+        exec_builtin_fast("LENGTH", &[Value::String("abc".into())]).unwrap()
+    );
+
+    let old = exec_builtin("ROUND", &[]).unwrap_err();
+    let new = exec_builtin_fast("ROUND", &[]).unwrap_err();
+    assert_eq!(old.message, "Unknown function: ROUND");
+    assert_ne!(new.message, old.message);
+}

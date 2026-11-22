@@ -2,6 +2,9 @@
 //! Servers run on 127.0.0.1 with enough workers for every connection the tests open. Timeouts
 //! are generous and waits poll, so the tests hold under load.
 
+mod common;
+
+use common::ServerProcess;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::process::{Command, Stdio};
@@ -28,57 +31,33 @@ fn command(bin: &str, args: &[String], env_limit: Option<&str>) -> Command {
     cmd
 }
 
-/// A server binary on a free 127.0.0.1 port, killed on drop.
+/// A server binary on its own 127.0.0.1 port, killed on drop.
 struct Server {
-    child: std::process::Child,
-    port: u16,
+    process: ServerProcess,
     http: bool,
 }
 
 impl Server {
     /// Start `bin` with 12 workers and `extra` arguments.
     fn start(bin: &str, extra: &[&str], env_limit: Option<&str>) -> Server {
-        let port = std::net::TcpListener::bind("127.0.0.1:0")
-            .unwrap()
-            .local_addr()
-            .unwrap()
-            .port();
         let http = bin == HTTP;
-        let mut args = vec![port.to_string()];
-        if http {
-            args.extend(["--threads".to_string(), "12".to_string()]);
-        } else {
-            args.push("12".to_string());
-        }
-        args.extend(extra.iter().map(|s| s.to_string()));
-        let child = command(bin, &args, env_limit)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("spawn server");
-        let server = Server { child, port, http };
-        server.wait_until_serving();
-        server
-    }
-
-    /// Wait until a request is answered (not only connected), so the accept loop is running.
-    fn wait_until_serving(&self) {
-        let deadline = Instant::now() + Duration::from_secs(30);
-        while Instant::now() < deadline {
-            if let Ok(s) = TcpStream::connect(("127.0.0.1", self.port)) {
-                if self.request(s).is_some() {
-                    return;
-                }
+        let process = ServerProcess::start(|port| {
+            let mut args = vec![port.to_string()];
+            if http {
+                args.extend(["--threads".to_string(), "12".to_string()]);
+            } else {
+                args.push("12".to_string());
             }
-            std::thread::sleep(Duration::from_millis(50));
-        }
-        panic!("server did not start serving within 30 s");
+            args.extend(extra.iter().map(|s| s.to_string()));
+            let mut cmd = command(bin, &args, env_limit);
+            cmd.stdout(Stdio::null());
+            cmd
+        });
+        Server { process, http }
     }
 
     fn connect(&self) -> TcpStream {
-        let s = TcpStream::connect(("127.0.0.1", self.port)).expect("connect");
-        s.set_read_timeout(Some(Duration::from_secs(60))).unwrap();
-        s
+        self.process.connect()
     }
 
     /// Send one evaluation request on `s` and return the response, or `None` if the connection
@@ -130,13 +109,6 @@ impl Server {
             std::thread::sleep(Duration::from_millis(50));
         }
         panic!("no connection was served within 30 s; last response: {last:?}");
-    }
-}
-
-impl Drop for Server {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
     }
 }
 

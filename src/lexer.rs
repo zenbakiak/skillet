@@ -455,7 +455,7 @@ impl<'a> Lexer<'a> {
                 | Token::OrOr
                 | Token::SafeNavigation
         ) {
-            self.last_start = self.pos - 2;
+            self.last_start = self.pos.saturating_sub(2); // a lone '=' is EqEq too (fuzz, BL-019)
             self.last_end = self.pos;
         }
         Ok(tok)
