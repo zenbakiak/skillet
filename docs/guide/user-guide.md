@@ -1797,7 +1797,10 @@ Object literals work perfectly with the HTTP server's new variable tracking feat
 - **Values**: Any valid Skillet expression (numbers, strings, variables, function calls, arrays, nested objects)
 - **Trailing Commas**: Supported (`{a: 1, b: 2,}`)
 - **Empty Objects**: Supported (`{}`)
-- **Storage**: Objects are internally stored as JSON strings (`Value::Json`)
+- **Storage**: Objects are internally stored as JSON strings (`Value::Json`). `Value::Json` is
+  deprecated since 0.7.0: in 0.8.0 objects become the structured `Value::Object` and `Json` is
+  removed (ADR-0030, BL-011). Expressions are not affected; Rust code that builds objects should
+  use `skillet::json_to_value` (see the [migration guide](migration-0.7.md#rust-api))
 - **Access**: Use dot notation for property access (`obj.key.subkey`)
 
 ### HTTP Server API Updates

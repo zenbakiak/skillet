@@ -343,7 +343,7 @@ Scripts:
   - `unregister_function(name: &str) -> bool`
   - `list_custom_functions() -> Vec<String>`
 - Types:
-  - `Value` enum: `Number(f64) | Array(Vec<Value>) | Boolean(bool) | String(String) | Null | DateTime(i64) | Json(String)` (`Currency(f64)` is deprecated since 0.7, ADR-0033)
+  - `Value` enum: `Number(f64) | Array(Vec<Value>) | Boolean(bool) | String(String) | Null | DateTime(i64) | Json(String)`, `#[non_exhaustive]`. `Currency(f64)` (ADR-0033) and `Json(String)` (ADR-0030; `Value::Object` in 0.8) are deprecated since 0.7
   - `Error` with `message` and optional `position`
 
 
