@@ -886,6 +886,14 @@ sk "=IF(:qty == 0, 0, :total / :qty)" qty=0 total=10        # 0
 sk "=IF(AND(:score >= 90, :attendance > 0.8), \"A\", IF(:score >= 80, \"B\", \"C\"))" score=85 attendance=0.9
 ```
 
+Every condition (`IF`, `? :`, `AND`/`OR`/`NOT`/`!`, `filter`/`find`) reads `TRUE`/`FALSE` as they
+are, a number as TRUE when it is not 0, and `NULL` as FALSE; text or a date is an error, and so
+is NaN passed in from a host variable (`#NUM!`).
+
+> **Warning.** The `AND(...)`, `OR(...)` and `XOR(...)` functions skip `NULL`, as Excel skips an
+> empty cell. So `AND(:u&.is_admin, :on)` is `true` when `is_admin` is missing. For flags that
+> may be absent, write `:u&.is_admin AND :on` (`false`) or `IF(:u&.is_admin, :on, FALSE)`.
+
 ### Comparisons
 
 `==` is strict: same type and same value, case-sensitive text. No comparison converts between
@@ -1122,8 +1130,8 @@ and booleans convert, as in Excel: `ABS("-3")` is `3`, `ABS(TRUE)` is `1`.
 ### Logical Functions
 - `IF(condition, true_value, false_value)` - Conditional
 - `IFS(condition1, value1, condition2, value2, ...)` - Multiple conditions
-- `AND(...)` - Logical AND
-- `OR(...)` - Logical OR
+- `AND(...)` - Logical AND (skips `NULL`: a missing flag passes; see the warning above)
+- `OR(...)` - Logical OR (skips `NULL`)
 - `NOT(value)` - Logical NOT
 - `XOR(...)` - Logical XOR
 
