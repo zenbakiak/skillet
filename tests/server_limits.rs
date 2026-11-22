@@ -2,15 +2,15 @@
 //! and their token checks (BL-018).
 //! Servers run on 127.0.0.1 with one worker, so a held worker shows as a delayed next request.
 
+mod common;
+
+use common::{free_port, ServerProcess, SLOW};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::time::{Duration, Instant};
 
-/// A server binary on a free 127.0.0.1 port, killed on drop.
-struct Server {
-    child: std::process::Child,
-    port: u16,
-}
+/// A server binary on its own 127.0.0.1 port, killed on drop.
+struct Server(ServerProcess);
 
 impl Server {
     fn spawn(bin: &str, args: impl Fn(u16) -> Vec<String>) -> Server {
@@ -23,32 +23,21 @@ impl Server {
         args: impl Fn(u16) -> Vec<String>,
         env_token: Option<&str>,
     ) -> Server {
-        let port = std::net::TcpListener::bind("127.0.0.1:0")
-            .unwrap()
-            .local_addr()
-            .unwrap()
-            .port();
-        let hooks = std::env::temp_dir().join("skillet-server-limits-no-hooks");
-        let mut cmd = std::process::Command::new(bin);
-        cmd.args(args(port))
-            .env("SKILLET_HOOKS_DIR", hooks)
-            .env("SKILLET_BIND_HOST", "127.0.0.1")
-            .env_remove("SKILLET_AUTH_TOKEN")
-            .env_remove("SKILLET_ADMIN_TOKEN")
-            .env_remove("SKILLET_CORS_ORIGIN")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null());
-        if let Some(t) = env_token {
-            cmd.env("SKILLET_AUTH_TOKEN", t);
-        }
-        let child = cmd.spawn().expect("spawn server");
-        for _ in 0..200 {
-            if TcpStream::connect(("127.0.0.1", port)).is_ok() {
-                break;
+        Server(ServerProcess::start(|port| {
+            let hooks = std::env::temp_dir().join("skillet-server-limits-no-hooks");
+            let mut cmd = std::process::Command::new(bin);
+            cmd.args(args(port))
+                .env("SKILLET_HOOKS_DIR", hooks)
+                .env("SKILLET_BIND_HOST", "127.0.0.1")
+                .env_remove("SKILLET_AUTH_TOKEN")
+                .env_remove("SKILLET_ADMIN_TOKEN")
+                .env_remove("SKILLET_CORS_ORIGIN")
+                .stdout(std::process::Stdio::null());
+            if let Some(t) = env_token {
+                cmd.env("SKILLET_AUTH_TOKEN", t);
             }
-            std::thread::sleep(Duration::from_millis(50));
-        }
-        Server { child, port }
+            cmd
+        }))
     }
 
     /// `sk_http_server` with one worker.
@@ -66,9 +55,7 @@ impl Server {
     }
 
     fn connect(&self) -> TcpStream {
-        let s = TcpStream::connect(("127.0.0.1", self.port)).expect("connect");
-        s.set_read_timeout(Some(Duration::from_secs(60))).unwrap();
-        s
+        self.0.connect()
     }
 
     /// Send one request line to `sk_server`; returns the response line.
@@ -97,13 +84,6 @@ impl Server {
         let mut resp = String::new();
         let _ = s.read_to_string(&mut resp);
         resp
-    }
-}
-
-impl Drop for Server {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
     }
 }
 
@@ -363,6 +343,9 @@ fn bl046_sk_server_closes_after_an_auth_failure() {
     let mut rest = String::new();
     let _ = reader.read_to_string(&mut rest);
     assert_eq!(rest, "");
+    // The server drains input until the client closes (so its error is not lost to a reset);
+    // holding the connection would keep the only worker until the 30 s deadline.
+    drop(reader);
 
     // The worker is free again.
     let resp = server.send_line("{\"expression\":\"=2 + 3\",\"token\":\"tok\"}");
@@ -506,12 +489,7 @@ fn bl047_sk_http_server_slow_reader_is_cut_off() {
 
 /// Runs a server binary that should refuse to start; returns its stderr.
 fn refuses_to_start(bin: &str, args: &[&str], env_token: Option<&str>) -> String {
-    let port = std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
-        .to_string();
+    let port = free_port().to_string();
     let mut cmd = std::process::Command::new(bin);
     cmd.arg(&port)
         .args(args)
@@ -534,7 +512,7 @@ fn refuses_to_start(bin: &str, args: &[&str], env_token: Option<&str>) -> String
         if let Some(status) = child.try_wait().unwrap() {
             break status;
         }
-        if start.elapsed() > Duration::from_secs(10) {
+        if start.elapsed() > SLOW {
             let _ = child.kill();
             let _ = child.wait();
             panic!("{bin} {args:?} started instead of refusing");
