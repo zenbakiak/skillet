@@ -120,9 +120,9 @@ fn to_array(value: &Value) -> Result<Value, Error> {
         Value::Null => Vec::new(),
         Value::Array(arr) => arr.clone(),
         Value::String(s) => {
-            // One string per character: 32 + its bytes each, charged before building.
+            // One string per character: 48 + its bytes each, charged before building.
             let chars = s.chars().count() as u64;
-            limits::charge(32 + 32 * chars + s.len() as u64)?;
+            limits::charge(32 + limits::STRING_COST * chars + s.len() as u64)?;
             s.chars().map(|c| Value::String(c.to_string())).collect()
         }
         other => vec![other.clone()],

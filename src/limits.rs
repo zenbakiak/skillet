@@ -40,8 +40,8 @@ pub const MAX_NESTING_DEPTH: usize = 128;
 
 /// Default per-evaluation budget, in bytes of values created (ADR-0011).
 ///
-/// Cost model: every `Value` costs 32 bytes, plus its byte length for `String`/`Json`, plus the
-/// cost of its items for `Array`. The count is cumulative (freeing a value gives nothing back)
+/// Cost model: every `Value` costs 32 bytes, a `String`/`Json` 48 bytes plus its byte length, and
+/// an `Array` 32 bytes plus the cost of its items. The count is cumulative (freeing a value gives nothing back)
 /// and deterministic: the same expression with the same variables always passes or always fails.
 /// Exceeding it returns `Evaluation budget exceeded (max 256 MB)`.
 ///
@@ -57,8 +57,13 @@ pub const MAX_EVAL_BYTES: u64 = 256 * 1024 * 1024;
 
 /// Size charged for every value (`size_of::<Value>()`).
 const VALUE_COST: u64 = 32;
+/// Size charged for a `String`/`Json` before its bytes: the `Value` plus the smallest heap block
+/// (16 bytes on the system allocators measured in BL-035), so tiny strings are not undercounted.
+pub(crate) const STRING_COST: u64 = VALUE_COST + 16;
 /// The deadline is checked on every `TICKS_PER_CLOCK_READ`th charge.
 const TICKS_PER_CLOCK_READ: u32 = 256;
+/// Long per-item loops in builtins tick once every `ITEMS_PER_TICK` items ([`tick_item`]).
+const ITEMS_PER_TICK: usize = 64;
 const MIB: u64 = 1024 * 1024;
 
 /// Limits for evaluations run inside [`with_limits`].
@@ -104,10 +109,13 @@ impl Default for EvalLimits {
 /// the outer scope.
 ///
 /// All evaluations inside one call share one budget. The budget and the deadline are
-/// thread-local: work that a custom function moves to another thread is not charged and is not
-/// stopped by the deadline, and an evaluation started on that other thread gets a fresh default
-/// scope. The deadline is checked between operations, so one long builtin call (or one custom
-/// function call) runs to completion before the next check.
+/// thread-local: work that a custom function moves to another thread (spawned threads, pools,
+/// async runtimes) is not charged and is not stopped by the deadline, and an evaluation started
+/// on that other thread gets a fresh default scope (default budget, no deadline). Such a function
+/// must bound that work itself, for example by calling `with_limits` on the other thread with
+/// limits it chooses. The deadline is checked between operations and every 64 items inside the
+/// long builtin loops (`SORT`, `UNIQUE`, the joins); one custom function call runs to completion
+/// before the next check.
 ///
 /// ```
 /// let mut limits = skillet::EvalLimits::default();
@@ -291,7 +299,7 @@ const NODE_BYTE: [u8; 256] = {
 
 /// Pre-charge a string result of `len` bytes.
 pub(crate) fn charge_string(len: usize) -> Result<(), Error> {
-    charge(VALUE_COST.saturating_add(len as u64))
+    charge(STRING_COST.saturating_add(len as u64))
 }
 
 /// Pre-charge `text.replace(find, repl)` (`SUBSTITUTE`, `SUBSTITUTEM`, `.replace`) with its exact
@@ -317,7 +325,7 @@ pub(crate) fn charge_join<S: AsRef<str>>(parts: &[S], sep: &str) -> Result<(), E
 }
 
 /// Pre-charge a value about to be built from a JSON node (a `JQ` match): numbers, booleans and
-/// null 32; strings 32 + len; arrays 32 + items; objects 32 + Σ (key len + value), or 32 + their
+/// null 32; strings 48 + len; arrays 32 + items; objects 32 + Σ (key len + value), or 48 + their
 /// serialized size when that is larger (escapes), since they become a `Json` string.
 pub(crate) fn charge_json_node(node: &serde_json::Value) -> Result<(), Error> {
     let cap = remaining();
@@ -333,6 +341,63 @@ pub(crate) fn charge_json_node(node: &serde_json::Value) -> Result<(), Error> {
 #[inline]
 pub(crate) fn tick() -> Result<(), Error> {
     charge(0)
+}
+
+/// Loops that do work per item without charging per item (`SORT`, `UNIQUE`, the joins) call this
+/// with the item index; every `ITEMS_PER_TICK`th item ticks, so one long call reads the clock
+/// every 16,384 items instead of running to completion before the next check (BL-035).
+#[inline(always)]
+pub(crate) fn tick_item(index: usize) -> Result<(), Error> {
+    if index % ITEMS_PER_TICK == 0 {
+        tick_cold()
+    } else {
+        Ok(())
+    }
+}
+
+/// Out of line so the per-item check stays one test and branch in the caller's loop.
+#[cold]
+#[inline(never)]
+fn tick_cold() -> Result<(), Error> {
+    tick()
+}
+
+/// `s` upper- or lower-cased (`UPPER`, `LOWER`, `.upper()`, `.lower()`). Case mapping can make
+/// non-ASCII text up to [`CASE_GROWTH`]x longer (`ΐ` is 2 bytes, `Ϊ́` 6), so the output must fit
+/// what is left of the budget before it is built. When even the worst case fits (the usual case)
+/// nothing is counted; otherwise the exact output size is counted, without allocating, so the
+/// pass/fail boundary does not move. Nothing is charged here: the result site charges the string.
+pub(crate) fn case_mapped(s: &str, upper: bool) -> Result<String, Error> {
+    let worst = (s.len() as u64).saturating_mul(CASE_GROWTH);
+    if !s.is_ascii() && !has_room(STRING_COST.saturating_add(worst)) {
+        let len: usize = if upper {
+            s.chars()
+                .flat_map(char::to_uppercase)
+                .map(char::len_utf8)
+                .sum()
+        } else {
+            s.chars()
+                .flat_map(char::to_lowercase)
+                .map(char::len_utf8)
+                .sum()
+        };
+        if !has_room(STRING_COST.saturating_add(len as u64)) {
+            return Err(BUDGET.with(|b| b.trip(Trip::Budget)));
+        }
+    }
+    Ok(if upper {
+        s.to_uppercase()
+    } else {
+        s.to_lowercase()
+    })
+}
+
+/// Largest growth in UTF-8 bytes of one character under `to_uppercase`/`to_lowercase` (U+0390).
+const CASE_GROWTH: u64 = 3;
+
+/// True when charging `bytes` now would stay within the budget.
+fn has_room(bytes: u64) -> bool {
+    BUDGET.with(|b| b.used.get().saturating_add(bytes) <= b.max.get())
 }
 
 /// Pre-charge a `MERGE` result: the cost of every argument, before the merged array is built.
@@ -438,13 +503,13 @@ pub(crate) fn check_value(value: Value) -> Result<Value, Error> {
     }
 }
 
-/// The charge of a non-array value (32, plus the length of a string): `Some(true)` when done,
+/// The charge of a non-array value (32, or 48 plus the length of a string): `Some(true)` when done,
 /// `Some(false)` when charged but the slow path must run, `None` for an array (not charged).
 #[inline(never)]
 fn charge_scalar(value: &Value) -> Option<bool> {
     let bytes = match value {
         Value::Array(_) => return None,
-        Value::String(s) | Value::Json(s) => VALUE_COST.saturating_add(s.len() as u64),
+        Value::String(s) | Value::Json(s) => STRING_COST.saturating_add(s.len() as u64),
         _ => VALUE_COST,
     };
     Some(BUDGET.with(|b| b.add(bytes)))
@@ -486,8 +551,9 @@ enum Walk {
 
 /// Walk the items of an array: depth (same rule as the parser: non-arrays and empty arrays are
 /// 0, an array is one more than its deepest element; `depth_left` levels remain for the items)
-/// and cost (32 per item plus string bytes, nested arrays recursively). Scalars are handled
-/// inline and the cap is checked once per array, so the hot flat-array case is one tight loop.
+/// and cost (32 per item, 48 plus their bytes for strings, nested arrays recursively). Scalars
+/// are handled inline and the cap is checked once per array, so the hot flat-array case is one
+/// tight loop.
 fn walk_items(items: &[Value], depth_left: usize, cost: &mut u64, cap: u64) -> Walk {
     *cost = cost.saturating_add(VALUE_COST.saturating_mul(items.len() as u64));
     for item in items {
@@ -501,7 +567,9 @@ fn walk_items(items: &[Value], depth_left: usize, cost: &mut u64, cap: u64) -> W
                     stop => return stop,
                 }
             }
-            Value::String(s) | Value::Json(s) => *cost = cost.saturating_add(s.len() as u64),
+            Value::String(s) | Value::Json(s) => {
+                *cost = cost.saturating_add(STRING_COST - VALUE_COST + s.len() as u64)
+            }
             _ => {}
         }
     }
@@ -521,7 +589,9 @@ fn add_json_node_cost(node: &serde_json::Value, cost: &mut u64, cap: u64, in_obj
     let start = *cost;
     *cost = cost.saturating_add(VALUE_COST);
     match node {
-        serde_json::Value::String(s) => *cost = cost.saturating_add(s.len() as u64),
+        serde_json::Value::String(s) => {
+            *cost = cost.saturating_add(STRING_COST - VALUE_COST + s.len() as u64)
+        }
         serde_json::Value::Array(items) => {
             for item in items {
                 if !add_json_node_cost(item, cost, cap, in_object) {
@@ -541,7 +611,7 @@ fn add_json_node_cost(node: &serde_json::Value, cost: &mut u64, cap: u64, in_obj
             if !in_object {
                 let mut text = ByteCounter(0);
                 if serde_json::to_writer(&mut text, node).is_ok() {
-                    let as_text = start.saturating_add(VALUE_COST).saturating_add(text.0);
+                    let as_text = start.saturating_add(STRING_COST).saturating_add(text.0);
                     *cost = (*cost).max(as_text);
                 }
             }
@@ -653,7 +723,7 @@ impl Budget {
         match value {
             Value::Array(items) => self.charge_items(items),
             Value::String(s) | Value::Json(s) => {
-                self.charge(VALUE_COST.saturating_add(s.len() as u64))
+                self.charge(STRING_COST.saturating_add(s.len() as u64))
             }
             _ => self.charge(VALUE_COST),
         }
@@ -785,7 +855,7 @@ mod tests {
             walk_items(items, usize::MAX, &mut cost, u64::MAX),
             Walk::Ok
         ));
-        assert_eq!(cost, 32 + 32 + (32 + 4) + (32 + 32 + 2));
+        assert_eq!(cost, 32 + 32 + (48 + 4) + (32 + 48 + 2));
         assert!(matches!(
             walk_items(items, usize::MAX, &mut 0, 100),
             Walk::TooBig
@@ -884,6 +954,31 @@ mod tests {
         }
         assert_eq!(count_node_bytes(&every_byte), slow(&every_byte));
         assert_eq!(count_node_bytes(&[b'{'; 16 * 600 + 9]), 16 * 600 + 9);
+    }
+
+    #[test]
+    fn case_growth_bounds_every_char() {
+        for c in (0..=0x10_FFFF).filter_map(char::from_u32) {
+            let grown = |it: &mut dyn Iterator<Item = char>| it.map(char::len_utf8).sum::<usize>();
+            let max = c.len_utf8() as u64 * CASE_GROWTH;
+            assert!(grown(&mut c.to_uppercase()) as u64 <= max, "{c:?}");
+            assert!(grown(&mut c.to_lowercase()) as u64 <= max, "{c:?}");
+        }
+    }
+
+    #[test]
+    fn case_mapping_checks_room_exactly() {
+        // "ΐ" upper-cases to 6 bytes: 48 + 6 fits a 54-byte budget, not a 53-byte one.
+        with_limits(limited(54), || assert!(case_mapped("ΐ", true).is_ok()));
+        with_limits(limited(53), || {
+            let err = case_mapped("ΐ", true).expect_err("no room");
+            assert_eq!(err.message, "Evaluation budget exceeded (max 53 bytes)");
+        });
+        // Nothing is charged: the result site does that.
+        with_limits(limited(54), || {
+            case_mapped("ΐ", true).unwrap();
+            assert!(charge(54).is_ok());
+        });
     }
 
     #[test]

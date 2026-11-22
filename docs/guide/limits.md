@@ -84,9 +84,13 @@ creates is charged against it, at a fixed cost:
 
 ```
 cost(Number | Boolean | Null | Currency | DateTime) = 32
-cost(String(s) | Json(s))                           = 32 + byte length of s
+cost(String(s) | Json(s))                           = 48 + byte length of s
 cost(Array(items))                                  = 32 + sum of cost(item)
 ```
+
+32 bytes is the size of one value. A string also holds a heap block, and the smallest block an
+allocator hands out is 16 bytes, so a string costs 48 plus its bytes. A one-character string really
+takes about 48 bytes and is charged 49 (measured with the allocator's own sizes, BL-035).
 
 The count only goes up. Freeing a value gives nothing back, so the budget limits the total work as
 well as memory. The count is deterministic: the same formula with the same variables always passes
@@ -115,6 +119,11 @@ exact size or an upper bound: `SUBSTITUTE`, `SUBSTITUTEM`, `.replace`, `JOIN`, `
 `.split`, `JQ` (each match), `CONCAT`, `MERGE`, `.to_a()` on strings, `.to_json()`, `.to_s()` and
 `::String` on arrays, object literals (their exact JSON size), and every parse of a JSON object
 (property access, `DIG`, `.keys()`, `.values()`, `.dig()`, `JQ` input).
+
+`UPPER`, `LOWER`, `.upper()` and `.lower()` (and `.upcase()`, `.downcase()`) can make text up to
+3 times longer (`UPPER("ΐ")` is 6 bytes from 2). They check that the result fits what is left of the
+budget before they build it, and fail with the budget error if it does not. The result is charged
+as usual, so the limit is the same as before, only the failure comes before the memory is used.
 
 Normal formulas use a small part of the budget. A 10,000-item `map` is fine:
 
@@ -196,11 +205,12 @@ evaluator reads the clock every 256 charges or ticks, so a request stops shortly
 and the worker thread is free for the next request. The library and the `sk` CLI have no deadline
 unless you set one (see [Library API](#library-api-evallimits-and-with_limits)).
 
-The deadline is only checked between operations. One builtin call that is already running (for
-example `SORT` or `UNIQUE` on millions of items) runs to completion before the next check, so a
-request can run past 10 s by the time that one call takes. Measured in BL-027c: `SORT`/`UNIQUE` of
-3M items takes about 0.12 s in a release build, so today the overrun is small. A builtin that is
-slower than O(n log n) would make it larger (tracked in BL-035).
+The deadline is checked between operations, and inside the builtins that loop over many items
+without charging each one: `SORT`, `UNIQUE`, `JOIN`, `TEXTJOIN` and `.sort()`, `.unique()`,
+`.join()` count a tick every 64 items, so they read the clock every 16,384 items (BL-035). With
+3M items and a 1 ms deadline these calls now stop after 1-8 ms instead of finishing (60 ms to
+1.1 s in a release build). The sort step itself (one standard-library sort) still runs to the end;
+it takes about 0.06 s for 3M numbers. A custom function's own code is not interrupted either.
 
 Example (HTTP, one worker, started with `--eval-timeout 10`; the expression does 1M × 4
 comparisons of two 400 KB strings passed as `arguments`):
@@ -463,7 +473,10 @@ Notes (all checked against the code):
   (for example with `std::thread::spawn`, a thread pool, or an async runtime) is outside them: it is
   not charged, the deadline does not stop it, and a `skillet::evaluate` call made on that other
   thread opens a new default scope (256 MiB, no deadline) instead of joining the caller's. If a
-  custom function must use other threads, it has to bound that work itself.
+  custom function must use other threads, it has to bound that work itself, for example by
+  wrapping the evaluations on the other thread in their own `with_limits` with a budget and a
+  timeout it chooses, and by not waiting for that thread longer than it can afford (for example
+  `recv_timeout` on a channel instead of `join`).
 - A custom function's own Rust code is not metered either, on any thread. Only the values it
   returns are charged, and the deadline is checked only after it returns (same as a long builtin,
   see [Server deadline](#server-deadline-60-s-by-default)).
