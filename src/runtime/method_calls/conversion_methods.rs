@@ -85,6 +85,7 @@ fn to_array(value: &Value) -> Result<Value, Error> {
 }
 
 /// `.to_json()`: the value's JSON text (ADR-0034 §4); NULL is `{}` and an object stays as held.
+#[allow(deprecated)] // `Value::Json` until objects become `Value::Object` in 0.8 (ADR-0030)
 fn to_json(value: &Value) -> Result<Value, Error> {
     match value {
         Value::Null => Ok(Value::Json("{}".to_string())),

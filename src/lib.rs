@@ -73,6 +73,7 @@ pub use types::Value;
 /// Build the variable map for the `*_json*` entry points: each top-level key
 /// becomes a sanitized variable, and the raw JSON is exposed as `:arguments`
 /// (for `JQ`).
+#[allow(deprecated)] // `Value::Json` until objects become `Value::Object` in 0.8 (ADR-0030)
 fn json_vars_to_map(json_vars: &str) -> Result<HashMap<String, Value>, Error> {
     let json_value: serde_json::Value = serde_json::from_str(json_vars)
         .map_err(|e| Error::new(format!("Invalid JSON: {}", e), None))?;
@@ -210,7 +211,7 @@ pub fn evaluate_with(input: &str, vars: &HashMap<String, Value>) -> Result<Value
 /// Evaluate an expression with variables given as a JSON object.
 ///
 /// Each top-level key becomes a variable, converted with [`json_to_value`] (nested objects
-/// become [`Value::Json`] and support property access such as `:user.name`). Characters other
+/// become the deprecated [`Value::Json`] and support property access such as `:user.name`). Characters other
 /// than letters, digits and `_` in a key are replaced by `_`, so `"first-name"` is read as
 /// `:first_name`. The whole JSON text is also available as `:arguments`, for `JQ`. That name is
 /// reserved: a key named `arguments` does not replace it, and its value is read as
@@ -267,9 +268,12 @@ pub fn evaluate_with_json(input: &str, json_vars: &str) -> Result<Value, Error> 
 ///
 /// `null`, booleans, numbers, strings and arrays map to [`Value::Null`], [`Value::Boolean`],
 /// [`Value::Number`] (always `f64`), [`Value::String`] and [`Value::Array`]. Objects are kept as
-/// JSON text in [`Value::Json`].
+/// JSON text in the deprecated [`Value::Json`]; from 0.8.0 they become the structured
+/// `Value::Object` (ADR-0030), with this signature unchanged, so build objects here rather than
+/// with `Value::Json` directly.
 ///
 /// ```rust
+/// # #![allow(deprecated)] // the example still compares with `Value::Json` (ADR-0030)
 /// use skillet::{json_to_value, Value};
 ///
 /// let v = json_to_value(serde_json::json!([1, "a", true, null])).unwrap();
@@ -283,6 +287,7 @@ pub fn evaluate_with_json(input: &str, json_vars: &str) -> Result<Value, Error> 
 /// let obj = json_to_value(serde_json::json!({"a": 1})).unwrap();
 /// assert_eq!(obj, Value::Json(r#"{"a":1}"#.to_string()));
 /// ```
+#[allow(deprecated)] // `Value::Json` until objects become `Value::Object` in 0.8 (ADR-0030)
 pub fn json_to_value(json: serde_json::Value) -> Result<Value, Error> {
     match json {
         serde_json::Value::Null => Ok(Value::Null),

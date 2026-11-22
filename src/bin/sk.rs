@@ -119,6 +119,7 @@ fn main() {
             }
             // The original JSON for JQ, last so a key named `arguments` cannot replace it
             // (BL-077).
+            #[allow(deprecated)] // `Value::Json` until 0.8 (ADR-0030)
             vars.insert("arguments".to_string(), Value::Json(json_str.clone()));
             // Charged like `evaluate_with_json_custom` does (ADR-0011 amendment 5).
             skillet::with_limits(skillet::EvalLimits::default(), || {

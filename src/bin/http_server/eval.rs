@@ -259,6 +259,7 @@ fn process_eval_request(
                 }
             }
             // Inserted last so a request key named `arguments` cannot replace it (BL-077).
+            #[allow(deprecated)] // `Value::Json` until 0.8 (ADR-0030)
             result.insert("arguments".to_string(), Value::Json(json_str));
             result
         }

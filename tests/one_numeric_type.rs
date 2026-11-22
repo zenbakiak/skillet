@@ -244,6 +244,7 @@ fn currency_has_the_number_text() {
 // ---- JSON ----------------------------------------------------------------------------------
 
 #[test]
+#[allow(deprecated)] // `Value::Json` is deprecated until 0.8 (ADR-0030)
 fn currency_json_is_unchanged() {
     all(&[
         ("(2.5::Currency).to_json()", Value::Json("2.5".into())),

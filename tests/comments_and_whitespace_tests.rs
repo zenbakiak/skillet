@@ -76,6 +76,7 @@ fn test_ifs_with_indentation() {
 }
 
 #[test]
+#[allow(deprecated)] // `Value::Json` is deprecated until 0.8 (ADR-0030)
 fn test_object_literal_with_indentation() {
     let result = evaluate_with_assignments(
         ":result := {\n  name: 'John',\n  age: 30,\n  active: true\n};\n:result",

@@ -165,6 +165,7 @@ impl JavaScriptFunction {
     /// [`MAX_NESTING_DEPTH`] levels (counted like the evaluator: an empty array adds no level),
     /// which also stops self-referencing arrays before the recursion exhausts the stack.
     /// Objects go through `JSON.stringify`, which throws on cycles.
+    #[allow(deprecated)] // `Value::Json` until objects become `Value::Object` in 0.8 (ADR-0030)
     fn js_to_value<'js>(
         ctx: &Ctx<'js>,
         js_val: rquickjs::Value<'js>,

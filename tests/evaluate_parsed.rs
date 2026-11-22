@@ -35,6 +35,7 @@ const CASES: &[&str] = &[
     "[1].reduce([:acc], 0)",
 ];
 
+#[allow(deprecated)] // `Value::Json` is deprecated until 0.8 (ADR-0030)
 fn vars() -> HashMap<String, Value> {
     let mut v = HashMap::new();
     v.insert("n".to_string(), Value::Number(3.0));

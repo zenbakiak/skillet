@@ -16,6 +16,7 @@ const MAX_CACHE_ENTRY_BYTES: u64 = 64 * 1024;
 
 /// Same cost model as the evaluation budget (32 per value, 48 + bytes per string, arrays sum
 /// items).
+#[allow(deprecated)] // `Value::Json` until objects become `Value::Object` in 0.8 (ADR-0030)
 fn approx_size(value: &Value) -> u64 {
     32 + match value {
         Value::String(s) | Value::Json(s) => 16 + s.len() as u64,

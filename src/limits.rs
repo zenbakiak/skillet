@@ -244,6 +244,7 @@ pub(crate) fn format_duration(d: Duration) -> String {
 
 /// Charge the cost of an existing value (lambda item binding, assignment).
 #[inline]
+#[allow(deprecated)] // `Value::Json` until objects become `Value::Object` in 0.8 (ADR-0030)
 pub(crate) fn charge_value(value: &Value) -> Result<(), Error> {
     match value {
         Value::Array(_) => {}
@@ -490,6 +491,7 @@ pub(crate) fn check_value(value: Value) -> Result<Value, Error> {
 /// The charge of a non-array value (32, or 48 plus the length of a string): `Some(true)` when done,
 /// `Some(false)` when charged but the slow path must run, `None` for an array (not charged).
 #[inline(never)]
+#[allow(deprecated)] // `Value::Json` until objects become `Value::Object` in 0.8 (ADR-0030)
 fn charge_scalar(value: &Value) -> Option<bool> {
     let bytes = match value {
         Value::Array(_) => return None,
@@ -538,6 +540,7 @@ enum Walk {
 /// and cost (32 per item, 48 plus their bytes for strings, nested arrays recursively). Scalars
 /// are handled inline and the cap is checked once per array, so the hot flat-array case is one
 /// tight loop.
+#[allow(deprecated)] // `Value::Json` until objects become `Value::Object` in 0.8 (ADR-0030)
 fn walk_items(items: &[Value], depth_left: usize, cost: &mut u64, cap: u64) -> Walk {
     *cost = cost.saturating_add(VALUE_COST.saturating_mul(items.len() as u64));
     for item in items {
@@ -703,6 +706,7 @@ impl Budget {
 
     /// See [`charge_value`]: scalars inline, arrays walked out of line.
     #[inline(always)]
+    #[allow(deprecated)] // `Value::Json` until objects become `Value::Object` in 0.8 (ADR-0030)
     fn charge_value(&self, value: &Value) -> Result<(), Error> {
         match value {
             Value::Array(items) => self.charge_items(items),
@@ -825,6 +829,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)] // `Value::Json` until objects become `Value::Object` in 0.8 (ADR-0030)
     fn cost_model() {
         let v = Value::Array(vec![
             Value::Number(1.0),

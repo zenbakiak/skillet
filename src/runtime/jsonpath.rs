@@ -89,6 +89,7 @@ fn value_to_json(value: &Value) -> Result<serde_json::Value, Error> {
 }
 
 /// Convert serde_json::Value to our Value type
+#[allow(deprecated)] // `Value::Json` until objects become `Value::Object` in 0.8 (ADR-0030)
 fn json_to_value(json: serde_json::Value) -> Result<Value, Error> {
     match json {
         serde_json::Value::Null => Ok(Value::Null),
@@ -151,6 +152,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[allow(deprecated)] // `Value::Json` until objects become `Value::Object` in 0.8 (ADR-0030)
     fn test_jsonpath_basic() {
         let json_str = r#"{"accounts": [{"amount": 100.0}, {"amount": 200.0}]}"#;
         let json_value = Value::Json(json_str.to_string());

@@ -168,6 +168,7 @@ fn exec_number_method(
 }
 
 /// Handle JSON object method calls
+#[allow(deprecated)] // `Value::Json` until objects become `Value::Object` in 0.8 (ADR-0030)
 fn exec_json_method(
     name: &str,
     recv: &Value,

@@ -128,6 +128,7 @@ fn p4_p5_row_pipelines_pass() {
 }
 
 #[test]
+#[allow(deprecated)] // `Value::Json` is deprecated until 0.8 (ADR-0030)
 fn p6_jq_recursive_descent_on_deep_json_passes() {
     let mut j = format!("{{\"s\":\"{}\"}}", "x".repeat(100_000));
     for _ in 0..120 {
@@ -997,6 +998,7 @@ fn bl027e_object_literal_escaping_is_charged_before_serializing() {
 /// escaping grows it up to 6x over its parsed size. `$..*` on nested objects returns every
 /// level, each re-serialized with the whole string: charged by its text, not its parts.
 #[test]
+#[allow(deprecated)] // `Value::Json` is deprecated until 0.8 (ADR-0030)
 fn bl027f_jq_object_matches_are_charged_as_json_text() {
     let budget = 4 * MIB;
     let mut text = format!("\"{}\"", "\\u0001".repeat(100_000)); // 100 KB of \x01, 600 KB text

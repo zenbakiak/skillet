@@ -1,6 +1,7 @@
 use crate::error::Error;
 use crate::types::Value;
 
+#[allow(deprecated)] // `Value::Json` until objects become `Value::Object` in 0.8 (ADR-0030)
 pub fn exec_json(name: &str, args: &[Value]) -> Result<Value, Error> {
     match name {
         "DIG" => {

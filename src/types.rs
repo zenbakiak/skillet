@@ -33,6 +33,23 @@ pub enum Value {
     /// Seconds since the Unix epoch.
     DateTime(i64),
     /// A JSON object, kept as JSON text (nested objects from JSON variables, object literals).
+    ///
+    /// Deprecated (ADR-0030 step 2): in 0.8.0 (BL-011) objects become a structured
+    /// `Value::Object` and this variant is removed. It still works unchanged in 0.7: objects
+    /// that Skillet evaluates or reads from JSON are `Json`, and you can build and match it. To
+    /// build an object without naming the variant, use [`crate::json_to_value`].
+    ///
+    /// Naming it is a deprecation warning, so a crate that denies warnings stops compiling:
+    ///
+    /// ```compile_fail
+    /// #![deny(deprecated)]
+    /// let _ = skillet::Value::Json(r#"{"a":1}"#.to_string());
+    /// ```
+    #[deprecated(
+        since = "0.7.0",
+        note = "JSON objects become the structured Value::Object in 0.8.0 (ADR-0030, BL-011) \
+                and this variant is removed; build objects with skillet::json_to_value"
+    )]
     Json(String),
 }
 

@@ -2,6 +2,7 @@ use skillet::{evaluate_with_assignments, Value};
 use std::collections::HashMap;
 
 #[test]
+#[allow(deprecated)] // `Value::Json` is deprecated until 0.8 (ADR-0030)
 fn test_simple_object_literal() {
     let vars = HashMap::new();
     let result = evaluate_with_assignments(":obj := {a: 1, b: 2}", &vars).unwrap();
@@ -17,6 +18,7 @@ fn test_simple_object_literal() {
 }
 
 #[test]
+#[allow(deprecated)] // `Value::Json` is deprecated until 0.8 (ADR-0030)
 fn test_nested_object_literal() {
     let vars = HashMap::new();
     let result = evaluate_with_assignments(":obj := {attrs: {a: [1,2,3,4]}}", &vars).unwrap();
@@ -34,6 +36,7 @@ fn test_nested_object_literal() {
 }
 
 #[test]
+#[allow(deprecated)] // `Value::Json` is deprecated until 0.8 (ADR-0030)
 fn test_object_with_quoted_keys() {
     let vars = HashMap::new();
     let result =
@@ -52,6 +55,7 @@ fn test_object_with_quoted_keys() {
 }
 
 #[test]
+#[allow(deprecated)] // `Value::Json` is deprecated until 0.8 (ADR-0030)
 fn test_array_of_objects() {
     let vars = HashMap::new();
     let result =
@@ -73,6 +77,7 @@ fn test_array_of_objects() {
 }
 
 #[test]
+#[allow(deprecated)] // `Value::Json` is deprecated until 0.8 (ADR-0030)
 fn test_object_with_variables() {
     let mut vars = HashMap::new();
     vars.insert("x".to_string(), Value::Number(10.0));
@@ -92,6 +97,7 @@ fn test_object_with_variables() {
 }
 
 #[test]
+#[allow(deprecated)] // `Value::Json` is deprecated until 0.8 (ADR-0030)
 fn test_empty_object() {
     let vars = HashMap::new();
     let result = evaluate_with_assignments(":obj := {}", &vars).unwrap();

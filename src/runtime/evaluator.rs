@@ -477,6 +477,7 @@ impl Evaluator {
     /// Out of line so this cold path does not change code layout of the hot `eval` match
     /// (measured: inline, `lambda_scope` `:nums.map(:x * 1)` was +6%).
     #[inline(never)]
+    #[allow(deprecated)] // `Value::Json` until objects become `Value::Object` in 0.8 (ADR-0030)
     fn eval_object_literal<C: EvaluationContext>(
         pairs: &[(String, Expr)],
         context: &C,
@@ -503,6 +504,7 @@ impl Evaluator {
     }
 
     /// Evaluate property access (both safe and unsafe)
+    #[allow(deprecated)] // `Value::Json` until objects become `Value::Object` in 0.8 (ADR-0030)
     fn eval_property_access(
         target_value: &Value,
         property: &str,
