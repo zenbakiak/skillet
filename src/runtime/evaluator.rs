@@ -8,7 +8,7 @@ use crate::runtime::{
     logical,
     method_calls::exec_method_in,
     type_casting::cast_value,
-    utils::{clamp_index, coerce_to_number, slice_items, type_name},
+    utils::{clamp_index, coerce_to_number, slice_items},
 };
 use crate::types::Value;
 use std::borrow::Cow;
@@ -744,8 +744,7 @@ impl Evaluator {
                 for it in items {
                     charge_value(&it)?;
                     scope.set(&param_name, it.clone());
-                    let matches = matches!(Self::eval(lambda, &scope)?, Value::Boolean(true));
-                    if matches {
+                    if logical::condition("FILTER", &Self::eval(lambda, &scope)?)? {
                         out.push(it);
                     }
                 }
@@ -785,8 +784,7 @@ impl Evaluator {
                 for it in items {
                     charge_value(&it)?;
                     scope.set(&param_name, it.clone());
-                    let matches = matches!(Self::eval(lambda, &scope)?, Value::Boolean(true));
-                    if matches {
+                    if logical::condition("FIND", &Self::eval(lambda, &scope)?)? {
                         return Ok(it);
                     }
                 }
@@ -870,8 +868,8 @@ impl Evaluator {
     }
 
     /// `COUNTIF`, `SUMIF`, `AVERAGEIF` (alias `AVGIF`): `(range, criteria, [values])`.
-    /// A criterion that reads `:x` is a lambda over each item that must return a boolean (`NULL`
-    /// counts as FALSE), even when the caller also defines `:x` (BL-081). Otherwise it is
+    /// A criterion that reads `:x` is a lambda over each item whose result is a condition
+    /// (`logical::condition`), even when the caller also defines `:x` (BL-081). Otherwise it is
     /// evaluated once: a string or number uses Excel's rules (`runtime::criteria`), and any other
     /// value is evaluated per item like a lambda.
     fn eval_conditional<C: EvaluationContext>(
@@ -931,20 +929,7 @@ impl Evaluator {
             scope.swap(x, item);
             let result = Self::eval(lambda, &scope)?;
             scope.swap(x, item);
-            flags.push(match result {
-                Value::Boolean(b) => b,
-                Value::Null => false,
-                other => {
-                    return Err(Error::new(
-                        format!(
-                            "{} criteria expression must return TRUE or FALSE, got {}",
-                            name,
-                            type_name(&other)
-                        ),
-                        None,
-                    ))
-                }
-            });
+            flags.push(logical::condition(name, &result)?);
         }
         Ok(flags)
     }
