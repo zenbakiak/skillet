@@ -9,6 +9,14 @@
 > `skillet::json_to_value` (the other step 2 helpers are not built yet). `#[non_exhaustive]` on
 > `Value` moves from step 5 to 0.7.0, together with `Token`, `Expr`, `BinaryOp`, `UnaryOp` and
 > `TypeName`.
+>
+> **Amended (BL-104, maintainer decision 2026-11-22):** the rest of plan step 2 also ships in
+> 0.7.0: `Value::from_json_text`, `Value::to_json_text`, `as_str`, `as_array`, the `From`
+> conversions and `impl Serialize for Value`. The `Value::Json` deprecation note now says to build
+> with `Value::from_json_text`. Until steps 5–6, `from_json_text` reads text as
+> `evaluate_with_json` does (objects are `Json`; a number outside an object is an f64), and
+> `to_json_text` is `.to_json()`'s text, returned as `Result<String, Error>`, with one difference:
+> `NULL` is `null` (`.to_json()` keeps `{}`, E10).
 
 - Status: Accepted (2026-11-21, with decisions a–d)
 - Date: 2026-11-21

@@ -75,9 +75,7 @@ pub use types::Value;
 /// (for `JQ`).
 #[allow(deprecated)] // `Value::Json` until objects become `Value::Object` in 0.8 (ADR-0030)
 fn json_vars_to_map(json_vars: &str) -> Result<HashMap<String, Value>, Error> {
-    let json_value: serde_json::Value = serde_json::from_str(json_vars)
-        .map_err(|e| Error::new(format!("Invalid JSON: {}", e), None))?;
-    let serde_json::Value::Object(map) = json_value else {
+    let serde_json::Value::Object(map) = types::parse_json(json_vars)? else {
         return Err(Error::new(
             "JSON must be an object with key-value pairs",
             None,
