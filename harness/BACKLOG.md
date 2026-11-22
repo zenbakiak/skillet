@@ -1250,7 +1250,7 @@ LANG-1. Since #108 `SUM(10::Currency, 5)` is Currency, but ordering Currency aga
 error (ADR-0027), so `SUM(...) > 10` fails and `SUM(...) == 15` is silently false.
 Decision (maintainer): `== != < <= > >=` compare Currency with Number by amount (amends ADR-0027).
 
-### BL-083 · Make 0.7.0 releasable · P1 · `review` (PR #114 back-merge; maintainer settings pending) · release-engineer (+ maintainer settings)
+### BL-083 · Make 0.7.0 releasable · P1 · `in-progress` (back-merge moves to the release branch; maintainer settings pending) · release-engineer (+ maintainer settings)
 REL-1, REL-2, REL-5, SEC-7. `main` and `develop` conflict in 20 files; `release.yml` and `fuzz.yml`
 are not on `main`, so the weekly fuzz run never fired and no release dry run is possible; any `v*`
 tag publishes to crates.io.
@@ -1262,6 +1262,39 @@ Release-engineer workflow part (from the back-merge lane): add `environment: cra
 tags `v*`); add `pull_request: branches: [main]` so the release PR is the dry run. Until the release
 PR reaches `main`, `fuzz.yml`'s schedule does not fire and the old `release-binaries.yml` on `main`
 still runs on any `v*` tag. Cosmetic: rename the ruleset "protected branchews".
+
+Status 2026-11-22: #114 and #117 were both squash-merged, so each became an ordinary one-parent commit
+and `main` is still not an ancestor of `develop`. New plan: when `release/0.7.0` is cut from
+`develop`, merge `main` into it with `-s ours` (the 24 main-only commits were checked in #114; check
+`git log release/0.7.0..origin/main` again first). The release PR into `main` is then conflict-free
+whatever merge method is used.
+
+Settings for the maintainer (GitHub → Settings → Rules → Rulesets, and Settings → Environments):
+1. New branch ruleset "main merge commits only":
+   - Enforcement: Active. Bypass list: empty.
+   - Target branches: include `main` only (`refs/heads/main`).
+   - Rules: "Require a pull request before merging" with **Allowed merge methods: Merge** only
+     (untick Squash and Rebase). Keep "Block force pushes" and "Restrict deletions".
+   - The existing "protected branchews" ruleset stays as it is for `develop` and `release/*`, where
+     feature PRs keep squash. When two rulesets apply to `main`, GitHub applies the stricter
+     merge-method list, so `main` accepts merge commits only. Optional: rename the old ruleset
+     "protected branches".
+2. New tag ruleset "release tags":
+   - Enforcement: Active. Bypass list: Repository admin (the maintainer) only.
+   - Target tags: include `v*` (`refs/tags/v*`).
+   - Rules: Restrict creations, Restrict updates, Restrict deletions, Block force pushes.
+3. New environment `crates-io` (Settings → Environments → New environment):
+   - Required reviewers: the maintainer. Prevent self-review: off (single maintainer).
+   - Deployment branches and tags: "Selected branches and tags", add the tag rule `v*`.
+   - Environment secret `CRATES_IO_TOKEN`: add it here, then delete the repository-level secret of the
+     same name after the release-engineer change below is merged.
+   - Optional: an environment `release` with the same tag rule for the `github-release` job
+     (`contents: write`).
+4. Release-engineer change, separate PR, before the release branch is cut: `environment: crates-io` on
+   the `crates-io` job in `release.yml`, and `pull_request: branches: [main]` so the release PR is
+   the dry run (the publish jobs stay gated on `refs/tags/v*`).
+5. After 0.7.0 is tagged: the back-merge `main` → `develop` PR must use "Create a merge commit".
+   It is the only PR into `develop` that must not be squashed.
 
 ### BL-084 · Docs catch up with what merged · P2 · `todo` · docs-engineer
 - REL-3: migration guide misses silent changes: `[1,2]==[1,2]` false→true (also objects, Currency,
