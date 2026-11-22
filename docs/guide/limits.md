@@ -26,7 +26,8 @@ cache), BL-017 (depth) and [ADR-0017](../adr/0017-quickjs-resource-limits.md) (J
 
 All examples below were run with the release CLI (`cargo build --release --bin sk`, then
 `target/release/sk`). The CLI prints the result on stdout and errors on stderr, and exits with code
-2 on an error. The `Loaded N custom JavaScript function(s)` line the CLI prints on stderr when
+2 on an evaluation error (code 1 when the arguments or the `--json` input are rejected before
+evaluating). The `Loaded N custom JavaScript function(s)` line the CLI prints on stderr when
 `hooks/` has plugins is left out.
 
 ## Nesting depth (128)
