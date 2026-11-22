@@ -1647,10 +1647,11 @@ sk "=([1,2,3]).present()" # true
 
 ```bash
 # Explicit casting
-sk "=\"42\" as number"    # 42.0
-sk "=42 as string"       # "42"
-sk "=1 as boolean"       # true
-sk "=0 as boolean"       # false
+sk "=\"42\"::Number"      # 42.0
+sk "=42::String"         # "42"
+sk "=1::Boolean"         # true
+sk "=0::Boolean"         # false
+# There is no `as` keyword: `=42 as string` is a parse error (before BL-069 it returned 42)
 ```
 
 ### Spread Operator
