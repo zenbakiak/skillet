@@ -101,15 +101,22 @@ fn countif_takes_a_scalar_or_string_range() {
 }
 
 #[test]
-fn countif_lambda_must_return_a_boolean() {
+fn countif_lambda_returns_a_condition() {
     close("=COUNTIF([1, 2, 3, 4], :x % 2 == 0)", 2.0);
     // NULL from null-safe navigation counts as FALSE (ADR-0006).
     let vars = r#"{"items": [{"a": {"ok": true}}, {"a": null}]}"#;
     let r = evaluate_with_json("=COUNTIF(:items, :x.a&.ok)", vars).unwrap();
     assert_eq!(r, Value::Number(1.0));
-    err("=COUNTIF([1, 2, 3], :x)", "must return TRUE or FALSE"); // B-17
-    err("=SUMIF([1, 2, 3], :x * 2)", "must return TRUE or FALSE");
-    err("=AVGIF([1, 2, 3], :x * 2)", "must return TRUE or FALSE");
+    // B-17, ADR-0029 amendment 1 (BL-089): a number is a condition, text is #VALUE!.
+    close("=COUNTIF([0, 1, 2], :x)", 2.0);
+    close("=SUMIF([1, 2, 3], :x - 2)", 4.0);
+    close("=AVGIF([1, 2, 3], :x - 2)", 2.0);
+    err(
+        "=COUNTIF([\"a\"], :x)",
+        "COUNTIF condition must be TRUE, FALSE or a number, got string (#VALUE!)",
+    );
+    err("=SUMIF([1], :x & \"\")", "SUMIF condition must be TRUE");
+    err("=AVGIF([1], :x & \"\")", "AVERAGEIF condition must be TRUE");
 }
 
 // ---- D-7: SUMIF and AVERAGEIF share COUNTIF's criteria ----
