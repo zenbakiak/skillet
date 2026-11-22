@@ -13,8 +13,9 @@ fn lone_equals_at_start_is_an_error_not_a_panic() {
             "{src:?}: {err:?}"
         );
     }
+    // Positions count from the start of the caller's input (BL-069), so the lone `=` is at 1.
     let err = skillet::evaluate_with_json("==M", r#"{"a": 1}"#).unwrap_err();
-    assert_eq!(err.position, Some(0), "{err:?}");
+    assert_eq!(err.position, Some(1), "{err:?}");
 }
 
 #[test]
