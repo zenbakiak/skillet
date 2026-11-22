@@ -347,15 +347,6 @@ pub(crate) fn charge_replace(text: &str, find: &str, repl: &str) -> Result<(), E
     charge_string(usize::try_from(out).unwrap_or(usize::MAX))
 }
 
-/// Pre-charge `parts.join(sep)` (`JOIN`, `.join`): `Σ part.len + (n − 1) × sep.len`.
-pub(crate) fn charge_join<S: AsRef<str>>(parts: &[S], sep: &str) -> Result<(), Error> {
-    let total = parts
-        .iter()
-        .fold(0usize, |acc, p| acc.saturating_add(p.as_ref().len()));
-    let seps = parts.len().saturating_sub(1).saturating_mul(sep.len());
-    charge_string(total.saturating_add(seps))
-}
-
 /// Pre-charge a value about to be built from a JSON node (a `JQ` match): numbers, booleans and
 /// null 32; strings 48 + len; arrays 32 + items; objects 32 + Σ (key len + value), or 48 + their
 /// serialized size when that is larger (escapes), since they become a `Json` string.
@@ -437,19 +428,6 @@ pub(crate) fn charge_merge(args: &[Value]) -> Result<(), Error> {
     args.iter().try_for_each(charge_value)
 }
 
-/// Pre-charge the string `write` would produce, counted with no allocation (`CONCAT`, `.to_s`,
-/// `::String` on arrays). Costs one extra formatting pass.
-pub(crate) fn charge_formatted(write: impl FnOnce(&mut ByteCounter)) -> Result<(), Error> {
-    let mut counter = ByteCounter(0);
-    write(&mut counter);
-    charge_string(usize::try_from(counter.0).unwrap_or(usize::MAX))
-}
-
-/// Pre-charge the JSON text of a string (`.to_json()`): quotes plus escaped length.
-pub(crate) fn charge_json_string(s: &str) -> Result<(), Error> {
-    charge_string(json_escaped_len(s).saturating_add(2))
-}
-
 /// Pre-charge the JSON text of `json` (object literals, `.to_json()` on arrays): the exact
 /// `serde_json` output size, counted with no allocation. Escaping grows control characters 6x
 /// (`\u0001`), so the size of the values alone is not an upper bound.
@@ -471,32 +449,6 @@ pub(crate) fn check_prepaid(value: Value) -> Result<Value, Error> {
     }
     Ok(value)
 }
-
-/// Length of `s` once escaped as the body of a JSON string by `serde_json` (`"` `\` and the
-/// short escapes take 2 bytes, other control characters 6 as `\u00XX`), without allocating.
-pub(crate) fn json_escaped_len(s: &str) -> usize {
-    s.as_bytes()
-        .iter()
-        .map(|&c| usize::from(JSON_ESCAPE_LEN[c as usize]))
-        .sum()
-}
-
-const JSON_ESCAPE_LEN: [u8; 256] = {
-    let mut t = [1u8; 256];
-    let mut c = 0;
-    while c < 0x20 {
-        t[c] = 6;
-        c += 1;
-    }
-    t[b'\n' as usize] = 2;
-    t[b'\r' as usize] = 2;
-    t[b'\t' as usize] = 2;
-    t[0x08] = 2;
-    t[0x0c] = 2;
-    t[b'"' as usize] = 2;
-    t[b'\\' as usize] = 2;
-    t
-};
 
 /// A `fmt::Write` / `io::Write` sink that only counts bytes, to size output before building it.
 pub(crate) struct ByteCounter(pub(crate) u64);

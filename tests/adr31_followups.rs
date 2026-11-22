@@ -138,7 +138,8 @@ fn join_method_writes_currency_and_null_like_join() {
 
 #[test]
 fn join_method_keeps_its_other_behaviour() {
-    assert_eq!(eval("[TRUE, 1].join()"), s("true,1"));
+    // One text form for booleans since ADR-0034 §3 (was Ruby's `true,1`).
+    assert_eq!(eval("[TRUE, 1].join()"), s("TRUE,1"));
     assert_eq!(eval("JOIN([TRUE, 1])"), s("TRUE,1"));
     assert_eq!(
         err("[[1,2],3].join()").message,

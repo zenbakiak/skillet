@@ -452,7 +452,18 @@ fn civil_from_days(days: i64) -> (i64, i64, i64) {
     (yoe + era * 400 + i64::from(month <= 2), month, day)
 }
 
+/// Length in bytes of `write_datetime`'s text: 20 for years 0000–9999, counted otherwise.
+pub(crate) fn datetime_text_len(ts: i64) -> usize {
+    if FOUR_DIGIT_YEARS.contains(&ts) {
+        return 20;
+    }
+    let mut c = crate::limits::ByteCounter(0);
+    let _ = write_datetime(&mut c, ts);
+    c.0 as usize
+}
+
 /// `write_datetime` into a new `String`.
+#[cfg(test)]
 pub(crate) fn datetime_text(ts: i64) -> String {
     let mut s = String::with_capacity(20);
     let _ = write_datetime(&mut s, ts);
@@ -526,6 +537,7 @@ mod text_tests {
         }
         for ts in edges {
             assert_eq!(datetime_text(ts), chrono_text(ts), "{ts}");
+            assert_eq!(super::datetime_text_len(ts), 20, "{ts}");
         }
         assert_eq!(datetime_text(lo - 1), "-0001-12-31T23:59:59Z");
         assert_eq!(datetime_text(hi + 1), "+10000-01-01T00:00:00Z");

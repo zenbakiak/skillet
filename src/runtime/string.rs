@@ -1,6 +1,6 @@
 use crate::error::Error;
 use crate::limits;
-use crate::runtime::datetime::{datetime_text, write_datetime};
+use crate::runtime::text::{scalar_text, ScalarText};
 use crate::runtime::utils::is_blank;
 use crate::types::Value;
 use std::borrow::Cow;
@@ -20,57 +20,27 @@ fn char_count(s: &str) -> usize {
     s.chars().count()
 }
 
-/// Write the `CONCAT` (and `&`) of `args` to `w`. Excel turns every value into text: strings as
-/// is, numbers in Skillet's number format (`1.5` → `1.5`), booleans as
-/// `TRUE`/`FALSE`, a DateTime as its `::String` text (ISO 8601 UTC, ADR-0031), arrays flattened. NULL (a blank cell) and JSON objects add nothing.
+/// A scalar as Excel's text functions (`LEN`, `FIND`) see it: its text form (ADR-0034) for a
+/// String, Number, Boolean or NULL. A DateTime, array or JSON object is `None` (ADR-0031 A4).
 #[allow(deprecated)] // `Value::Currency` is read as a Number (ADR-0033)
-fn concat_into(w: &mut impl std::fmt::Write, args: &[Value]) {
-    for v in args {
-        let _ = match v {
-            Value::String(st) => w.write_str(st),
-            Value::Number(n) | Value::Currency(n) => write!(w, "{}", n),
-            Value::DateTime(ts) => write_datetime(w, *ts),
-            Value::Array(arr) => {
-                concat_into(w, arr);
-                Ok(())
-            }
-            Value::Boolean(b) => w.write_str(if *b { "TRUE" } else { "FALSE" }),
-            Value::Null | Value::Json(_) => Ok(()),
-        };
-    }
-}
-
-/// A scalar as Excel's text functions see it: text as is, numbers in Skillet's
-/// number format, booleans as `TRUE`/`FALSE`, NULL (an empty cell) as `""`. Arrays, dates and
-/// JSON objects have no text form here (`None`).
-#[allow(deprecated)] // `Value::Currency` is read as a Number (ADR-0033)
-fn excel_text(v: &Value) -> Option<Cow<'_, str>> {
+fn excel_text(v: &Value) -> Option<ScalarText<'_>> {
     match v {
-        Value::String(s) => Some(Cow::Borrowed(s)),
-        Value::Number(n) | Value::Currency(n) => Some(Cow::Owned(n.to_string())),
-        Value::Boolean(b) => Some(Cow::Borrowed(if *b { "TRUE" } else { "FALSE" })),
-        Value::Null => Some(Cow::Borrowed("")),
+        Value::String(_)
+        | Value::Number(_)
+        | Value::Currency(_)
+        | Value::Boolean(_)
+        | Value::Null => scalar_text(v),
         Value::Array(_) | Value::DateTime(_) | Value::Json(_) => None,
     }
 }
 
-/// Flatten `v` into `out` as text, for `TEXTJOIN`. A DateTime is its ISO 8601 text (ADR-0031).
+/// Flatten `v` into `out` as text (ADR-0034), for `TEXTJOIN`.
 fn textjoin_parts<'v>(v: &'v Value, out: &mut Vec<Cow<'v, str>>) -> Result<(), Error> {
     match v {
         Value::Array(items) => items.iter().try_for_each(|it| textjoin_parts(it, out)),
         _ => {
-            let text = match v {
-                Value::DateTime(ts) => Some(Cow::Owned(datetime_text(*ts))),
-                _ => excel_text(v),
-            };
-            let text = text.ok_or_else(|| {
-                Error::new(
-                    "TEXTJOIN expects text, numbers, booleans, dates or arrays",
-                    None,
-                )
-            })?;
             limits::tick_item(out.len())?;
-            out.push(text);
+            out.push(scalar_text(v).map(ScalarText::into_cow).unwrap_or_default());
             Ok(())
         }
     }
@@ -210,13 +180,8 @@ pub fn exec_string(name: &str, args: &[Value]) -> Result<Value, Error> {
             Some(Value::Null) => Ok(Value::Number(0.0)),
             Some(_) | None => Err(Error::new("LENGTH expects array or string", None)),
         },
-        "CONCAT" => {
-            // Count the exact output length first, then build it (ADR-0011 amendment 2).
-            limits::charge_formatted(|c| concat_into(c, args))?;
-            let mut out = String::new();
-            concat_into(&mut out, args);
-            Ok(Value::String(out))
-        }
+        // Charged before it is built (ADR-0011 amendment 2); text forms per ADR-0034.
+        "CONCAT" => crate::runtime::text::concat(args.iter()).map(Value::String),
         "UPPER" => match args.first() {
             Some(Value::String(s)) => Ok(Value::String(limits::case_mapped(s, true)?)),
             _ => Err(Error::new("UPPER expects string", None)),

@@ -75,9 +75,10 @@ fn time_of_day_and_old_dates() {
 
 #[test]
 fn arrays_and_json() {
+    // An array's text is its JSON text, a date in it a JSON string (ADR-0034 §4).
     assert_eq!(
         string("[DATE(2026, 1, 1), 1].to_s()"),
-        format!("[{ISO}, 1]")
+        format!("[\"{ISO}\",1]")
     );
     assert_eq!(
         string("CONCAT('on ', [DATE(2026, 1, 1)])"),

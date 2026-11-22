@@ -80,8 +80,9 @@ fn number_conversions() {
 #[test]
 fn boolean_conversions() {
     // Boolean conversion methods
-    assert_eq!(s(evaluate("true.to_s()").unwrap()), "true");
-    assert_eq!(s(evaluate("false.to_s()").unwrap()), "false");
+    // One text form for booleans (ADR-0034 §1): TRUE/FALSE, not Ruby's true/false.
+    assert_eq!(s(evaluate("true.to_s()").unwrap()), "TRUE");
+    assert_eq!(s(evaluate("false.to_s()").unwrap()), "FALSE");
     assert_eq!(n(evaluate("true.to_i()").unwrap()), 1.0);
     assert_eq!(n(evaluate("false.to_i()").unwrap()), 0.0);
     assert_eq!(n(evaluate("true.to_f()").unwrap()), 1.0);
@@ -93,7 +94,8 @@ fn boolean_conversions() {
 #[test]
 fn array_conversions() {
     // Array conversion methods
-    assert_eq!(s(evaluate("[1, 2, 3].to_s()").unwrap()), "[1, 2, 3]");
+    // An array's text is its JSON text (ADR-0034 §4).
+    assert_eq!(s(evaluate("[1, 2, 3].to_s()").unwrap()), "[1,2,3]");
     assert_eq!(n(evaluate("[1, 2, 3].to_i()").unwrap()), 3.0); // Array length
     assert_eq!(n(evaluate("[].to_i()").unwrap()), 0.0);
     assert_eq!(

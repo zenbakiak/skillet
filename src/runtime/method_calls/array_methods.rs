@@ -1,6 +1,5 @@
 use crate::ast::Expr;
 use crate::error::Error;
-use crate::runtime::array::join_text;
 use crate::runtime::evaluator::{eval_arg, EvaluationContext};
 use crate::types::Value;
 use std::collections::BTreeSet;
@@ -148,24 +147,13 @@ pub fn exec_array_method(
                 ",".to_string()
             };
 
-            let string_vals: Result<Vec<String>, Error> = recv_array
-                .iter()
-                .enumerate()
-                .map(|(i, v)| {
-                    crate::limits::tick_item(i)?;
-                    // Ruby text for booleans; NULL as `JOIN` writes it (ADR-0031 A3).
-                    match v {
-                        Value::Boolean(b) => Ok(b.to_string()),
-                        other => join_text(other).ok_or_else(|| {
-                            Error::new("join method cannot convert value to string", None)
-                        }),
-                    }
-                })
-                .collect();
-
-            let parts = string_vals?;
-            crate::limits::charge_join(&parts, &separator)?;
-            Ok(Value::String(parts.join(&separator)))
+            // Each item's text form, as `JOIN` writes it (ADR-0034 §3).
+            crate::runtime::text::join(
+                recv_array,
+                &separator,
+                "join method cannot convert value to string",
+            )
+            .map(Value::String)
         }
 
         "contains" | "includes" => {

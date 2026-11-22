@@ -256,10 +256,10 @@ fn textjoin_errors() {
         err("=TEXTJOIN(',', 'yes', 'a')"),
         "TEXTJOIN ignore_empty must be TRUE or FALSE"
     );
-    // A date is text since ADR-0031; a JSON object still has no text form.
+    // A date is text since ADR-0031, and a JSON object its JSON text since ADR-0034 §3.
     assert_eq!(
-        err("=TEXTJOIN(',', TRUE, {\"a\": 1})"),
-        "TEXTJOIN expects text, numbers, booleans, dates or arrays"
+        evaluate("=TEXTJOIN(',', TRUE, {\"a\": 1})").unwrap(),
+        Value::String("{\"a\":1.0}".into())
     );
 }
 
