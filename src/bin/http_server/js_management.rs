@@ -150,13 +150,13 @@ pub fn handle_update_js(
                 }
             }
         }
-        Err(e) => {
+        Err((message, error)) => {
             let response = UpdateJSResponse {
                 success: false,
-                message: "JavaScript function validation failed".to_string(),
+                message,
                 function_name: None,
                 validation_results: None,
-                error: Some(e),
+                error: Some(error),
             };
             let json = serde_json::to_string(&response).unwrap_or_default();
             send_http_response(stream, 400, "application/json", &json);
@@ -308,13 +308,13 @@ pub fn handle_upload_js(
                 }
             }
         }
-        Err(e) => {
+        Err((message, error)) => {
             let response = UploadJSResponse {
                 success: false,
-                message: "JavaScript function validation failed".to_string(),
+                message,
                 function_name: None,
                 validation_results: None,
-                error: Some(e),
+                error: Some(error),
             };
             let json = serde_json::to_string(&response).unwrap_or_default();
             send_http_response(stream, 400, "application/json", &json);
@@ -360,7 +360,10 @@ pub fn handle_reload_hooks(
     }
 }
 
-fn validate_js_function(js_code: &str) -> Result<(JavaScriptFunction, ValidationResults), String> {
+/// Parse and test a hook. The error is `(message, error)` for the 400 response.
+fn validate_js_function(
+    js_code: &str,
+) -> Result<(JavaScriptFunction, ValidationResults), (String, String)> {
     let mut validation_results = ValidationResults {
         syntax_valid: false,
         structure_valid: false,
@@ -377,9 +380,17 @@ fn validate_js_function(js_code: &str) -> Result<(JavaScriptFunction, Validation
             func
         }
         Err(e) => {
-            return Err(format!("Syntax/structure validation failed: {}", e));
+            return Err((
+                "JavaScript function validation failed".to_string(),
+                format!("Syntax/structure validation failed: {}", e),
+            ));
         }
     };
+
+    // A hook may not replace a builtin (ADR-0024).
+    if let Err(e) = js_func.check_name_not_reserved() {
+        return Err((e.message, "Reserved function name".to_string()));
+    }
 
     // Step 2: Test the example if provided
     if let Some(example) = js_func.example() {

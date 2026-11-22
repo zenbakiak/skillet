@@ -1,5 +1,6 @@
 //! JS function management on `sk_http_server` only touches plain `.js` names directly inside
-//! the hooks directory, and listing/loading stays inside it.
+//! the hooks directory, and listing/loading stays inside it. Hooks may not use a builtin's
+//! name (ADR-0024): loading skips them with a warning, upload and update reject them.
 //! Servers run on 127.0.0.1 with a temporary hooks directory.
 #![cfg(feature = "plugins")]
 
@@ -167,4 +168,97 @@ fn list_skips_links_that_leave_the_hooks_dir() {
     assert!(resp.contains("inside.js"), "{resp}");
     assert!(!resp.contains("far.js"), "{resp}");
     assert!(!resp.contains("linked.js"), "{resp}");
+}
+
+/// A hook named `name` that returns 999.
+fn named_hook(name: &str) -> String {
+    format!("// @name: {name}\n// @min_args: 0\nfunction execute(args) {{ return 999; }}\n")
+}
+
+#[test]
+fn sk_skips_a_hook_named_like_a_builtin_and_loads_the_others() {
+    let (_base, hooks, _outside) = layout();
+    std::fs::write(hooks.join("sum.js"), named_hook("SUM")).unwrap();
+    std::fs::write(hooks.join("lower_if.js"), named_hook("if")).unwrap();
+    std::fs::write(hooks.join("myfn.js"), named_hook("MYFN")).unwrap();
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_sk"))
+        .arg("=SUM(1, 2) + IF(TRUE, 10, 0) + MYFN()")
+        .env("SKILLET_HOOKS_DIR", &hooks)
+        .output()
+        .expect("run sk");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stdout}\n{stderr}");
+    // Builtin SUM (3) and IF (10), plus the hook MYFN (999).
+    assert_eq!(stdout.trim(), "Number(1012.0)", "{stderr}");
+    let warnings: Vec<_> = stderr.lines().filter(|l| l.contains("reserved")).collect();
+    assert_eq!(warnings.len(), 2, "{stderr}");
+    assert!(
+        warnings
+            .iter()
+            .any(|l| l.contains("sum.js")
+                && l.contains("Function name SUM is reserved by a builtin")),
+        "{stderr}"
+    );
+    assert!(
+        warnings.iter().any(|l| l.contains("lower_if.js")
+            && l.contains("Function name IF is reserved by a builtin")),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("Loaded 1 custom JavaScript function(s)"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn reload_hooks_skips_a_hook_named_like_a_builtin() {
+    let (_base, hooks, _outside) = layout();
+    let server = Server::start(&hooks);
+    std::fs::write(hooks.join("sum.js"), named_hook("SUM")).unwrap();
+    std::fs::write(hooks.join("myfn.js"), named_hook("MYFN")).unwrap();
+    let resp = server.request("POST", "/reload-hooks", "");
+    assert_eq!(status(&resp), "200", "{resp}");
+    assert!(resp.contains("\"functions_loaded\":1"), "{resp}");
+    let body = serde_json::json!({ "expression": "=SUM(1, 2) + MYFN()" }).to_string();
+    let resp = server.request("POST", "/eval", &body);
+    assert_eq!(status(&resp), "200", "{resp}");
+    assert!(resp.contains("1002"), "{resp}");
+}
+
+fn reserved_body(filename: &str, name: &str) -> String {
+    serde_json::json!({ "filename": filename, "js_code": named_hook(name) }).to_string()
+}
+
+#[test]
+fn upload_rejects_a_builtin_name_in_any_case() {
+    let (_base, hooks, _outside) = layout();
+    let server = Server::start(&hooks);
+    for (name, shown) in [("SUM", "SUM"), ("sum", "SUM"), ("Stdev.P", "STDEV.P")] {
+        let resp = server.request("POST", "/upload-js", &reserved_body("sum.js", name));
+        assert_eq!(status(&resp), "400", "{name}: {resp}");
+        let want = format!("Function name {shown} is reserved by a builtin");
+        assert!(resp.contains(&want), "{name}: {resp}");
+    }
+    assert_eq!(std::fs::read_dir(&hooks).unwrap().count(), 0);
+}
+
+#[test]
+fn update_rejects_a_builtin_name_in_any_case() {
+    let (_base, hooks, _outside) = layout();
+    let server = Server::start(&hooks);
+    let resp = server.with_filename("POST", "/upload-js", "mine.js");
+    assert_eq!(status(&resp), "200", "{resp}");
+    for name in ["SUM", "sum"] {
+        let resp = server.request("PUT", "/update-js", &reserved_body("mine.js", name));
+        assert_eq!(status(&resp), "400", "{name}: {resp}");
+        assert!(
+            resp.contains("Function name SUM is reserved by a builtin"),
+            "{name}: {resp}"
+        );
+    }
+    assert_eq!(
+        std::fs::read_to_string(hooks.join("mine.js")).unwrap(),
+        HOOK
+    );
 }
