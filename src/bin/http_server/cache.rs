@@ -1,8 +1,7 @@
 use lru::LruCache;
-use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 
 use skillet::{
     evaluate_parsed_with_assignments, evaluate_parsed_with_assignments_and_context,
@@ -79,7 +78,7 @@ impl CacheStats {
 }
 
 /// Global expression cache instance
-static EXPRESSION_CACHE: Lazy<Arc<Mutex<ExpressionCache>>> = Lazy::new(|| {
+static EXPRESSION_CACHE: LazyLock<Arc<Mutex<ExpressionCache>>> = LazyLock::new(|| {
     Arc::new(Mutex::new(ExpressionCache::new(1000))) // Cache up to 1000 expressions
 });
 

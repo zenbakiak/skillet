@@ -668,7 +668,8 @@ mod heap {
         if ptr.is_null() {
             0
         } else if cfg!(target_vendor = "apple") || cfg!(target_os = "linux") {
-            system_usable(ptr)
+            // SAFETY: the caller passes a live, non-null block from the system allocator.
+            unsafe { system_usable(ptr) }
         } else {
             requested
         }
@@ -676,12 +677,14 @@ mod heap {
 
     #[cfg(target_vendor = "apple")]
     unsafe fn system_usable(ptr: *mut u8) -> usize {
-        libc::malloc_size(ptr as *const libc::c_void)
+        // SAFETY: `ptr` is a live block from the system allocator (caller contract).
+        unsafe { libc::malloc_size(ptr as *const libc::c_void) }
     }
 
     #[cfg(target_os = "linux")]
     unsafe fn system_usable(ptr: *mut u8) -> usize {
-        libc::malloc_usable_size(ptr as *mut libc::c_void)
+        // SAFETY: `ptr` is a live block from the system allocator (caller contract).
+        unsafe { libc::malloc_usable_size(ptr as *mut libc::c_void) }
     }
 
     #[cfg(not(any(target_vendor = "apple", target_os = "linux")))]
@@ -696,24 +699,33 @@ mod heap {
     unsafe impl GlobalAlloc for Counting {
         unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
             add(layout.size());
-            let ptr = System.alloc(layout);
-            real(usable(ptr, layout.size()), 0);
-            ptr
+            // SAFETY: forwards the `GlobalAlloc` contract to `System`; `ptr` is its result.
+            unsafe {
+                let ptr = System.alloc(layout);
+                real(usable(ptr, layout.size()), 0);
+                ptr
+            }
         }
         unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
             sub(layout.size());
-            real(0, usable(ptr, layout.size()));
-            System.dealloc(ptr, layout)
+            // SAFETY: forwards the `GlobalAlloc` contract: `ptr` is live and from `System`.
+            unsafe {
+                real(0, usable(ptr, layout.size()));
+                System.dealloc(ptr, layout)
+            }
         }
         unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
             add(new_size);
             sub(layout.size());
-            let old = usable(ptr, layout.size());
-            let new = System.realloc(ptr, layout, new_size);
-            if !new.is_null() {
-                real(usable(new, new_size), old);
+            // SAFETY: forwards the `GlobalAlloc` contract: `ptr` is live and from `System`.
+            unsafe {
+                let old = usable(ptr, layout.size());
+                let new = System.realloc(ptr, layout, new_size);
+                if !new.is_null() {
+                    real(usable(new, new_size), old);
+                }
+                new
             }
-            new
         }
     }
 

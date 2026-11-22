@@ -108,14 +108,14 @@ fn deepest(mode: &str, shape: &str) -> usize {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() == 6 && args[1] == "--probe" {
-        let gen = shapes()
+        let make = shapes()
             .into_iter()
             .find(|(n, _)| *n == args[3])
             .expect("known shape")
             .1;
         probe(
             &args[2],
-            gen(args[4].parse().expect("depth")),
+            make(args[4].parse().expect("depth")),
             args[5].parse().expect("stack"),
         );
         return;
