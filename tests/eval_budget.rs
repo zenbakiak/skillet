@@ -496,7 +496,8 @@ impl Server {
     }
 
     /// `sk_http_server` with one worker, a 10 s deadline and the library's 256 MiB budget
-    /// (the server defaults are 60 s and 1 GiB since ADR-0011 amendment 4).
+    /// (the server default deadline is 20 s since ADR-0011 amendment 4; the budget default is
+    /// the same 256 MiB, set explicitly so the tests do not depend on it).
     fn http() -> Server {
         Server::spawn(env!("CARGO_BIN_EXE_sk_http_server"), |port| {
             let mut args = vec![port.to_string(), "--threads".into(), "1".into()];

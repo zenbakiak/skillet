@@ -357,13 +357,13 @@ fn print_usage() {
     eprintln!(
         "  --eval-timeout <s>   Wall-clock limit for one evaluation, in whole seconds (or set"
     );
-    eprintln!("                       SKILLET_EVAL_TIMEOUT; the flag wins). Default: 60");
+    eprintln!("                       SKILLET_EVAL_TIMEOUT; the flag wins). Default: 20");
     eprintln!("  --max-eval-bytes <n> Budget of values one evaluation may create, in bytes; K, M,");
     eprintln!(
         "                       G mean KiB, MiB, GiB (or set SKILLET_MAX_EVAL_BYTES; the flag"
     );
     eprintln!(
-        "                       wins). Default: 1G. Worst-case memory is about threads x this"
+        "                       wins). Default: 256M. Worst-case memory is about threads x this"
     );
     eprintln!();
     eprintln!("Requests with a body must send Content-Type: application/json (415 otherwise);");

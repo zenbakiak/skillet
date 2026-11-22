@@ -19,9 +19,9 @@ pub const BYTES_FLAG: &str = "--max-eval-bytes";
 pub const BYTES_ENV: &str = "SKILLET_MAX_EVAL_BYTES";
 
 /// Default wall-clock limit for one server evaluation.
-pub const DEFAULT_EVAL_TIMEOUT: Duration = Duration::from_secs(60);
-/// Default server budget (the library default is 256 MiB).
-pub const DEFAULT_MAX_EVAL_BYTES: u64 = 1024 * 1024 * 1024;
+pub const DEFAULT_EVAL_TIMEOUT: Duration = Duration::from_secs(20);
+/// Default server budget: the library's [`skillet::MAX_EVAL_BYTES`] (256 MiB).
+pub const DEFAULT_MAX_EVAL_BYTES: u64 = skillet::MAX_EVAL_BYTES;
 /// Largest accepted deadline (one day). A deadline too far away to represent would silently
 /// mean no deadline at all.
 const MAX_EVAL_TIMEOUT_SECS: u64 = 86_400;
@@ -130,7 +130,7 @@ pub fn server_limits() -> EvalLimits {
     CONFIGURED.get().copied().unwrap_or_else(defaults)
 }
 
-/// The deadline for the start-up banner: `60 s`.
+/// The deadline for the start-up banner: `20 s`.
 pub fn describe_timeout(limits: &EvalLimits) -> String {
     match limits.timeout {
         Some(t) => format!("{} s", t.as_secs()),
@@ -138,7 +138,7 @@ pub fn describe_timeout(limits: &EvalLimits) -> String {
     }
 }
 
-/// The budget for the start-up banner: `1 GiB`, `512 MiB`, `64 KiB`, or `N bytes`.
+/// The budget for the start-up banner: `256 MiB`, `1 GiB`, `64 KiB`, or `N bytes`.
 pub fn describe_bytes(max: u64) -> String {
     for (unit, name) in [(GIB, "GiB"), (MIB, "MiB"), (KIB, "KiB")] {
         if max >= unit && max % unit == 0 {
@@ -162,10 +162,11 @@ mod tests {
     }
 
     #[test]
-    fn defaults_are_60_s_and_1_gib() {
+    fn defaults_are_20_s_and_the_library_budget() {
         let limits = resolve_with(None, None, env(&[])).unwrap();
-        assert_eq!(limits.timeout, Some(Duration::from_secs(60)));
-        assert_eq!(limits.max_bytes, 1 << 30);
+        assert_eq!(limits.timeout, Some(Duration::from_secs(20)));
+        assert_eq!(limits.max_bytes, 256 * MIB);
+        assert_eq!(limits.max_bytes, skillet::MAX_EVAL_BYTES);
         assert_eq!(limits, defaults());
     }
 
@@ -273,7 +274,7 @@ mod tests {
 
     #[test]
     fn banner_texts() {
-        assert_eq!(describe_timeout(&defaults()), "60 s");
+        assert_eq!(describe_timeout(&defaults()), "20 s");
         assert_eq!(describe_bytes(GIB), "1 GiB");
         assert_eq!(describe_bytes(256 * MIB), "256 MiB");
         assert_eq!(describe_bytes(64 * KIB), "64 KiB");

@@ -24,13 +24,13 @@ info:
     | `--admin-token` | `SKILLET_ADMIN_TOKEN` | Admin token (JS management, `DELETE /cache`) |
     | `--cors-origin` | `SKILLET_CORS_ORIGIN` | `Access-Control-Allow-Origin` value |
     | `--max-connections-per-ip` | `SKILLET_MAX_CONNECTIONS_PER_IP` | Open connections allowed from one IP address (default: no limit) |
-    | `--eval-timeout` | `SKILLET_EVAL_TIMEOUT` | Wall-clock limit for one evaluation, whole seconds from 1 to 86400 (default: 60) |
-    | `--max-eval-bytes` | `SKILLET_MAX_EVAL_BYTES` | Budget of values one evaluation may create, in bytes; suffixes `K`, `M`, `G` mean KiB, MiB, GiB (default: `1G`) |
+    | `--eval-timeout` | `SKILLET_EVAL_TIMEOUT` | Wall-clock limit for one evaluation, whole seconds from 1 to 86400 (default: 20) |
+    | `--max-eval-bytes` | `SKILLET_MAX_EVAL_BYTES` | Budget of values one evaluation may create, in bytes; suffixes `K`, `M`, `G` mean KiB, MiB, GiB (default: `256M`, the library's `MAX_EVAL_BYTES`) |
 
     The flag wins over the environment variable. An empty value is refused at start-up, and so
     are `0` and invalid numbers for the numeric settings. If only one token is set, the other
     one inherits it. Worst-case memory for evaluations is about threads × `--max-eval-bytes`
-    (8 threads × 1 GiB = 8 GiB with the default budget); size the host for it. ADR-0011
+    (8 threads × 256 MiB = 2 GiB with the default budget); size the host for it. ADR-0011
     amendment 4.
 
     ## Cross-origin requests (CORS)
@@ -64,9 +64,9 @@ info:
     - Writing one response may take at most 10 s in total. If the client reads more slowly, the
       server stops writing and closes the connection: the client gets a body shorter than
       `Content-Length` and no error message. Reading the largest results (up to the evaluation
-      budget, 1 GiB by default) in time needs about 100 MB/s.
-    - Evaluation limits (nesting depth, the budget and the evaluation deadline, 1 GiB and 60 s by
-      default) are described on `/eval` and in docs/guide/limits.md. The 30 s read and 10 s
+      budget, 256 MiB by default) in time needs about 25 MB/s.
+    - Evaluation limits (nesting depth, the budget and the evaluation deadline, 256 MiB and 20 s
+      by default) are described on `/eval` and in docs/guide/limits.md. The 30 s read and 10 s
       write limits do not change with them.
 
     ## Connection limit
@@ -225,9 +225,9 @@ paths:
         '400':
           description: |
             Invalid expression or request format, or an evaluation limit was hit:
-            `Expression nested too deeply (max 128)`, `Evaluation budget exceeded (max 1024 MB)`
+            `Expression nested too deeply (max 128)`, `Evaluation budget exceeded (max 256 MB)`
             (also returned when the serialized result would exceed the budget), or
-            `Evaluation timed out (max 60 s)`. The numbers are the server's configured limits
+            `Evaluation timed out (max 20 s)`. The numbers are the server's configured limits
             (`--max-eval-bytes`, `--eval-timeout`; shown here with the defaults). See
             docs/guide/limits.md.
           content:

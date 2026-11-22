@@ -88,8 +88,8 @@ Pooled connections (see [Connection Pooling](#1-connection-pooling-python)) that
 The write deadline is a total for the whole response, on both servers. A client that reads a
 large result more slowly than that gets a truncated response with no error message: on
 `sk_server` a JSON line without its trailing `\n`, on `sk_http_server` a body shorter than
-`Content-Length`. Sending the largest possible result (the budget, 1 GiB by default) within 10 s
-needs about 100 MB/s.
+`Content-Length`. Sending the largest possible result (the budget, 256 MiB by default) within
+10 s needs about 25 MB/s.
 Details and measurements: [limits](limits.md#response-write-deadline-10-s).
 
 `sk_http_server` answers an oversized request (headers + body over 1 MB, or a `Content-Length`
@@ -206,15 +206,15 @@ limit all clients together. Set the limit at the proxy instead and leave this se
 ### Evaluation deadline and budget
 
 Both servers run every evaluation under a wall-clock deadline and a budget of values created
-([ADR-0011](../adr/0011-evaluation-budget.md) amendment 4). Skillet is used on large data, so the
-server defaults are higher than the library's, and both can be changed at start-up:
+([ADR-0011](../adr/0011-evaluation-budget.md) amendment 4). Skillet is used on large data, so both
+can be changed at start-up:
 
 | Setting | Meaning | Default |
 |---|---|---|
-| `--eval-timeout <seconds>` or `SKILLET_EVAL_TIMEOUT` (flag wins) | wall-clock limit for one evaluation, a whole number of seconds from 1 to 86400 | `60` |
-| `--max-eval-bytes <bytes>` or `SKILLET_MAX_EVAL_BYTES` (flag wins) | budget for one evaluation; a whole number of bytes, or with a suffix `K`, `M` or `G` (KiB, MiB, GiB, either case): `1073741824`, `1048576K`, `1024M` and `1G` are the same | `1G` |
+| `--eval-timeout <seconds>` or `SKILLET_EVAL_TIMEOUT` (flag wins) | wall-clock limit for one evaluation, a whole number of seconds from 1 to 86400 | `20` |
+| `--max-eval-bytes <bytes>` or `SKILLET_MAX_EVAL_BYTES` (flag wins) | budget for one evaluation; a whole number of bytes, or with a suffix `K`, `M` or `G` (KiB, MiB, GiB, either case): `1073741824`, `1048576K`, `1024M` and `1G` are the same | `256M`, the library's `skillet::MAX_EVAL_BYTES` |
 
-The library and the `sk` CLI do not read these settings. They keep a 256 MiB budget
+The library and the `sk` CLI do not read these settings. They keep the same 256 MiB budget
 (`skillet::MAX_EVAL_BYTES`) and no deadline; an embedder sets its own with `with_limits`
 ([limits](limits.md#library-api-evallimits-and-with_limits)).
 
@@ -242,13 +242,14 @@ $ sk_server 5792 8 --eval-timeout 120 --max-eval-bytes 512M
 ```
 
 **Size the machine for it.** Each worker thread can run one evaluation at the full budget, so
-the budget alone can take `threads × max-eval-bytes` of memory: 8 threads × 1 GiB = 8 GiB with
-the defaults. Live memory per evaluation can reach about twice the budget (see
-[limits](limits.md#sizing-a-server)). Lower `--threads` or `--max-eval-bytes` if the host has less.
+the budget alone can take `threads × max-eval-bytes` of memory: 8 threads × 256 MiB = 2 GiB with
+the defaults (the Docker image's 4 threads: 1 GiB counted, about 2 GiB live). Live memory per
+evaluation can reach about twice the budget (see [limits](limits.md#sizing-a-server)). Lower `--threads` or `--max-eval-bytes` if the host has less.
 
 The other time limits do not change with the deadline: a request must still arrive within 30 s,
 a response must be written within 10 s, and a JavaScript plugin call stops after 10 s or at the
-evaluation deadline, whichever comes first.
+evaluation deadline, whichever comes first. With the defaults a looping plugin stops at 10 s,
+before the 20 s request deadline.
 
 ### Cross-origin requests and request bodies (`sk_http_server`)
 
@@ -531,8 +532,8 @@ sk_eval() {
 ### 1. Connection Pooling (Python)
 
 For high-throughput applications, reuse connections. Each response is one `\n`-terminated JSON
-line of any length (up to the evaluation budget, 1 GiB by default), so read whole lines; a single `recv(4096)` cuts
-large results short and leaves the rest to be read as the next response:
+line of any length (up to the evaluation budget, 256 MiB by default), so read whole lines; a
+single `recv(4096)` cuts large results short and leaves the rest to be read as the next response:
 
 ```python
 import json
@@ -791,8 +792,9 @@ ping localhost
 echo '{"expression": "=your_expression", "variables": null}' | nc localhost 8080
 ```
 
-`Expression nested too deeply (max 128)`, `Evaluation budget exceeded (max 1024 MB)` and
-`Evaluation timed out (max 60 s)` (the numbers are the configured limits) are limit errors, not bugs. See
+`Expression nested too deeply (max 128)`, `Evaluation budget exceeded (max 256 MB)` and
+`Evaluation timed out (max 20 s)` (the numbers are the configured limits) are limit errors, not
+bugs. See
 [limits](limits.md) for what they mean and how to rewrite the formula.
 
 This server architecture provides a foundation for building high-performance applications that require fast mathematical and logical expression evaluation at scale.

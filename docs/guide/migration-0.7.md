@@ -213,19 +213,18 @@ Custom and JS functions are now visible in every sub-expression.
 | A custom `SUM` inside a `FILTER` lambda | builtin `SUM` | the custom `SUM` |
 
 ## Evaluation limits (ADR-0011)
-Each evaluation has a budget of 256 MB of created values (1 GiB on the servers), and the servers
-stop an evaluation after 60 s. Both server values are configurable: `--max-eval-bytes` /
-`SKILLET_MAX_EVAL_BYTES` and `--eval-timeout` / `SKILLET_EVAL_TIMEOUT` (ADR-0011 amendment 4).
-Development builds of 0.7 before BL-075 used fixed server limits of 256 MiB and 10 s; the defaults
-are now 1 GiB and 60 s. Details: [Limits](limits.md).
+Each evaluation has a budget of 256 MB of created values, and the servers stop an evaluation after
+20 s. On the servers both are configurable: `--max-eval-bytes` / `SKILLET_MAX_EVAL_BYTES` and
+`--eval-timeout` / `SKILLET_EVAL_TIMEOUT` (ADR-0011 amendment 4). Development builds of 0.7 before
+BL-075 used a fixed 10 s server deadline; the default is now 20 s. The server budget default is
+unchanged at 256 MiB, only now configurable. Details: [Limits](limits.md).
 
 | Situation | 0.6 | 0.7 |
 |---|---|---|
 | A formula that builds huge values (`[…].reduce([:acc, :acc], 0)`) | runs until memory is gone | `Evaluation budget exceeded (max 256 MB)` |
 | Copying a large variable once per item (`:rows.map(SUM(:rows))`) | slow | may hit the budget; hoist it: `:t := SUM(:rows); :rows.map(:t)` |
 | `reduce(MERGE(:acc, [:x]), [])` over more than about 2,800 items | runs | budget error |
-| A server evaluation that runs longer than 60 s (or `--eval-timeout`) | runs | `Evaluation timed out (max 60 s)` (HTTP 400) |
-| A server evaluation that creates more than 1 GiB of values (or `--max-eval-bytes`) | runs until memory is gone | `Evaluation budget exceeded (max 1024 MB)` |
+| A server evaluation that runs longer than 20 s (or `--eval-timeout`) | runs | `Evaluation timed out (max 20 s)` (HTTP 400) |
 | Expressions nested deeper than 128 | stack overflow (crash) | `Expression nested too deeply (max 128)` |
 
 ## JavaScript plugins (ADR-0017)

@@ -29,24 +29,26 @@
 > completion past the deadline. Custom functions that move work to another thread still escape
 > the budget and the deadline; that is documented on `CustomFunction` and `with_limits`.
 >
-> **Amendment 4 (maintainer, 2026-11-21, BL-075):** Skillet processes large data, so the per-request
-> limits of `sk_http_server` and `sk_server` become **configurable, with higher defaults**. This
-> replaces "no CLI flag or environment variable" in §2. Deadline: `--eval-timeout <seconds>` /
-> `SKILLET_EVAL_TIMEOUT`, default **60 s** (was `SERVER_EVAL_TIMEOUT = 10 s`), whole seconds from
-> 1 to 86400 (a deadline too far away to represent would silently mean none). Budget:
-> `--max-eval-bytes <bytes>` / `SKILLET_MAX_EVAL_BYTES`, default **1 GiB** for the servers (was the
-> library's 256 MiB); a whole number of bytes or one of the suffixes `K`, `M`, `G` (KiB, MiB, GiB).
-> The flag wins over the env var, and `0`, an empty or an invalid value stops start-up with exit
-> code 1, as for the tokens and `--max-connections-per-ip` (ADR-0025). The banner shows both values.
-> One shared definition (`src/bin/http_server/eval_limits.rs`) serves both servers, and the
-> response-size check uses the configured budget. Unchanged: the library's `MAX_EVAL_BYTES`
-> (256 MiB) and `EvalLimits::default()`, no deadline in the library or `sk` (§2), the 30 s request
-> read and 10 s response write deadlines, and the JS per-call cap (ADR-0017 §3: the request
-> deadline or 10 s, whichever is sooner, so with the 60 s default a looping plugin stops at 10 s).
-> Worst-case memory: every worker can hold one evaluation at the full budget, so the counted values
-> reach `threads × max-eval-bytes` (8 threads × 1 GiB = 8 GiB), and live heap up to about twice
-> that (Consequences). Operators must size `--threads` and `--max-eval-bytes` for the host. The
-> 10 s and 256 MB figures below describe the original decision.
+> **Amendment 4 (maintainer, 2026-11-21, BL-075; defaults revised on PR #106):** Skillet processes
+> large data, so the per-request limits of `sk_http_server` and `sk_server` become
+> **configurable**. This replaces "no CLI flag or environment variable" in §2. Deadline:
+> `--eval-timeout <seconds>` / `SKILLET_EVAL_TIMEOUT`, default **20 s** (was
+> `SERVER_EVAL_TIMEOUT = 10 s`), whole seconds from 1 to 86400 (a deadline too far away to
+> represent would silently mean none). Budget: `--max-eval-bytes <bytes>` /
+> `SKILLET_MAX_EVAL_BYTES`, default **256 MiB**, the same as the library's `MAX_EVAL_BYTES`
+> (unchanged, now configurable); a whole number of bytes or one of the suffixes `K`, `M`, `G`
+> (KiB, MiB, GiB). The flag wins over the env var, and `0`, an empty or an invalid value stops
+> start-up with exit code 1, as for the tokens and `--max-connections-per-ip` (ADR-0025). The
+> banner shows both values. One shared definition (`src/bin/http_server/eval_limits.rs`) serves
+> both servers, and the response-size check uses the configured budget. Unchanged: the library's
+> `MAX_EVAL_BYTES` and `EvalLimits::default()`, no deadline in the library or `sk` (§2), the 30 s
+> request read and 10 s response write deadlines, and the JS per-call cap (ADR-0017 §3: the request
+> deadline or 10 s, whichever is sooner), so a looping plugin stops at 10 s, before the 20 s
+> request deadline. Worst-case memory: every worker can hold one evaluation at the full budget, so
+> the counted values reach `threads × max-eval-bytes` (8 threads × 256 MiB = 2 GiB), and live heap
+> up to about twice that (Consequences). The Docker image's default `SK_THREADS` becomes 4:
+> 4 × 256 MiB = 1 GiB counted, about 2 GiB live. Operators must size `--threads` and
+> `--max-eval-bytes` for the host. The 10 s figures below describe the original decision.
 
 - Status: Accepted (2026-11-20, with amendment below)
 - Date: 2026-11-20

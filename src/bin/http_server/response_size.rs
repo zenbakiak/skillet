@@ -120,7 +120,7 @@ mod tests {
             "Evaluation budget exceeded (max 256 MB)"
         );
         assert_eq!(
-            check(1 << 31, 1 << 30).unwrap_err(),
+            check(1 << 31, 1 << 30).unwrap_err(), // a configured 1 GiB
             "Evaluation budget exceeded (max 1024 MB)"
         );
         assert_eq!(

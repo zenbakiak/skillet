@@ -446,12 +446,14 @@ fn main() {
         eprintln!(
             "  --eval-timeout <s>   Wall-clock limit for one evaluation, in whole seconds (or"
         );
-        eprintln!("                       set SKILLET_EVAL_TIMEOUT; the flag wins). Default: 60");
+        eprintln!("                       set SKILLET_EVAL_TIMEOUT; the flag wins). Default: 20");
         eprintln!(
             "  --max-eval-bytes <n> Budget of values one evaluation may create, in bytes; K,"
         );
         eprintln!("                       M, G mean KiB, MiB, GiB (or set SKILLET_MAX_EVAL_BYTES;");
-        eprintln!("                       the flag wins). Default: 1G. Worst-case memory is about");
+        eprintln!(
+            "                       the flag wins). Default: 256M. Worst-case memory is about"
+        );
         eprintln!("                       threads x this");
         eprintln!();
         eprintln!("Examples:");

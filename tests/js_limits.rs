@@ -163,7 +163,7 @@ fn status(resp: &str) -> &str {
 }
 
 /// A server deadline shorter than the 10 s per-call cap stops the hook first (ADR-0017 §3).
-/// The default deadline (60 s) is longer, so it is set to 2 s here.
+/// The default deadline (20 s) is longer, so it is set to 2 s here.
 #[test]
 fn server_deadline_stops_a_looping_hook_and_frees_the_worker() {
     let hooks = hooks_dir();
@@ -188,7 +188,7 @@ fn server_deadline_stops_a_looping_hook_and_frees_the_worker() {
     assert_eq!(status(&resp), "200", "{resp}");
 }
 
-/// With the default 60 s deadline the 10 s per-call cap comes first, and the worker is free
+/// With the default 20 s deadline the 10 s per-call cap comes first, and the worker is free
 /// again after it (ADR-0017 §3: the request deadline or 10 s, whichever is sooner).
 #[test]
 fn per_call_cap_stops_a_looping_hook_before_the_default_deadline() {

@@ -30,7 +30,7 @@ unset AUTH_TOKEN ADMIN_TOKEN 2>/dev/null || true
 
 port="${PORT:-8080}"
 host="${HOST:-0.0.0.0}"
-threads="${SK_THREADS:-2}"
+threads="${SK_THREADS:-4}"
 
 echo "skillet: starting sk_http_server on ${host}:${port} with ${threads} threads (eval and admin token auth enabled)" >&2
 exec ./sk_http_server "$port" --host "$host" --threads "$threads" "$@"

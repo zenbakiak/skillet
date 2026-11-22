@@ -2,7 +2,7 @@
 //! (ADR-0011 amendment 4, BL-075): `--eval-timeout` / `SKILLET_EVAL_TIMEOUT` and
 //! `--max-eval-bytes` / `SKILLET_MAX_EVAL_BYTES`, the flag winning over the env var.
 //! Servers run on 127.0.0.1 with one worker. The timing tests use a 1 s deadline on work that
-//! takes far longer, and only check that the answer comes well before the 60 s default.
+//! takes far longer; the error text shows which deadline stopped it.
 
 mod common;
 
@@ -103,7 +103,8 @@ fn times_out_after_one_second(server: &ServerProcess, http: bool) {
         "{}",
         head(&resp)
     );
-    // At least the deadline, and far below the 60 s default even on a loaded machine.
+    // At least the deadline. `max 1 s` above already proves the configured value is used, so
+    // the upper bound only catches a hang and stays loose for loaded machines.
     assert!(
         took >= Duration::from_secs(1) && took < Duration::from_secs(45),
         "{took:?}"
@@ -172,9 +173,11 @@ fn banner(bin: &str, args: &[&str], env: &[(&str, &str)]) -> String {
 fn banner_shows_both_limits_and_the_flag_wins() {
     for bin in [HTTP, LINE] {
         let text = banner(bin, &[], &[]);
-        assert!(text.contains("Eval timeout: 60 s"), "{bin}: {text}");
+        assert!(text.contains("Eval timeout: 20 s"), "{bin}: {text}");
         assert!(
-            text.contains("Eval budget: 1 GiB per evaluation, up to about 1 GiB with 1 threads"),
+            text.contains(
+                "Eval budget: 256 MiB per evaluation, up to about 256 MiB with 1 threads"
+            ),
             "{bin}: {text}"
         );
 
