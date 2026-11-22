@@ -18,7 +18,8 @@ pub fn exec_string_method(
     let lname = name.to_lowercase();
 
     match lname.as_str() {
-        "length" | "len" => Ok(Value::Number(recv_string.len() as f64)),
+        // Characters, as `LEN` and `LENGTH` count them (ADR-0034 §5).
+        "length" | "len" => Ok(Value::Number(recv_string.chars().count() as f64)),
 
         "upper" | "upcase" => Ok(Value::String(crate::limits::case_mapped(
             &recv_string,
