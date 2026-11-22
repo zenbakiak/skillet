@@ -64,17 +64,27 @@ given the same result as `==` for every pair of values, so it was dropped. The l
 ### 6. Number coercion in arithmetic (lang-num lane)
 - Numeric text and booleans convert to numbers in arithmetic operators and scalar math
   builtins, like Excel: `ABS("-3")` is `3`, `"3" + 1` is `4`, `TRUE + 1` is `2`.
-  Non-numeric text is an error (Excel `#VALUE!`): `"abc" + 1` is an error.
+  Non-numeric text is an error (Excel `#VALUE!`): `"abc" + 1` gives
+  `Cannot convert "abc" to a number (#VALUE!)`; builtins prefix the name (`ABS: cannot convert …`).
+  Numeric text is read after trimming; empty text, `"1,000"`, `"inf"`, `"NaN"` and out-of-range
+  values are not numbers.
+- `NULL` counts as `0` in the operators only (Excel's blank cell). Builtins keep `NULL` strict:
+  a required argument errors, an optional one takes its default.
+- DateTime operands are never coerced (date arithmetic is unchanged), and Currency in the
+  operators is unchanged.
 - Aggregates over arrays still ignore text and booleans (`SUM([1, "2", TRUE])` is `1`, audit X-3,
   unchanged).
 
 ### 7. `%`: percent suffix or modulo (lang-num lane)
-- `%` is the percent suffix when it is followed by `+`, `-`, `)`, `,`, another operator, or the
-  end of the expression: `10%-3` is `-2.9`, `50%` is `0.5`.
-- `%` is modulo only when an operand follows directly: `10 % 3` is `1`, `:a % :b`.
+- `%` is modulo only when an operand starts directly after it: a number, a string, a name,
+  `TRUE`/`FALSE`/`NULL`, `(`, `[`, `{`, `!` or a `:var`. `10 % 3` is `1`, `:a % :b`.
+- Otherwise, including before `+` and `-`, it is the percent suffix: `10%-3` is `-2.9`, `50%` is
+  `0.5`. This changes `10 % -3` from `1` to `-2.9`.
 
 ### 8. Scientific notation (BL-058, lang-num lane)
 - `1e3`, `2.5E-4` and `1E+2` lex as number literals.
+- A number that runs straight into a letter or `_` (`1x`, `1e`, `1_000`) is an
+  `Invalid number literal` error, instead of silently evaluating to the leading number.
 
 ### Unchanged
 - Lowercase methods keep their semantics (ADR-0018): `.includes()`, `.contains()` and other
