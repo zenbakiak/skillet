@@ -435,16 +435,14 @@ impl Evaluator {
                 Value::Number(n) => Ok(Value::Number(-*n)),
                 _ => coerced_negate(v),
             },
-            UnaryOp::Not => {
-                Ok(Value::Boolean(!v.as_bool().ok_or_else(|| {
-                    Error::new("Unary '!' on non-boolean", None)
-                })?))
-            }
+            // `!x` is `NOT(x)` with a tighter precedence (ADR-0029 amendment 1 A2).
+            UnaryOp::Not => Ok(Value::Boolean(logical::not(v)?)),
         }
     }
 
-    /// `a AND b`, `a OR b` (and `&&`, `||`): `b` is evaluated only when `a` does not decide the
-    /// result, so `FALSE AND 1/0` is FALSE (ADR-0029). Both sides must be booleans.
+    /// `a AND b`, `a OR b` (and `&&`, `||`): both sides are conditions (`logical::condition`),
+    /// and `b` is evaluated only when `a` does not decide the result, so `FALSE AND 1/0` is
+    /// FALSE (ADR-0029 amendment 1 A3). The result is always a boolean.
     #[inline(never)]
     fn eval_short_circuit<C: EvaluationContext>(
         op: BinaryOp,
@@ -452,15 +450,16 @@ impl Evaluator {
         r: &Expr,
         context: &C,
     ) -> Result<Value, Error> {
-        let a = Self::eval_operand(l, context)?;
+        let name = logical_op_name(op);
+        let a = logical::condition(name, &*Self::eval_operand(l, context)?)?;
         limits::tick()?;
-        match (op, a.as_bool()) {
-            (BinaryOp::And, Some(false)) => Ok(Value::Boolean(false)),
-            (BinaryOp::Or, Some(true)) => Ok(Value::Boolean(true)),
-            _ => {
-                let b = Self::eval_operand(r, context)?;
-                Self::eval_binary_op(op, &a, &b)
-            }
+        match (op, a) {
+            (BinaryOp::And, false) => Ok(Value::Boolean(false)),
+            (BinaryOp::Or, true) => Ok(Value::Boolean(true)),
+            _ => Ok(Value::Boolean(logical::condition(
+                name,
+                &*Self::eval_operand(r, context)?,
+            )?)),
         }
     }
 
@@ -485,16 +484,13 @@ impl Evaluator {
             | BinaryOp::Gt
             | BinaryOp::Ge => crate::runtime::comparison::compare(op, a, b),
             BinaryOp::And | BinaryOp::Or => {
-                let ab = a
-                    .as_bool()
-                    .ok_or_else(|| Error::new("Logical op on non-boolean", None))?;
-                let bb = b
-                    .as_bool()
-                    .ok_or_else(|| Error::new("Logical op on non-boolean", None))?;
-                Ok(Value::Boolean(match op {
-                    BinaryOp::And => ab && bb,
-                    BinaryOp::Or => ab || bb,
-                    _ => unreachable!(),
+                let name = logical_op_name(op);
+                let ab = logical::condition(name, a)?;
+                let bb = logical::condition(name, b)?;
+                Ok(Value::Boolean(if op == BinaryOp::And {
+                    ab && bb
+                } else {
+                    ab || bb
                 }))
             }
         }
@@ -582,9 +578,7 @@ impl Evaluator {
                 if args.len() != 3 {
                     return Err(Error::new("Ternary expects 3 args", None));
                 }
-                let cond = Self::eval(&args[0], context)?
-                    .as_bool()
-                    .ok_or_else(|| Error::new("Ternary condition must be boolean", None))?;
+                let cond = logical::condition("Ternary", &Self::eval(&args[0], context)?)?;
                 return if cond {
                     Self::eval(&args[1], context)
                 } else {
@@ -977,6 +971,15 @@ impl Evaluator {
                     .map_err(|e| Error::new(format!("Invalid JSON: {}", e), None))
             }
         }
+    }
+}
+
+/// The name of a logical operator in its condition error (ADR-0029 amendment 1 A2).
+fn logical_op_name(op: BinaryOp) -> &'static str {
+    if op == BinaryOp::And {
+        "AND"
+    } else {
+        "OR"
     }
 }
 

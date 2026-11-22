@@ -2,17 +2,43 @@ use crate::error::Error;
 use crate::runtime::utils::type_name;
 use crate::types::Value;
 
-/// A condition of `IF`/`IFS` (ADR-0018 D-8, B-18): TRUE/FALSE, a number (non-zero is TRUE, as
-/// in Excel; currency counts as a number) or NULL (FALSE, a blank cell, ADR-0006). Anything
-/// else, text included, is Excel's `#VALUE!`.
+/// The one condition rule (ADR-0018 D-8, B-18; ADR-0029 amendment 1): TRUE/FALSE, a number
+/// (non-zero is TRUE, as in Excel; currency counts as a number) or NULL (FALSE, a blank cell,
+/// ADR-0006). NaN is Excel's `#NUM!`; anything else, text included, is `#VALUE!`. Used by
+/// `IF`, `IFS`, `NOT`/`!`, `? :`, the `AND`/`OR` operators, `filter`/`find`/`FILTER`/`FIND`
+/// and lambda criteria; `name` is the form named in the error.
+#[inline]
 pub(crate) fn condition(name: &str, v: &Value) -> Result<bool, Error> {
     match v {
         Value::Boolean(b) => Ok(*b),
+        Value::Number(n) | Value::Currency(n) if n.is_nan() => Err(not_a_number(name)),
         Value::Number(n) | Value::Currency(n) => Ok(*n != 0.0),
         Value::Null => Ok(false),
         other => Err(Error::new(
             format!(
                 "{name} condition must be TRUE, FALSE or a number, got {} (#VALUE!)",
+                type_name(other)
+            ),
+            None,
+        )),
+    }
+}
+
+/// A NaN condition (Excel `#NUM!`). Expressions cannot make NaN; it comes from a host value.
+fn not_a_number(name: &str) -> Error {
+    Error::new(format!("{name} condition is not a number (#NUM!)"), None)
+}
+
+/// `NOT x`, `NOT(x)` and `!x` (ADR-0029 §5, amendment 1 A2): the negated condition, with
+/// `NOT`'s own message for a value that is not a condition.
+pub(crate) fn not(v: &Value) -> Result<bool, Error> {
+    match v {
+        Value::Boolean(_) | Value::Number(_) | Value::Currency(_) | Value::Null => {
+            Ok(!condition("NOT", v)?)
+        }
+        other => Err(Error::new(
+            format!(
+                "NOT expects a logical value, got {} (#VALUE!)",
                 type_name(other)
             ),
             None,
@@ -30,23 +56,28 @@ pub(crate) fn ifs_no_match() -> Error {
 /// are ignored, like a range's text and empty cells. A NULL argument is ignored too (a blank
 /// cell). Text or another type passed directly is `#VALUE!`, and so is having no logical value.
 fn logical_values(name: &str, args: &[Value]) -> Result<Vec<bool>, Error> {
-    fn from_array(items: &[Value], out: &mut Vec<bool>) {
+    fn from_array(name: &str, items: &[Value], out: &mut Vec<bool>) -> Result<(), Error> {
         for item in items {
             match item {
                 Value::Boolean(b) => out.push(*b),
+                Value::Number(n) | Value::Currency(n) if n.is_nan() => {
+                    return Err(not_a_number(name))
+                }
                 Value::Number(n) | Value::Currency(n) => out.push(*n != 0.0),
-                Value::Array(inner) => from_array(inner, out),
+                Value::Array(inner) => from_array(name, inner, out)?,
                 _ => {}
             }
         }
+        Ok(())
     }
     let mut out = Vec::with_capacity(args.len());
     for arg in args {
         match arg {
             Value::Boolean(b) => out.push(*b),
+            Value::Number(n) | Value::Currency(n) if n.is_nan() => return Err(not_a_number(name)),
             Value::Number(n) | Value::Currency(n) => out.push(*n != 0.0),
             Value::Null => {}
-            Value::Array(items) => from_array(items, &mut out),
+            Value::Array(items) => from_array(name, items, &mut out)?,
             other => {
                 return Err(Error::new(
                     format!(
@@ -75,10 +106,7 @@ pub fn exec_logical(name: &str, args: &[Value]) -> Result<Value, Error> {
             if args.len() != 3 {
                 return Err(Error::new("Ternary expects 3 args", None));
             }
-            let cond = args[0]
-                .as_bool()
-                .ok_or_else(|| Error::new("Ternary condition must be boolean", None))?;
-            Ok(if cond {
+            Ok(if condition("Ternary", &args[0])? {
                 args[1].clone()
             } else {
                 args[2].clone()
@@ -104,18 +132,7 @@ pub fn exec_logical(name: &str, args: &[Value]) -> Result<Value, Error> {
             let [v] = args else {
                 return Err(Error::new("NOT expects 1 argument", None));
             };
-            match v {
-                Value::Boolean(_) | Value::Number(_) | Value::Currency(_) | Value::Null => {
-                    Ok(Value::Boolean(!condition(name, v)?))
-                }
-                other => Err(Error::new(
-                    format!(
-                        "NOT expects a logical value, got {} (#VALUE!)",
-                        type_name(other)
-                    ),
-                    None,
-                )),
-            }
+            Ok(Value::Boolean(not(v)?))
         }
         "IF" => {
             if args.len() < 2 {
@@ -163,5 +180,26 @@ pub fn exec_logical(name: &str, args: &[Value]) -> Result<Value, Error> {
             format!("Unknown logical function: {}", name),
             None,
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn eager_ternary_uses_the_condition_rule() {
+        let n = Value::Number;
+        let pick = |c: Value| exec_logical("__TERNARY__", &[c, n(1.0), n(2.0)]);
+        assert_eq!(pick(n(3.0)).unwrap(), n(1.0));
+        assert_eq!(pick(Value::Null).unwrap(), n(2.0));
+        assert_eq!(
+            pick(Value::String("a".into())).unwrap_err().message,
+            "Ternary condition must be TRUE, FALSE or a number, got string (#VALUE!)"
+        );
+        assert_eq!(
+            pick(n(f64::NAN)).unwrap_err().message,
+            "Ternary condition is not a number (#NUM!)"
+        );
     }
 }
