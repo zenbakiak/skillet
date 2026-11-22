@@ -1,5 +1,6 @@
-//! ADR-0023 (BL-066, BL-059): `==`/`!=` compare text case-insensitively, `===`/`!==` are
-//! strict; no comparison converts between types; DateTimes compare and order by timestamp.
+//! ADR-0023 (BL-066, BL-059): `==`/`!=` are strict and case-sensitive, no comparison converts
+//! between types, arrays/JSON/Currency compare by value, DateTimes compare and order by
+//! timestamp, and `===`/`!==` do not exist.
 
 use skillet::{evaluate, evaluate_with_json, parse, Value};
 
@@ -21,57 +22,44 @@ fn is_error(src: &str) {
 }
 
 #[test]
-fn text_equality_ignores_case_under_fuzzy_only() {
+fn text_equality_is_case_sensitive() {
     all(&[
-        (r#""a" == "A""#, true),
-        (r#""Hello" == "hELLO""#, true),
-        (r#""a" != "A""#, false),
-        (r#""a" == "b""#, false),
-        (r#""ÉCOLE" == "école""#, true),
-        (r#""a" = "A""#, true),
-        (r#""a" === "A""#, false),
-        (r#""a" !== "A""#, true),
-        (r#""a" === "a""#, true),
-        (r#""a" !== "a""#, false),
+        (r#""a" == "a""#, true),
+        (r#""a" == "A""#, false),
+        (r#""a" != "A""#, true),
+        (r#""a" = "A""#, false),
+        (r#""ÉCOLE" == "école""#, false),
         (r#""ab" == "abc""#, false),
     ]);
 }
 
 #[test]
-fn no_cross_type_conversion_under_either_operator() {
-    for op in ["==", "==="] {
-        for (l, r) in [
-            ("1", r#""1""#),
-            ("TRUE", "1"),
-            ("FALSE", "0"),
-            ("TRUE", r#""TRUE""#),
-            ("0", r#""""#),
-            ("1", "1::Currency"),
-            ("[1]", "1"),
-        ] {
-            assert!(!b(&format!("{l} {op} {r}")), "{l} {op} {r}");
-            assert!(!b(&format!("{r} {op} {l}")), "{r} {op} {l}");
-        }
+fn no_cross_type_conversion() {
+    for (l, r) in [
+        ("1", r#""1""#),
+        ("TRUE", "1"),
+        ("FALSE", "0"),
+        ("TRUE", r#""TRUE""#),
+        ("0", r#""""#),
+        ("1", "1::Currency"),
+        ("[1]", "1"),
+    ] {
+        assert!(!b(&format!("{l} == {r}")), "{l} == {r}");
+        assert!(!b(&format!("{r} == {l}")), "{r} == {l}");
+        assert!(b(&format!("{l} != {r}")), "{l} != {r}");
     }
-    all(&[
-        (r#"1 != "1""#, true),
-        (r#"1 !== "1""#, true),
-        ("TRUE != 1", true),
-        ("TRUE !== 1", true),
-    ]);
 }
 
 #[test]
 fn numbers_booleans_and_currency_compare_within_their_type() {
     all(&[
         ("1 == 1.0", true),
-        ("1 === 1.0", true),
         ("0.1 + 0.2 == 0.3", false),
         ("TRUE == TRUE", true),
-        ("TRUE === FALSE", false),
+        ("TRUE == FALSE", false),
         ("1::Currency == 1::Currency", true),
-        ("1::Currency === 1::Currency", true),
         ("1::Currency == 2::Currency", false),
+        ("1::Currency != 2::Currency", true),
     ]);
 }
 
@@ -79,12 +67,10 @@ fn numbers_booleans_and_currency_compare_within_their_type() {
 fn null_equals_only_null() {
     all(&[
         ("NULL == NULL", true),
-        ("NULL === NULL", true),
         ("NULL != NULL", false),
-        ("NULL !== NULL", false),
         ("NULL == 0", false),
-        (r#"NULL === """#, false),
-        ("NULL !== FALSE", true),
+        (r#"NULL == """#, false),
+        ("NULL != FALSE", true),
     ]);
 }
 
@@ -92,10 +78,11 @@ fn null_equals_only_null() {
 fn arrays_compare_element_wise() {
     all(&[
         ("[1, 2] == [1, 2]", true),
-        ("[1, 2] === [1, 2]", true),
+        ("[1, 2] != [1, 2]", false),
+        ("[1, 2] == [2, 1]", false),
         ("[1, 2] == [1, 2, 3]", false),
-        (r#"["a", "B"] == ["A", "b"]"#, true),
-        (r#"["a", "B"] === ["A", "b"]"#, false),
+        (r#"["a", "B"] == ["a", "B"]"#, true),
+        (r#"["a", "B"] == ["A", "b"]"#, false),
         (r#"[1, "2"] == [1, 2]"#, false),
         ("[[1, NULL]] == [[1, NULL]]", true),
         ("[] == []", true),
@@ -107,15 +94,15 @@ fn json_objects_compare_element_wise() {
     let r = |src: &str| evaluate_with_json(src, r#"{"u": {"name": "Ann", "tags": ["x"]}}"#);
     let t = Value::Boolean(true);
     let f = Value::Boolean(false);
-    assert_eq!(r(r#":u == {"name": "ann", "tags": ["X"]}"#).unwrap(), t);
-    assert_eq!(r(r#":u === {"name": "Ann", "tags": ["x"]}"#).unwrap(), t);
-    assert_eq!(r(r#":u === {"name": "ann", "tags": ["x"]}"#).unwrap(), f);
+    assert_eq!(r(r#":u == {"name": "Ann", "tags": ["x"]}"#).unwrap(), t);
+    assert_eq!(r(r#":u == {"name": "ann", "tags": ["x"]}"#).unwrap(), f);
     assert_eq!(r(r#":u == {"name": "Ann"}"#).unwrap(), f);
     assert_eq!(r(r#":u == {"Name": "Ann", "tags": ["x"]}"#).unwrap(), f);
     all(&[
         (r#"{"a": 1, "b": 2} == {"b": 2, "a": 1}"#, true),
-        (r#"{"a": 1} === {"a": 1.0}"#, true),
+        (r#"{"a": 1} == {"a": 1.0}"#, true),
         (r#"{"a": 1} == {"a": "1"}"#, false),
+        (r#"{"a": TRUE} == {"a": 1}"#, false),
     ]);
 }
 
@@ -123,14 +110,11 @@ fn json_objects_compare_element_wise() {
 fn datetime_equality_compares_timestamps() {
     all(&[
         ("DATE(2026, 1, 1) == DATE(2026, 1, 1)", true),
-        ("DATE(2026, 1, 1) === DATE(2026, 1, 1)", true),
         ("DATE(2026, 1, 1) != DATE(2026, 1, 2)", true),
-        ("DATE(2026, 1, 1) !== DATE(2026, 1, 1)", false),
         ("DATE(2026, 1, 1) + 1 == DATE(2026, 1, 2)", true),
         ("NOW() == NOW()", true),
         // A DateTime equals only a DateTime.
         ("DATE(2026, 1, 1) == 0", false),
-        ("DATE(2026, 1, 1) === 0", false),
         (r#"DATE(2026, 1, 1) == "2026-01-01""#, false),
         ("DATE(2026, 1, 1) != NULL", true),
     ]);
@@ -152,15 +136,13 @@ fn datetime_ordering() {
 }
 
 #[test]
-fn text_ordering_ignores_case() {
+fn text_ordering_is_case_sensitive() {
     all(&[
-        (r#""apple" < "Banana""#, true),
-        (r#""B" > "a""#, true),
-        (r#""a" < "A""#, false),
-        (r#""a" <= "A""#, true),
-        (r#""A" >= "a""#, true),
-        (r#""abc" < "ABD""#, true),
-        (r#""ab" < "ABC""#, true),
+        (r#""a" < "b""#, true),
+        (r#""B" < "a""#, true), // code point order: uppercase first
+        (r#""apple" < "Banana""#, false),
+        (r#""a" <= "A""#, false),
+        (r#""ab" < "abc""#, true),
         (r#""10" < "9""#, true), // text, not numbers
     ]);
 }
@@ -185,43 +167,20 @@ fn ordering_needs_two_values_of_the_same_type() {
 }
 
 #[test]
-fn strict_operators_share_the_precedence_of_equality() {
-    all(&[
-        ("1 + 1 === 2", true),
-        ("1 + 1 !== 2", false),
-        ("2 * 3 === 6 AND 1 < 2", true),
-        ("1 < 2 === TRUE", true),
-        ("1 === 1 == TRUE", true),
-        (r#""a" & "b" === "ab""#, true),
-    ]);
-    assert_eq!(
-        evaluate("TRUE ? 1 === 1 : 2").unwrap(),
-        Value::Boolean(true)
-    );
-}
-
-#[test]
-fn lexer_keeps_two_char_equality_and_rejects_four() {
+fn strict_equality_operators_do_not_exist() {
     assert!(parse("1 == 1").is_ok());
     assert!(parse("1 = 1").is_ok());
-    assert!(parse("1 === 1").is_ok());
-    assert!(parse("1 !== 1").is_ok());
-    assert!(parse("1 ==== 1").is_err());
-    assert!(parse("1 !=== 1").is_err());
-    assert!(b("!(1 === 2)"));
-    assert!(b("=1===1"));
+    assert!(b("=1==1"));
+    assert!(parse("1 === 1").is_err());
+    assert!(parse("1 !== 1").is_err());
 }
 
 #[test]
-fn lambdas_and_filter_use_the_new_equality() {
+fn lambdas_and_filter_use_equality() {
     let v = |src: &str| evaluate(src).unwrap();
     let s = |x: &str| Value::String(x.to_string());
     assert_eq!(
-        v(r#"FILTER(["Apple", "apple", "pear"], :x == "APPLE")"#),
-        Value::Array(vec![s("Apple"), s("apple")])
-    );
-    assert_eq!(
-        v(r#"FILTER(["Apple", "apple", "pear"], :x === "apple")"#),
+        v(r#"FILTER(["Apple", "apple", "pear"], :x == "apple")"#),
         Value::Array(vec![s("apple")])
     );
     assert_eq!(
@@ -233,9 +192,11 @@ fn lambdas_and_filter_use_the_new_equality() {
         Value::Array(vec![Value::Number(2.0), Value::Number(4.0)])
     );
     assert_eq!(
-        v(r#"["a", "B"].map(:x == "b")"#),
-        Value::Array(vec![Value::Boolean(false), Value::Boolean(true)])
+        v("[[1], [2], [1]].filter(:x == [1]).length()"),
+        Value::Number(2.0)
     );
-    // Methods keep their own semantics: `.includes` stays case-sensitive.
-    assert_eq!(v(r#"["a"].includes("A")"#), Value::Boolean(false));
+    assert_eq!(
+        v("[DATE(2026, 1, 1), DATE(2026, 2, 1)].filter(:x > DATE(2026, 1, 15)).length()"),
+        Value::Number(1.0)
+    );
 }

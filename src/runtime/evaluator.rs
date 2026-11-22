@@ -366,8 +366,6 @@ impl Evaluator {
             }
             BinaryOp::Eq
             | BinaryOp::Ne
-            | BinaryOp::StrictEq
-            | BinaryOp::StrictNe
             | BinaryOp::Lt
             | BinaryOp::Le
             | BinaryOp::Gt
