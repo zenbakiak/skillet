@@ -1219,3 +1219,8 @@ Recommendations, waiting for the maintainer:
 3. `.join()` accepts Currency and NULL like `JOIN`.
 4. `LEN` and `FIND` on a date stay errors.
 5. `SUMIF` and `AVERAGEIF` return Currency when a summed value is Currency, like `SUM`.
+
+### BL-079 · Refresh `Cargo.lock` within semver ranges · P3 · `todo` · release-engineer
+From BL-014: `cargo update` churns the lock heavily (syn 2.0.119 plus syn 3, r-efi 6, shlex 2,
+regex 1.13, new stacker/psm). Do it in its own PR, gated on CI's `cargo audit` and MSRV 1.85 jobs.
+Also decide when rustfmt moves to `style_edition = "2024"` (a fmt-only commit, touches most files).
