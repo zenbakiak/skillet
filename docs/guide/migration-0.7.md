@@ -178,6 +178,7 @@ Each evaluation has a budget of 256 MB of created values, and the servers stop a
 | `skillet::runtime::evaluation` | re-export shim | removed; use `skillet::runtime::evaluator` or the top-level `evaluate*` functions (ADR-0010) |
 | `runtime::method_calls::exec_filter`/`exec_map`/`exec_find`/`exec_reduce`, `exec_string_method`, `exec_array_method` | take a variable map | take `&dyn EvaluationContext` |
 | Minimum Rust version | not stated | 1.85 (ADR-0012) |
+| `runtime::builtin_functions::exec_builtin` | public | deprecated (still works); it reports argument errors as `Unknown function`. Use `runtime::function_dispatch::exec_builtin_fast` or `evaluate` |
 
 ## Servers
 | Change | 0.6 | 0.7 |
