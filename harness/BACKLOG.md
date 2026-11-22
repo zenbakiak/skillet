@@ -1312,19 +1312,19 @@ Settings for the maintainer (GitHub → Settings → Rules → Rulesets, and Set
 - PERF-6: refresh `benches/BASELINE.md`; record that the +10-18% parse cost from #82 is accepted.
 - REL-10: AGENTS.md, README and role-file drift.
 
-### BL-085 · Result cache serves stale results · P2 · `in-progress` (lane cache) · rust-engineer
+### BL-085 · Result cache serves stale results · P2 · `done` (PR #122; new `skillet::is_volatile`) · rust-engineer
 SEC-2. The HTTP result cache returns old values for volatile builtins (`NOW()`, `TODAY()`, `RAND`)
 and drops `variables` when `include_variables` differs.
 Decision (maintainer): never cache results that use a volatile builtin; add `include_variables` to
 the key. Custom-function results stay cached (reload clears the cache since BL-077).
 
-### BL-086 · HTTP JSON variables bypass the budget · P2 · `in-progress` (lane budget) · rust-engineer
+### BL-086 · HTTP JSON variables bypass the budget · P2 · `done` (PR #124, ADR-0011 amendment 5; new `skillet::charge_variables`; follow-up BL-099) · rust-engineer
 SEC-3. With `--max-eval-bytes 1M`, a 0.75 MB body used 37 MB and succeeded; the banner understates
 the worst case.
 Decision (maintainer): charge the parsed variables to the evaluation budget; fix the banner.
 Migration-guide row (some large requests now fail with the budget error).
 
-### BL-087 · Test safety nets · P2 · `in-progress` (lane safety) · qa-engineer
+### BL-087 · Test safety nets · P2 · `done` (PR #125; golden file `tests/golden/evaluator_parity.txt`, `slow-tests.yml`) · qa-engineer
 - QA-1: give `evaluator_parity` expected values (it compares a function with itself; 10 results
   changed with no failing test).
 - QA-2: run the 10 `#[ignore]` tests (408, read/write deadlines, ~100 s) in a scheduled CI job.
@@ -1333,14 +1333,15 @@ Migration-guide row (some large requests now fail with the budget error).
   env vars for test servers.
 - QA-7, QA-8: `--fast` skips the 10 s JS test; loosen tight wall-clock bounds.
 
-### BL-088 · Per-item costs on big arrays · P2 · `ready` · performance-engineer → rust-engineer
+### BL-088 · Per-item costs on big arrays · P2 · `in-progress` (lane perf88) · performance-engineer → rust-engineer
 - PERF-1: `ROUND()` is 3.6x slower (formats and re-parses every number) and disagrees with
   `.round()` (`ROUND(1.005,2)` = 1.01, `1.005.round(2)` = 1.0). Fast path with a tie-only fallback.
   Decision (maintainer): `.round()` follows `ROUND`.
 - PERF-2: `AND`/`OR`/`XOR` allocate a `Vec<bool>` per call (+18-24% in filters).
 - PERF-4: date to text is 2x slower (chrono re-parses the pattern; `.to_s()`/`CONCAT` format twice).
+  Moved to BL-091 (round 11), which rewrites the text forms.
 
-### BL-089 · One truth rule for conditions · P2 · `review` (PR #120, ADR-0029 amendment 1) · language-designer (ADR-0029 amendment) → rust-engineer
+### BL-089 · One truth rule for conditions · P2 · `done` (PR #120, ADR-0029 amendment 1) · language-designer (ADR-0029 amendment) → rust-engineer
 LANG-2, LANG-3, QA-9. A NULL flag (e.g. from `&.`) gets different answers by form: `AND()` TRUE
 (NULL skipped), the `AND`/`&&` operators an error, `IF` FALSE, `? :` an error, `NOT` TRUE but `!`
 an error; `FALSE AND NULL` is false but `NULL AND FALSE` errors. `? :` rejects numbers that `IF`
@@ -1354,19 +1355,21 @@ is, 0 false, other numbers true, NULL false, text `#VALUE!`. It applies to `IF`,
 than 3 arguments is an error.
 NaN as a condition is a `#NUM!` error (maintainer, 2026-11-22).
 
-### BL-090 · Dates in aggregates, sort and criteria · P2 · `ready` · language-designer → rust-engineer
+### BL-090 · Dates in aggregates, sort and criteria · P2 · `in-progress` (lane dates90) · language-designer → rust-engineer
 LANG-5, LANG-6. `MAX`/`MIN`/`SUM` of dates return 0 silently; no sort accepts dates; ISO date text is
 read only by `::DateTime`, so `COUNTIF(r, ">" & DATE(...))` matches nothing.
 Decision (maintainer): `MAX`/`MIN`/sort accept dates, `SUM` of dates is an error, criteria parse
 ISO date text.
 
-### BL-091 · One text form per value type · P2 · `ready` · language-designer → rust-engineer
+### BL-091 · One text form per value type · P2 · `in-progress` (lane text91; ADR-0034 being written) · language-designer → rust-engineer
 LANG-7, LANG-8, REL-8, LANG-12. Currency has four text forms and `&`/`CONCAT` print float noise
 (`0.30000000000000004`); `[DATE(..)]::String` prints Rust Debug output; `&` is an internal
 `__CONCAT__` call that formulas can call and that shows in the public AST; `"héllo".length()`
 counts bytes.
 Decision (maintainer): one text form per type; `.length()` counts characters; `&` gets its own AST
 node. The Currency text form is moot: BL-097 removes the Currency type.
+Also PERF-4 from BL-088: date to text is 2x slower (chrono re-parses the pattern; `.to_s()`/`CONCAT`
+format twice).
 
 ### BL-092 · API changes that are cheap only in 0.7.0 · P2 · `ready` · rust-engineer
 REL-4. Decision (maintainer): deprecate `Value::Json` (ADR-0030 step 2) and `Value::Currency`
@@ -1389,7 +1392,7 @@ floating Traefik tag and the Docker socket; no Host check in dev mode.
 ### BL-095 · Organise tests by feature area · P3 · `todo` · qa-engineer
 QA-5. Test files are named by PR; the same facts are pinned in 3-4 files.
 
-### BL-096 · Small leftovers from BL-077 · P3 · `in-progress` · rust-engineer
+### BL-096 · Small leftovers from BL-077 · P3 · `done` (PR #123) · rust-engineer
 `sk --json` exits 2 on the library path and 1 on the `:=` path for the same JSON errors; `sk_server`
 keeps JSON keys as written, so a key like `first-name` can't be read. Decide: unify the exit code,
 and whether `sk_server` sanitizes keys like the other surfaces.
@@ -1415,3 +1418,14 @@ only booleans. Fix `Criterion::from_value`/`matches` in `src/runtime/criteria.rs
 and 0), with a migration-guide row. No decision needed (Excel behaviour is clear).
 Also: the eager `__TERNARY__` arm in `src/runtime/logical.rs` is unreachable from expressions;
 delete it in the same PR.
+
+### BL-099 · Parse nested JSON objects as raw text · P3 · `todo` · performance-engineer (ADR: dependency feature) → rust-engineer
+From BL-086: serde's parse of nested objects costs about 115 bytes per request byte, the biggest cost
+the budget does not charge. serde_json's `raw_value` feature would keep nested objects as raw text
+and cut it; enabling it is a dependency-feature change, so it needs an ADR. Also check peak-RSS
+growth on Linux (macOS keeps freed memory counted, so the BL-086 numbers may overstate it).
+
+### BL-100 · Document `is_volatile` and `charge_variables` in ADR-0021 · P3 · `todo` · docs-engineer
+New public functions from #122 (`skillet::is_volatile`) and #124 (`skillet::charge_variables`).
+Add a short note to ADR-0021 (parsed-expression API) or to the Rust API section of the migration
+guide.

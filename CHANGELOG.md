@@ -19,6 +19,11 @@ Planned as 0.7.0. It contains breaking changes, marked **BREAKING** below; the
 lists each one with the old and the new result.
 
 ### Added
+- `skillet::is_volatile(&Expr)`: TRUE when the expression reads the clock anywhere inside it
+  (`NOW()`, `TODAY()`, `DATE()`/`TIME()` with no arguments) (BL-085, #122).
+- `skillet::charge_variables(&vars)` charges a variable map to the current evaluation budget;
+  `evaluate_with_json*` call it, a `HashMap` passed to `evaluate_with` is charged only when the
+  caller does (ADR-0011 amendment 5, BL-086, #124).
 - Casts chain left to right: `DATE(2026,1,1)::String::DateTime` is
   `(DATE(2026,1,1)::String)::DateTime` (was a parse error). `Unknown cast type` and
   `Expected type name after '::'` give the position of the type name (ADR-0031 amendment 1,
@@ -84,6 +89,29 @@ lists each one with the old and the new result.
 - `sk_http_bench --expr` selects the expression for the sweep (#80).
 
 ### Changed
+- **BREAKING:** one condition rule for every form (ADR-0029 amendment 1, BL-089, #120; see
+  [logical functions](https://github.com/zenbakiak/skillet/blob/develop/docs/guide/migration-0.7.md#logical-functions-and-operators-adr-0018-d-8-adr-0029)).
+  `IF`, `IFS`, `? :`, the `AND`/`OR`/`&&`/`||` operators, `NOT` and `!`, the
+  `filter`/`find`/`FILTER`/`FIND` lambdas and lambda criteria in `COUNTIF`/`SUMIF`/`AVERAGEIF`
+  read TRUE/FALSE as they are, a number as TRUE when it is not 0 and `NULL` as FALSE; text, dates
+  and arrays are `#VALUE!`, NaN is `#NUM!`. Compared with 0.6.3:
+  - `1 ? "a" : "b"` is `"a"` and `!NULL` is TRUE (both were errors); `!` behaves like `NOT`.
+  - `[0,1,2].filter(:x)` is `[1,2]` and `[0,5].find(:x)` is 5 (were `[]` and `NULL`);
+    `[1,2].filter("yes")` is `#VALUE!` (was `[]`).
+  - `IF(1,2,3,4)` is an error (the fourth argument was ignored).
+  - NaN from a host variable is `#NUM!` (was TRUE in `IF`, `AND()`, `OR()` and `XOR()`).
+  The `AND()`/`OR()`/`XOR()` builtins are not conditions: they skip a `NULL` argument (see Excel
+  logic below), so `AND(:flag, …)` passes when the flag is missing.
+- **BREAKING:** JSON variables count against the evaluation budget (ADR-0011 amendment 5, BL-086,
+  #124; see [evaluation limits](https://github.com/zenbakiak/skillet/blob/develop/docs/guide/migration-0.7.md#evaluation-limits-adr-0011)): `evaluate_with_json*`,
+  `sk --json`, `sk_server` `variables`, `sk_http_server` `arguments` and `GET /eval` parameters,
+  and `:arguments`. Variables that alone exceed the budget fail with the normal budget error
+  (they were free). Under the default 256 MiB no request under the 1 MiB cap is affected. The
+  server banners state the real worst-case memory (about 5.9 GiB at 8 threads, 3 GiB for the
+  4-thread Docker image), and large JSON arrays take less peak memory.
+- **BREAKING:** `sk --json` exits 1 for invalid JSON, a value that is not an object or two keys
+  that map to the same variable, with or without `:=`/`;` (the plain path exited 2). Evaluation
+  errors still exit 2 (BL-096, #123).
 - **BREAKING:** dates as text are ISO 8601 UTC: `DATE(2026,1,1)::String` is
   `"2026-01-01T00:00:00Z"` (was `"1767225600"`), in `::String`, `.to_s()`, `CONCAT`, `&`, `JOIN`
   and `.to_json()`; `.join()` and `TEXTJOIN` accept dates. Server wire formats are unchanged
@@ -107,7 +135,9 @@ lists each one with the old and the new result.
   `evaluate_with_json*`, `sk --json` and `sk_http_server`, `:arguments` is always the whole
   object; a key named `arguments` is `:arguments.arguments` (was the key's value). Two keys that
   map to the same variable (`a-b` and `a_b`) are an error, HTTP 400 on the server (one used to
-  replace the other silently). `sk_server` is unchanged.
+  replace the other silently). `sk_server` `variables` follow the same key rules: `first-name` is
+  read as `:first_name` (it could not be read) and colliding keys are an error; it builds no
+  `:arguments` (BL-096, #123).
 - **BREAKING:** `/reload-hooks` removes custom functions whose hook file is gone (they stayed
   callable), registers the new set before removing anything, changes nothing when the hooks
   directory cannot be read, and clears the result cache (BL-077, #111).
@@ -233,7 +263,8 @@ lists each one with the old and the new result.
   assignment formulas, so a custom function can shadow a builtin there too (ADR-0016) (#82).
 - `IF` and `IFS` evaluate only the chosen branch (#82). **BREAKING:** the condition must be
   TRUE/FALSE, a number or `NULL` (false); anything else (`IF("x", 1, 2)`) is `#VALUE!`, and `IFS`
-  with no true condition is `#N/A` (ADR-0018 D-8, B-18, #102).
+  with no true condition is `#N/A` (ADR-0018 D-8, B-18, #102). Since #120 every condition follows
+  this rule (see above).
 - **BREAKING:** `JQ` result shape follows the path (ADR-0014): a singular path (`.name`, `['name']`,
   `[n]`) returns the value, or `NULL` when it misses (was `[]`); any other path returns an array,
   even with one match. `JQ({"a":[3]}, "$.a[*]")` is `[3]` (was `3`) (#76).
@@ -297,6 +328,9 @@ lists each one with the old and the new result.
   (ADR-0032, #110).
 
 ### Fixed
+- `sk_http_server` result cache: results that read the clock (`NOW()`, `TODAY()`, `DATE()`/`TIME()`
+  with no arguments, at any depth) are never cached, so they no longer repeat an old value, and a
+  cached result has the shape `include_variables` asks for (BL-085, #122).
 - A lambda criterion that reads `:x` is evaluated per item even when the caller defines `x`
   (BL-081, #116).
 - `CONCAT` and `&` no longer drop a `::Currency` result or a DateTime: the amount is written as
@@ -337,6 +371,9 @@ lists each one with the old and the new result.
   now give `Expression nested too deeply (max 128)` (#79).
 
 ### Security
+- JSON request variables are charged to the evaluation budget, so one request can no longer use far
+  more memory than `--max-eval-bytes` allows (BL-086, #124).
+- Two different requests can no longer share an HTTP result-cache entry (BL-085, #122).
 - `COUNTIF`/`SUMIF`/`AVERAGEIF` wildcard criteria match in linear time and honour the evaluation
   deadline (BL-080, #116).
 - Request variables can no longer replace the reserved `:arguments` or silently overwrite each
