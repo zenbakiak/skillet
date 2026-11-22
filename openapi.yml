@@ -23,6 +23,7 @@ info:
     | `--token` | `SKILLET_AUTH_TOKEN` | Eval token |
     | `--admin-token` | `SKILLET_ADMIN_TOKEN` | Admin token (JS management, `DELETE /cache`) |
     | `--cors-origin` | `SKILLET_CORS_ORIGIN` | `Access-Control-Allow-Origin` value |
+    | `--max-connections-per-ip` | `SKILLET_MAX_CONNECTIONS_PER_IP` | Open connections allowed from one IP address (default: no limit) |
 
     The flag wins over the environment variable. An empty value is refused at start-up.
     If only one token is set, the other one inherits it.
@@ -59,6 +60,14 @@ info:
       budget) in time needs about 25 MB/s.
     - Evaluation limits (nesting depth, 256 MiB budget, 10 s evaluation deadline) are described
       on `/eval` and in docs/guide/limits.md.
+
+    ## Connection limit
+    With `--max-connections-per-ip N` (or `SKILLET_MAX_CONNECTIONS_PER_IP`), a connection from
+    an IP address that already has N open connections is answered at once with HTTP 429 and
+    `"error": "Too many connections from this address (max N)"`, then closed; it never reaches
+    a worker. `0`, an empty value or text is refused at start-up. Without the setting there is
+    no limit. Behind a reverse proxy every client has the proxy's address, so set the limit at
+    the proxy instead. See ADR-0025.
 
     ## Builds without the `plugins` feature
     The JavaScript endpoints (`/upload-js`, `/update-js`, `/delete-js`, `/list-js`,
@@ -98,6 +107,8 @@ paths:
               schema:
                 type: string
                 example: "<!DOCTYPE html><html>..."
+        '429':
+          $ref: '#/components/responses/TooManyConnections'
 
   /health:
     get:
@@ -126,6 +137,8 @@ paths:
                   entries: 150
                   evictions: 12
                   total_saved_time_ms: 1248.67
+        '429':
+          $ref: '#/components/responses/TooManyConnections'
 
   /eval:
     post:
@@ -217,6 +230,8 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         '415':
           $ref: '#/components/responses/UnsupportedMediaType'
+        '429':
+          $ref: '#/components/responses/TooManyConnections'
 
     get:
       tags: [evaluation]
@@ -278,6 +293,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          $ref: '#/components/responses/TooManyConnections'
 
   /upload-js:
     post:
@@ -395,6 +412,8 @@ paths:
                 error: "JavaScript plugins are not enabled in this build"
         '415':
           $ref: '#/components/responses/UnsupportedMediaType'
+        '429':
+          $ref: '#/components/responses/TooManyConnections'
 
   /update-js:
     put:
@@ -472,6 +491,8 @@ paths:
                 $ref: '#/components/schemas/UpdateJSResponse'
         '415':
           $ref: '#/components/responses/UnsupportedMediaType'
+        '429':
+          $ref: '#/components/responses/TooManyConnections'
 
   /delete-js:
     delete:
@@ -520,6 +541,8 @@ paths:
                 $ref: '#/components/schemas/DeleteJSResponse'
         '415':
           $ref: '#/components/responses/UnsupportedMediaType'
+        '429':
+          $ref: '#/components/responses/TooManyConnections'
 
   /list-js:
     get:
@@ -577,6 +600,8 @@ paths:
               example:
                 success: false
                 error: "JavaScript plugins are not enabled in this build"
+        '429':
+          $ref: '#/components/responses/TooManyConnections'
 
   /reload-hooks:
     post:
@@ -618,6 +643,8 @@ paths:
                 error: "JavaScript plugins are not enabled in this build"
         '415':
           $ref: '#/components/responses/UnsupportedMediaType'
+        '429':
+          $ref: '#/components/responses/TooManyConnections'
 
   /cache:
     delete:
@@ -643,9 +670,23 @@ paths:
                 example:
                   success: true
                   message: "Expression cache cleared successfully"
+        '429':
+          $ref: '#/components/responses/TooManyConnections'
 
 components:
   responses:
+    TooManyConnections:
+      description: |
+        Only when the server runs with `--max-connections-per-ip N` (or
+        `SKILLET_MAX_CONNECTIONS_PER_IP`): this address already has N open connections. Sent
+        before the request is read, with `Connection: close`. See "Connection limit".
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error: "Too many connections from this address (max 2)"
     UnsupportedMediaType:
       description: |
         The request has a body but its `Content-Type` is not `application/json` (or, on

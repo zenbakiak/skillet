@@ -52,12 +52,17 @@ curl http://127.0.0.1:8080/health
 | `HOST` | Bind address inside the container | `0.0.0.0` | No |
 | `SK_THREADS` | Worker threads | `2` | No |
 | `SKILLET_HOOKS_DIR` | JS functions directory | `/app/hooks` | No |
+| `SKILLET_MAX_CONNECTIONS_PER_IP` | Open connections allowed from one IP address; more get HTTP 429. Passed through to `sk_http_server` as is; `0` or an empty value stops start-up | _(no limit)_ | No |
 | `DOCKER_PORT` | Host port (Compose only) | `8080` | No |
 | `SKILLET_PUBLISH_ADDR` | Host address the port is published on (Compose only) | `127.0.0.1` | No |
 
 The entrypoint (`docker/entrypoint.sh`) passes the tokens to `sk_http_server` through the
 environment only. They are never put on the command line (where `ps` and `docker inspect` would
 show them) and never written to the container log.
+
+`SKILLET_MAX_CONNECTIONS_PER_IP` is not in `docker-compose.yml`; add it under `environment:`
+(or pass `-e` to `docker run`) to turn the limit on. Behind a reverse proxy every client has the
+proxy's address, so set the limit at the proxy instead (ADR-0025).
 
 ### Network exposure
 

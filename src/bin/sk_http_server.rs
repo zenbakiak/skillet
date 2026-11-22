@@ -10,6 +10,7 @@ use std::sync::{
 use threadpool::Builder as ThreadPoolBuilder;
 
 use http_server::auth::TokenConfig;
+use http_server::conn_limit::{self, Admission, ConnLimiter};
 use http_server::daemon::{setup_signal_handlers, wake_address};
 use http_server::eval::{handle_cache_clear, handle_eval_get, handle_eval_post, handle_health};
 #[cfg(feature = "plugins")]
@@ -183,6 +184,7 @@ fn main() {
         pid_file,
         bind_host,
         thread_count,
+        max_conns_per_ip,
     } = parse_args(&args[2..]);
 
     // Apply intelligent token logic
@@ -215,6 +217,7 @@ fn main() {
     let request_counter = Arc::new(AtomicU64::new(0));
     let server_token = Arc::new(auth_token.clone());
     let server_admin_token = Arc::new(admin_token.clone());
+    let limiter = max_conns_per_ip.map(ConnLimiter::new);
 
     // Create thread pool. Workers get a 16 MB stack (default 2 MB) so expressions up to
     // MAX_NESTING_DEPTH have headroom in debug builds too (BL-017).
@@ -232,6 +235,9 @@ fn main() {
         allowed_origin.as_deref(),
         thread_count,
     );
+    if let (false, Some(max)) = (daemon_mode, max_conns_per_ip) {
+        eprintln!("🚦 Max connections per IP: {}", max);
+    }
 
     // Accept loop. `accept` blocks (no polling delay, BL-039); the shutdown handler clears
     // `running` and connects once to wake it, and that connection is dropped unserved.
@@ -242,12 +248,22 @@ fn main() {
         }
         match accepted {
             Ok((stream, _addr)) => {
+                // Counted before the connection is queued, so a rejected one never reaches a
+                // worker (ADR-0025).
+                let guard = match conn_limit::admit(limiter.as_ref(), &stream) {
+                    Admission::Accept(guard) => guard,
+                    Admission::Reject(max) => {
+                        conn_limit::reject(stream, too_many_connections(max).as_bytes());
+                        continue;
+                    }
+                };
                 let stats = Arc::clone(&stats);
                 let request_counter = Arc::clone(&request_counter);
                 let server_token = Arc::clone(&server_token);
                 let server_admin_token = Arc::clone(&server_admin_token);
 
                 pool.execute(move || {
+                    let _guard = guard; // released when the connection is closed
                     handle_http_request(
                         stream,
                         stats,
@@ -272,6 +288,23 @@ fn main() {
     }
 }
 
+/// The full HTTP 429 response for a connection over the per-IP limit.
+fn too_many_connections(max: usize) -> String {
+    let body = conn_limit::rejection_json(max);
+    format!(
+        "HTTP/1.1 429 Too Many Requests\r\n\
+         {}\
+         Content-Type: application/json\r\n\
+         Content-Length: {}\r\n\
+         Connection: close\r\n\
+         \r\n\
+         {}",
+        http_server::cors::response_headers(),
+        body.len(),
+        body
+    )
+}
+
 fn print_usage() {
     eprintln!("Usage: sk_http_server <port> [options]");
     eprintln!();
@@ -288,6 +321,10 @@ fn print_usage() {
     eprintln!("  --cors-origin <org>  Access-Control-Allow-Origin value, e.g. https://app.example");
     eprintln!("                       or * (or set SKILLET_CORS_ORIGIN; the flag wins). Default:");
     eprintln!("                       * when a token is set, otherwise no CORS headers");
+    eprintln!("  --max-connections-per-ip <n>");
+    eprintln!("                       Open connections allowed from one IP address; more get");
+    eprintln!("                       429 (or set SKILLET_MAX_CONNECTIONS_PER_IP; the flag wins).");
+    eprintln!("                       Default: no limit");
     eprintln!();
     eprintln!("Requests with a body must send Content-Type: application/json (415 otherwise);");
     eprintln!("/upload-js and /update-js also accept multipart/form-data.");
@@ -317,6 +354,7 @@ struct ServerArgs {
     pid_file: String,
     bind_host: String,
     thread_count: usize,
+    max_conns_per_ip: Option<usize>,
 }
 
 fn exit_with(message: &str) -> ! {
@@ -342,7 +380,9 @@ fn parse_args(args: &[String]) -> ServerArgs {
         pid_file: "skillet-http-server.pid".to_string(),
         bind_host: "127.0.0.1".to_string(),
         thread_count: num_cpus::get(),
+        max_conns_per_ip: None,
     };
+    let mut max_conns_flag: Option<String> = None;
     let mut i = 0;
 
     while i < args.len() {
@@ -364,6 +404,7 @@ fn parse_args(args: &[String]) -> ServerArgs {
             "--token" => parsed.auth_token = Some(flag_value(args, &mut i, "a value")),
             "--admin-token" => parsed.admin_token = Some(flag_value(args, &mut i, "a value")),
             "--cors-origin" => parsed.cors_origin = Some(flag_value(args, &mut i, "an origin")),
+            conn_limit::FLAG => max_conns_flag = Some(flag_value(args, &mut i, "a number")),
             other => exit_with(&format!("Unknown argument: {other}")),
         }
         i += 1;
@@ -391,6 +432,8 @@ fn parse_args(args: &[String]) -> ServerArgs {
             );
         }
     }
+    parsed.max_conns_per_ip =
+        conn_limit::resolve(max_conns_flag.as_deref()).unwrap_or_else(|e| exit_with(&e));
     parsed
 }
 

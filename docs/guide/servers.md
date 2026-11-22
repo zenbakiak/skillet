@@ -157,6 +157,49 @@ Error: SKILLET_ADMIN_TOKEN must not be empty; give a non-empty value or unset it
 
 If only one token is set, the other one inherits it (the banner warns about it).
 
+### Connection limit per IP address
+
+Each connection holds one worker thread while it is open, so one client with many idle
+connections can keep every worker busy. Both servers can limit how many connections one IP
+address has open at the same time (ADR-0025):
+
+| Setting | Meaning |
+|---|---|
+| `--max-connections-per-ip <n>` or `SKILLET_MAX_CONNECTIONS_PER_IP` (flag wins) | at most `n` open connections per IP address; the port is ignored |
+| not set | no limit (the default) |
+
+`0`, an empty value or text that is not a whole number is refused at start-up with exit code 1:
+
+```console
+$ sk_http_server 5601 --max-connections-per-ip 0
+Error: --max-connections-per-ip must be a whole number greater than 0 (got "0")
+$ SKILLET_MAX_CONNECTIONS_PER_IP= sk_server 5602
+Error: SKILLET_MAX_CONNECTIONS_PER_IP must not be empty; give a number greater than 0 or unset it
+```
+
+A connection over the limit is answered at once, before anything is read, and closed. It never
+reaches a worker. Captured from a debug build with `--max-connections-per-ip 1` and one
+connection already open:
+
+```console
+sk_http_server:
+HTTP/1.1 429 Too Many Requests
+Content-Type: application/json
+Content-Length: 74
+Connection: close
+
+{"error":"Too many connections from this address (max 1)","success":false}
+
+sk_server:
+{"error":"Too many connections from this address (max 1)","success":false}
+```
+
+The slot is given back when the connection closes. With the limit set, the banner shows
+`🚦 Max connections per IP: <n>`.
+
+Behind a reverse proxy or load balancer every client has the proxy's address, so the server would
+limit all clients together. Set the limit at the proxy instead and leave this setting unset.
+
 ### Cross-origin requests and request bodies (`sk_http_server`)
 
 Browsers only let a page read a response from another origin when the response allows it

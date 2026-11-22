@@ -12,6 +12,7 @@ goes over a limit returns an ordinary `Error`; it never crashes the process or t
 | Request size | 1 MB (1,048,576 bytes) | both servers | HTTP 400 `413 Payload Too Large` / `Request too large (max 1MB)` (`sk_server`) |
 | Request read time | 30 s for the whole request | both servers | HTTP 400 `408 Request Timeout` / `Request read timed out (max 30 s)` (`sk_server`) |
 | Response write | 10 s for the whole response | both servers | none (the response is cut short and the connection closed) |
+| Connections per IP address | off by default; `--max-connections-per-ip N` or `SKILLET_MAX_CONNECTIONS_PER_IP` | both servers | HTTP 429 `Too many connections from this address (max N)` / the same JSON line (`sk_server`); see [servers](servers.md#connection-limit-per-ip-address) |
 | Cache entry | 64 KiB | `sk_http_server` result cache | none (bigger results are just not cached) |
 | Parse cache | 256 expressions, 128 KiB of text, 32 KiB per expression, per worker thread | both servers | none (longer expressions are parsed on every request) |
 | JS plugin heap | 64 MiB per call | library, CLI, servers (`plugins` feature) | `JS function NAME ran out of memory (max 64 MB)` |
