@@ -10,6 +10,8 @@ Check these first. They change results without an error:
 2. **`COUNT`** now counts numbers only.
 3. **`MOD`** with negative numbers, **`TRIM`** with inner spaces, **`ROUND`** with negative digits.
 4. **`JQ`** with a wildcard path that matches one item now returns an array.
+5. **`%` before `-` or `+`** is now a percent, not modulo: `10 % -3` is `-2.9` (was `1`).
+6. **`1e3`** is now `1000` (it was silently `1`).
 
 ## Expressions
 
@@ -20,10 +22,34 @@ left-associative.
 | Expression | 0.6 | 0.7 | Keep the old result with |
 |---|---|---|---|
 | `-2^2` | `-4` | `4` | `-(2^2)` |
+| `10 % -3`, `10%-3` (BL-066) | `1` (modulo) | `-2.9` (`10% - 3`) | `MOD(10, -3)` (Excel sign) or `10 % (-3)` |
 | `-:x^2` (`x` = 3) | `-9` | `9` | `-(:x^2)` |
 | `2*-3^2` | `-18` | `18` | `2*-(3^2)` |
 | `2^3^2` | `512` | `64` | `2^(3^2)` |
 | `0-2^2`, `1-2^2`, `2^-2` | `-4`, `-3`, `0.25` | unchanged | |
+
+### Numbers and coercion (BL-066, BL-058)
+Like Excel, the arithmetic operators and the scalar math builtins now convert numeric text and
+booleans to numbers, and the operators read `NULL` as `0`. Text that is not a number is a
+`#VALUE!` error. Scientific notation is a number literal. Aggregates over arrays (`SUM`,
+`AVERAGE`, …) still skip text, and `DateTime` arithmetic is unchanged.
+
+| Expression | 0.6 | 0.7 |
+|---|---|---|
+| `1e3`, `2.5e-4` | `1`, `2.5` (rest silently dropped) | `1000`, `0.00025` |
+| `1e308 * 10` | `1` | `Error: Result is not a finite number (#NUM!)` |
+| `1x`, `2ex` | `1`, `2` | `Error: Invalid number literal` |
+| `"3" + 1`, `" 4 " * 2` | `Error` | `4`, `8` |
+| `TRUE + 1`, `-TRUE` | `Error` | `2`, `-1` |
+| `1 + NULL`, `-NULL` | `Error` | `1`, `0` |
+| `"abc" + 1`, `"a" + "b"` | `Error: Arithmetic op on non-number` | `Error: Cannot convert "abc" to a number (#VALUE!)` |
+| `ABS("-3")`, `ABS(TRUE)`, `FLOOR("3.7")` | `0`, `0`, `0` | `3`, `1`, `3` |
+| `ABS("x")` | `0` | `Error: ABS: cannot convert "x" to a number (#VALUE!)` |
+| `PMT("0.05", 10, 1000)`, `DATE("2026", 1, 1)` | `Error` | the same as with numbers |
+| `SUM([1, "2", TRUE])` | `1` | unchanged |
+| `ABS(NULL)`, `DATE(2026, 1, NULL)`, `DATE(2026, 1, 1) + NULL` | `Error` | unchanged |
+
+Use `&` to join text: `"a" & "b"` is `"ab"`.
 
 ### Errors instead of numbers (ADR-0018 D-1)
 Where Excel returns an error value (`#DIV/0!`, `#NUM!`, `#VALUE!`, `#N/A`), Skillet now returns an
@@ -34,7 +60,7 @@ Where Excel returns an error value (`#DIV/0!`, `#NUM!`, `#VALUE!`, `#N/A`), Skil
 | `10 / 0`, `0 / 0` | `inf`, `NaN` | `Error` |
 | `MOD(5, 0)` | `NaN` | `Error` |
 | `SQRT(-1)`, `POWER(0, -1)` | `NaN`, `inf` | `Error` |
-| `ABS("x")`, `SQRT("x")`, `FLOOR("3.7")` | `0` | `Error` |
+| `ABS("x")`, `SQRT("x")` | `0` | `Error` (`#VALUE!`) |
 | `AVERAGE()`, `MEDIAN()`, `STDEV_P()`, `VAR_P()` | `0` | `Error` |
 | `PERCENTILE_INC([], 0.5)`, `QUARTILE_INC([], 1)` | `0` | `Error` |
 | `MODE_SNGL(1, 2, 3)` (no repeated value) | `1` | `Error` |
