@@ -539,13 +539,27 @@ paths:
                 error: "Invalid filename"
         '404':
           description: |
-            Function file not found, or JavaScript plugins are not enabled in this build
-            (`"error": "JavaScript plugins are not enabled in this build"`; that body has no
-            `message` field).
+            JavaScript plugins are not enabled in this build (server built without the
+            `plugins` feature). The body has no `message` field.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                error: "JavaScript plugins are not enabled in this build"
+        '500':
+          description: |
+            The file does not exist or could not be deleted. A missing file is a 500, not a
+            404: the 404 above only means the plugins are not built in.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/DeleteJSResponse'
+              example:
+                success: false
+                message: "Failed to delete file 'old_function.js'"
+                error: "File 'old_function.js' does not exist"
         '415':
           $ref: '#/components/responses/UnsupportedMediaType'
         '429':
