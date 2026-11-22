@@ -51,8 +51,10 @@ Agents prepare steps 1–3; **only a human publishes, tags, or pushes to `main`.
 - `Cargo.toml` `include`: `Cargo.toml`, README, CHANGELOG, licences, `docs/guide/`, `docs/reference/`,
   `openapi.yml`, `src/`, `tests/`. `repository` is set; no `homepage`.
 - `CHANGELOG.md` exists at the root (Keep a Changelog).
-- Git hooks exist (`.githooks/`, ADR-0009), but GitHub branch protection on `main`/`develop`
-  (required PR + required CI check) is not set yet → BL-022.
+- Git hooks exist (`.githooks/`, ADR-0009). A GitHub ruleset protects `main`, `develop` and
+  `release/*` (BL-022): PR required, no force-push or deletion, required checks `harness gate`,
+  `cargo audit` and `MSRV build` with up-to-date branches. Renaming a CI job breaks merges until
+  the ruleset is updated.
 - `cross` is pinned (ADR-0022): `CROSS_REV` commit in `release.yml`, installed `--locked`, and the
   musl images pinned by digest in `Cross.toml`. Bump the commit and the digests together.
 - Actions are pinned by tag (`@v4`, `@v2`, `dtolnay/rust-toolchain@master`), not by SHA (BL-056

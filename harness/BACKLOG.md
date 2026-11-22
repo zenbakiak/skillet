@@ -411,7 +411,7 @@ is documented. Output is a table QA turns into tests. Also decide the canonical 
 Create root `CHANGELOG.md` (Keep a Changelog) back-filled from git tags, and run
 `cargo publish --dry-run` / `cargo package --list` (expected to catch the BL-006 `include` issue).
 
-### BL-022 · GitHub branch protection for `main`/`develop` · P1 · `in-progress` (ruleset "protected branchews" active 2026-11-21: PR required, no force-push, no deletion on `main`, `develop`, `releases/**/*`; still missing: required status checks, and the pattern should be `release/*`, `hotfix/*` per ADR-0009) · release-engineer (human applies)
+### BL-022 · GitHub branch protection for `main`/`develop` · P1 · `done` (ruleset "protected branchews", 2026-11-21: `main`, `develop`, `release/*`; PR required, no force-push or deletion, no bypass; required checks: harness gate, cargo audit, MSRV build, branch must be up to date; plus CodeQL, code quality, Copilot review) · release-engineer (human applies)
 Client-side hooks (ADR-0009) can be bypassed. Require PR review and a passing CI check on
 `main` and `develop`; block force-push. Depends on BL-004 for the CI check.
 
