@@ -329,8 +329,9 @@ POST /eval {"expression": "=:a_b", "arguments": {"a-b": 1, "a_b": 2}}
 400 {"success":false,"result":null,"error":"JSON keys \"a-b\" and \"a_b\" both map to variable :a_b",…}
 ```
 
-`sk_server` does not build `:arguments` and uses keys as written; there a variable named
-`arguments` is an ordinary variable, and `a-b` and `a_b` are two variables.
+`sk_server` sanitizes `variables` keys the same way (`first-name` is `:first_name`) and rejects
+two keys that give the same variable with `"success": false` (BL-096). It does not build
+`:arguments`, so there a key named `arguments` is an ordinary variable.
 
 ### JavaScript hook files (`sk_http_server`)
 
@@ -568,7 +569,7 @@ echo '{"expression": "=AVG(JQ(:data, \"$.scores[?(@.subject == '\''math'\'')].va
 echo '{"expression": "=SUM(:accounts.map(:x.amount))", "variables": {"accounts": [{"amount": 100}, {"amount": 200}, {"amount": 300}]}}' | nc localhost 8080
 ```
 
-These answer `600.0`, `81.5` and `600.0` (debug build of `bugfix/bl-077-arguments-reload-hooks`).
+The last three answer `600.0`, `81.5` and `600.0`.
 `JQ(:arguments, …)` works on `sk_http_server` only; on `sk_server` it answers
 `Missing variable: :arguments`.
 
