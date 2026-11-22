@@ -15,13 +15,18 @@ commit messages, so they are brief.
 ## [Unreleased]
 
 Planned as 0.7.0. It contains breaking changes, marked **BREAKING** below; the
-[migration guide](docs/guide/migration-0.7.md) lists each one with the old and the new result.
+[migration guide](https://github.com/zenbakiak/skillet/blob/develop/docs/guide/migration-0.7.md)
+lists each one with the old and the new result.
 
 ### Added
+- Casts chain left to right: `DATE(2026,1,1)::String::DateTime` is
+  `(DATE(2026,1,1)::String)::DateTime` (was a parse error). `Unknown cast type` and
+  `Expected type name after '::'` give the position of the type name (ADR-0031 amendment 1,
+  BL-078, #112).
 - `sk_http_server` and `sk_server`: `--eval-timeout <seconds>` / `SKILLET_EVAL_TIMEOUT` (1–86400)
   and `--max-eval-bytes <bytes>` (accepts `K`/`M`/`G`) / `SKILLET_MAX_EVAL_BYTES`; the flag wins,
   and `0` or an invalid value stops start-up. The banner shows both and the worst-case memory
-  (ADR-0011 amendment 4, BL-075, #106; see [evaluation limits](docs/guide/migration-0.7.md#evaluation-limits-adr-0011)).
+  (ADR-0011 amendment 4, BL-075, #106; see [evaluation limits](https://github.com/zenbakiak/skillet/blob/develop/docs/guide/migration-0.7.md#evaluation-limits-adr-0011)).
 - `::DateTime` reads the ISO 8601 text that dates now print as (`2026-01-01T00:00:00Z`), so a date
   round-trips through text; integer text still works (ADR-0031, BL-076, #108).
 - `DATEDIF(start, end, unit)` with Excel's worksheet codes `y m d md ym yd`; `#NUM!` when start is
@@ -64,7 +69,7 @@ Planned as 0.7.0. It contains breaking changes, marked **BREAKING** below; the
   errors and limits are the same (#80).
 - New Excel builtins (ADR-0018): `LEN`, `TEXTJOIN`, `TODAY`, `PPMT`, `PV`, `NPV`, `COUNTA`,
   `AVERAGEIF`, the sample statistics `STDEV.S`/`STDEV` and `VAR.S`/`VAR`, and the names `MODE`,
-  `PERCENTILE` and `QUARTILE` (#82, #83, #84).
+  `PERCENTILE` and `QUARTILE` (#82, #83).
 - Dotted function names parse, so `STDEV.P(…)`, `PERCENTILE.INC(…)` and the like work (#82).
 - `&` joins text, and a `%` suffix divides by 100 (`15%` is 0.15); `%` followed by an operand is
   still modulo (#82).
@@ -82,23 +87,45 @@ Planned as 0.7.0. It contains breaking changes, marked **BREAKING** below; the
 - **BREAKING:** dates as text are ISO 8601 UTC: `DATE(2026,1,1)::String` is
   `"2026-01-01T00:00:00Z"` (was `"1767225600"`), in `::String`, `.to_s()`, `CONCAT`, `&`, `JOIN`
   and `.to_json()`; `.join()` and `TEXTJOIN` accept dates. Server wire formats are unchanged
-  (ADR-0031, BL-076, #108; see [dates as text](docs/guide/migration-0.7.md#dates-as-text-adr-0031)).
-- **BREAKING:** `SUM`, `PRODUCT`, `AVERAGE`, `MIN` and `MAX` return Currency when any counted value
-  is Currency: `SUM(10::Currency, 5)` is `Currency(15)`. Methods such as `.sum()` are unchanged
-  (ADR-0031, B-13, #108; see [currency in the aggregates](docs/guide/migration-0.7.md#currency-in-the-aggregates-adr-0031-b-13)).
+  (ADR-0031, BL-076, #108; see [dates as text](https://github.com/zenbakiak/skillet/blob/develop/docs/guide/migration-0.7.md#dates-as-text-adr-0031)).
+- **BREAKING:** one number type (ADR-0033, BL-097, #119; see
+  [currency is a conversion](https://github.com/zenbakiak/skillet/blob/develop/docs/guide/migration-0.7.md#currency-is-a-conversion-adr-0033)).
+  `x::Currency` rounds half away from zero to 4 decimals and returns a Number:
+  `1.23456789::Currency` is `1.2346` (was `Currency(1.23456789)`). No operator or builtin returns
+  Currency. What changes for a `::Currency` result:
+  - As text it is a plain number: `(2.5::Currency)::String` and `JOIN` give `"2.5"` (was
+    `"2.5000"`), `.to_s()` gives `"2.5"` (was `"2.50"`).
+  - It compares as a number: `1 == 1::Currency` is TRUE (was FALSE), and `CONTAINS`, `UNIQUE` and
+    the ordering operators treat it as one.
+  - The operators, date arithmetic, `ROUND`, `.sort()` and the number methods accept it (were
+    errors): `1::Currency + 1` is 2, `DATE(2026,1,1) + 1::Currency` is 2026-01-02.
+  - (wire format) `sk`, `sk_server` and `sk_http_server` report `"type": "Number"` (was
+    `"Currency"`); `"result"` is unchanged.
+  Currency rules from earlier 0.7.0 development builds (#97, #108, #112, #115) did not ship.
+- **BREAKING:** JSON variables (BL-077, #111; see
+  [JSON variables](https://github.com/zenbakiak/skillet/blob/develop/docs/guide/migration-0.7.md#json-variables-bl-077)). In
+  `evaluate_with_json*`, `sk --json` and `sk_http_server`, `:arguments` is always the whole
+  object; a key named `arguments` is `:arguments.arguments` (was the key's value). Two keys that
+  map to the same variable (`a-b` and `a_b`) are an error, HTTP 400 on the server (one used to
+  replace the other silently). `sk_server` is unchanged.
+- **BREAKING:** `/reload-hooks` removes custom functions whose hook file is gone (they stayed
+  callable), registers the new set before removing anything, changes nothing when the hooks
+  directory cannot be read, and clears the result cache (BL-077, #111).
+- `.join()` writes `NULL` as empty text, the same as `JOIN` (was an error) (BL-078, #112).
+- The crate is edition 2024 (ADR-0032); MSRV unchanged at 1.85 (BL-014, #110).
 - Servers: the evaluation timeout default is 20 s (was a fixed 10 s), the budget stays 256 MiB but
   is configurable, and the response-size cap follows it. The Docker image runs 4 threads (was 2)
   (ADR-0011 amendment 4, BL-075, #106).
 - **BREAKING:** parsing requires the end of the input. Tokens after the expression are an error,
   `Unexpected token after end of expression`, at the first extra token (`=1 2`,
   `=42 as string`); before, they were dropped silently. One trailing `;` is still allowed. Error
-  positions count from the start of the caller's input, including a leading `=` (BL-069, #93; [parsing](docs/guide/migration-0.7.md#parsing-requires-the-end-of-input-bl-069-93)).
+  positions count from the start of the caller's input, including a leading `=` (BL-069, #93; [parsing](https://github.com/zenbakiak/skillet/blob/develop/docs/guide/migration-0.7.md#parsing-requires-the-end-of-input-bl-069-93)).
 - **BREAKING:** the `AND` and `OR` operators work. They were never lexed, so everything from
   `AND` on was dropped: `TRUE AND FALSE` was TRUE and is now FALSE. `AND(...)`/`OR(...)` before an
   operand are still the builtins (BL-069, #93). `^` followed by unary minus already matched Excel
   (`2^-2` is 0.25, `0^-1` is `#DIV/0!`); tests now pin it (BL-060, #93).
 - **BREAKING:** Excel logic (ADR-0029, ADR-0018 D-8, #102; see
-  [logical functions](docs/guide/migration-0.7.md#logical-functions-and-operators-adr-0018-d-8-adr-0029)):
+  [logical functions](https://github.com/zenbakiak/skillet/blob/develop/docs/guide/migration-0.7.md#logical-functions-and-operators-adr-0018-d-8-adr-0029)):
   - The operators `AND`, `OR`, `&&` and `||` short-circuit (`FALSE AND 1/0` is FALSE). The
     builtins `AND()`/`OR()` still evaluate every argument.
   - The `AND`/`OR`/`NOT`/`XOR` builtins skip text and `NULL` inside arrays and a `NULL` argument;
@@ -108,23 +135,21 @@ Planned as 0.7.0. It contains breaking changes, marked **BREAKING** below; the
   (`yyyy q m y d w ww h n s`). Three codes change silently: `"m"` is months (was minutes), `"y"`
   is days (was years) and `DATEADD`'s `"w"` adds a day (was a week). The long words are unchanged.
   `DATEADD` clamps months to the end of the month, as VBA does (BL-074, B-15, #103; see
-  [date units](docs/guide/migration-0.7.md#date-units-follow-excel-b-15)).
-- **BREAKING:** date and currency arithmetic like Excel (ADR-0027, amends ADR-0023, BL-070, #97;
-  see [dates](docs/guide/migration-0.7.md#dates-adr-0018-d-5) and
-  [currency](docs/guide/migration-0.7.md#currency-in-arithmetic-adr-0027)):
+  [date units](https://github.com/zenbakiak/skillet/blob/develop/docs/guide/migration-0.7.md#date-units-follow-excel-b-15)).
+- **BREAKING:** date arithmetic like Excel (ADR-0027, amends ADR-0023, BL-070, #97; see
+  [dates](https://github.com/zenbakiak/skillet/blob/develop/docs/guide/migration-0.7.md#dates-adr-0018-d-5)):
   - In `DateTime ± x` and `x + DateTime`, `x` converts with the ADR-0023 rule:
     `DATE(2026,1,1) + NULL` is the date, `+ "1"` or `+ TRUE` the next day, other text `#VALUE!`.
-  - `+ - * /` and unary minus keep Currency; `Currency / Currency`, `^` and `%` give a Number.
-    Results are not rounded. Some error messages change to `#VALUE!`.
+    Some error messages change to `#VALUE!`.
   - Methods are unchanged: `[1,"2"].sum()` still errors.
-- **BREAKING:** text builtins follow Excel (ADR-0018, #96; [builtins](docs/guide/migration-0.7.md#builtins-that-now-match-excel-adr-0018)): `LEFT`, `RIGHT`, `MID` and `REPLACE`
+- **BREAKING:** text builtins follow Excel (ADR-0018, #96; [builtins](https://github.com/zenbakiak/skillet/blob/develop/docs/guide/migration-0.7.md#builtins-that-now-match-excel-adr-0018)): `LEFT`, `RIGHT`, `MID` and `REPLACE`
   give `#VALUE!` for a negative length or a start below 1 instead of clamping (`LEFT(x,-1)`,
   `MID(x,0,n)`). `SORT` sorts text case-insensitively, orders mixed values numbers < text <
   booleans, and is stable; sorting text used to be an error.
 - **BREAKING** (wire format): `sk_http_server` answers an oversized request with HTTP 413 and a
   slow one with 408 (both were 400). It reads the rest of the request first (bounded), so the
   client gets the error instead of a reset (BL-049, #99; see
-  [servers](docs/guide/migration-0.7.md#servers)).
+  [servers](https://github.com/zenbakiak/skillet/blob/develop/docs/guide/migration-0.7.md#servers)).
 - Evaluation budget: strings and JSON cost `48 + len` bytes (was `32 + len`), which matches what a
   1-char string really takes. `with_limits` boundaries for string results move by 16 bytes per
   string (ADR-0011 amendment 3, BL-035, #105).
@@ -142,9 +167,9 @@ Planned as 0.7.0. It contains breaking changes, marked **BREAKING** below; the
   modulo only when an operand follows it directly (`10 % 3` = 1) (ADR-0023, #89).
 - **BREAKING:** a number run straight into a letter (`1x`, `1_000`) is an `Invalid number literal`
   error instead of evaluating to the leading number (#89).
-- `==` compares arrays, JSON objects and Currency by value (`[1,2] == [1,2]` is true); booleans and
-  Currency can be ordered (`FALSE < TRUE`). `==` stays strict and case-sensitive; comparisons never
-  convert between types (ADR-0023, #88).
+- `==` compares arrays and JSON objects by value (`[1,2] == [1,2]` is true); booleans can be
+  ordered (`FALSE < TRUE`). `==` stays strict and case-sensitive; comparisons never convert between
+  types (ADR-0023, #88). A `::Currency` result is a Number (ADR-0033).
 - **BREAKING:** JS hooks can no longer override builtins. A hook whose `@name` is a builtin name or
   alias (any case) is skipped with a warning on load; `/upload-js` and `/update-js` answer 400.
   Rust `CustomFunction`s may still shadow builtins (ADR-0024, #86).
@@ -200,20 +225,19 @@ Planned as 0.7.0. It contains breaking changes, marked **BREAKING** below; the
 - Two timing-sensitive tests no longer fail on fast or loaded machines; the accept-floor test
   runs only with `--ignored` (#65, #66).
 - The crate is formatted with `rustfmt` and clippy-clean (#42).
-- **BREAKING** Excel precedence (ADR-0018 D-10): negation, then `%`, then `^` (left-associative),
+- **BREAKING:** Excel precedence (ADR-0018 D-10): negation, then `%`, then `^` (left-associative),
   then `* /`, `+ -`, `&` and comparisons. `-2^2` is 4 (was -4) and `2^3^2` is 64 (was 512) (#82).
-- **BREAKING** `NULL == NULL` is `true` and `NULL != NULL` is `false` (ADR-0013); ordering with
+- **BREAKING:** `NULL == NULL` is `true` and `NULL != NULL` is `false` (ADR-0013); ordering with
   `NULL` is still an error (#82).
-- **BREAKING** Custom and JS functions are visible in builtin lambdas, method arguments and
+- **BREAKING:** Custom and JS functions are visible in builtin lambdas, method arguments and
   assignment formulas, so a custom function can shadow a builtin there too (ADR-0016) (#82).
-- `IF` and `IFS` evaluate only the chosen branch (#82). **BREAKING**: the condition must be
+- `IF` and `IFS` evaluate only the chosen branch (#82). **BREAKING:** the condition must be
   TRUE/FALSE, a number or `NULL` (false); anything else (`IF("x", 1, 2)`) is `#VALUE!`, and `IFS`
-  with no true condition is `#N/A` (ADR-0018 D-8, B-18, #102). An earlier version of this entry
-  credited #84, which did not implement it.
-- **BREAKING** `JQ` result shape follows the path (ADR-0014): a singular path (`.name`, `['name']`,
+  with no true condition is `#N/A` (ADR-0018 D-8, B-18, #102).
+- **BREAKING:** `JQ` result shape follows the path (ADR-0014): a singular path (`.name`, `['name']`,
   `[n]`) returns the value, or `NULL` when it misses (was `[]`); any other path returns an array,
   even with one match. `JQ({"a":[3]}, "$.a[*]")` is `[3]` (was `3`) (#76).
-- **BREAKING** Existing builtins follow Excel (ADR-0018) (#84):
+- **BREAKING:** Existing builtins follow Excel (ADR-0018) (#83):
   - `COUNTIF`, `SUMIF` and `AVERAGEIF` share Excel's criteria matcher: operators (`">2"`),
     case-insensitive text, `*`/`?`/`~` wildcards, blanks, and a scalar range.
   - `TIME(h, m, s)` returns a fraction of a day, with Excel's truncation and wrap
@@ -223,18 +247,18 @@ Planned as 0.7.0. It contains breaking changes, marked **BREAKING** below; the
     digits, `CEILING`/`FLOOR` round to a significance, `SUBSTITUTE` honours `instance_num`, and
     `SORT(arr, -1)` sorts descending.
   - Methods (`.trim()`, `.round()`, `.int()`, …) keep Ruby semantics.
-- **BREAKING** Errors instead of 0, NaN or infinity (ADR-0018 D-1, ADR-0015): `x/0`, `0^0`,
+- **BREAKING:** Errors instead of 0, NaN or infinity (ADR-0018 D-1, ADR-0015): `x/0`, `0^0`,
   `SQRT(-1)`, `MOD(n, 0)`, `POWER(0, 0)`, empty `AVERAGE`/`MEDIAN`/…, arguments of the wrong type,
-  NaN or out-of-range percentiles, and any non-finite operator result (#84).
-- **BREAKING** `DATE` rolls months and days over like Excel (`DATE(2026, 13, 1)` is 2027-01-01),
+  NaN or out-of-range percentiles, and any non-finite operator result (#83).
+- **BREAKING:** `DATE` rolls months and days over like Excel (`DATE(2026, 13, 1)` is 2027-01-01),
   adds 1900 to years 0–1899, and fails outside 1900–9999 (#83).
-- **BREAKING** `sk_http_server` requires `Content-Type: application/json` on POST, PUT and DELETE
+- **BREAKING:** `sk_http_server` requires `Content-Type: application/json` on POST, PUT and DELETE
   requests with a body and answers 415 otherwise; multipart is still accepted on `/upload-js` and
   `/update-js` (ADR-0019, #78).
-- **BREAKING** `sk_http_server` sends `Access-Control-Allow-Origin` only when an origin is
+- **BREAKING:** `sk_http_server` sends `Access-Control-Allow-Origin` only when an origin is
   configured, or `*` when a token is set. Without a token (development mode) it sends no CORS
   headers (ADR-0019, #78).
-- **BREAKING** The Docker image refuses to start (exit 64) unless `SKILLET_AUTH_TOKEN` and
+- **BREAKING:** The Docker image refuses to start (exit 64) unless `SKILLET_AUTH_TOKEN` and
   `SKILLET_ADMIN_TOKEN` are both set; the old `AUTH_TOKEN`/`ADMIN_TOKEN` names get a rename hint.
   It builds on `rust:1.89.0-slim-bookworm` with `--locked`, runs on `debian:bookworm-slim` without
   `curl`, and Compose publishes on `127.0.0.1` by default (`SKILLET_PUBLISH_ADDR`) (#74).
@@ -248,29 +272,37 @@ Planned as 0.7.0. It contains breaking changes, marked **BREAKING** below; the
 - One `vX.Y.Z` tag drives the release: binaries, GitHub release (notes from this file) and
   crates.io (ADR-0022). `release-binaries.yml` is renamed to `release.yml`, and `cross` and the
   musl images are pinned (#75).
-- Public enum `lexer::Token` gains `Ampersand`, and `runtime::evaluator` gains
-  `eval_with_assignments_and_custom` (#82).
+- **BREAKING** (Rust API): the public enum `lexer::Token` gains `Ampersand`, which breaks an
+  exhaustive `match`; `runtime::evaluator` gains `eval_with_assignments_and_custom` (#82).
 
 ### Deprecated
+- `Value::Currency` (`#[deprecated(since = "0.7.0")]`), removed in 0.8; use `Value::Number`. It
+  still compiles; a Currency passed in from Rust (variable or custom-function result) is read as
+  a Number, and results never contain one (ADR-0033, #119; see
+  [Rust API](https://github.com/zenbakiak/skillet/blob/develop/docs/guide/migration-0.7.md#rust-api)).
 - `SUBSTITUTEM`, in favour of `SUBSTITUTE`; it still works (#96).
 - `runtime::builtin_functions::exec_builtin`; use `runtime::function_dispatch::exec_builtin_fast`
-  or `evaluate` (BL-057, #99; see [Rust API](docs/guide/migration-0.7.md#rust-api)).
+  or `evaluate` (BL-057, #99; see [Rust API](https://github.com/zenbakiak/skillet/blob/develop/docs/guide/migration-0.7.md#rust-api)).
 
 ### Removed
 - **BREAKING** (ADR-0010): the unused public modules `skillet::memory_pool`, `skillet::traits`,
   `skillet::concurrent_registry` and the `skillet::runtime::evaluation` re-export shim. Use
   `skillet::runtime::evaluator` or the top-level `evaluate*` functions instead (#41, #43).
 - Unused dependencies `dashmap`, `string-interner`, `typed-arena` and `beef` (#43).
-- **BREAKING** The undocumented `httpGet` global for JavaScript hooks, which ran `curl`
+- **BREAKING:** The undocumented `httpGet` global for JavaScript hooks, which ran `curl`
   (ADR-0017, #79).
 - `scalar-doc` and `tera` (about 30 crates) and `iana-time-zone` (ADR-0020, #81).
 - `crate-release.yml` and the `crate-v*` release trigger (ADR-0022, #75).
+- Direct dependencies `lazy_static` and `once_cell`; statics use `std::sync::LazyLock`
+  (ADR-0032, #110).
 
 ### Fixed
-- `CONCAT` and `&` no longer drop Currency or DateTime: Currency is written as its number and a
-  DateTime as its `::String` text. `DB` matches Microsoft's 7-period example and gives `#NUM!` for
-  bad arguments instead of NaN or 0. `UNIQUE` keeps every type and `REVERSE` reverses strings
-  (B-7, B-8, B-11, #96).
+- A lambda criterion that reads `:x` is evaluated per item even when the caller defines `x`
+  (BL-081, #116).
+- `CONCAT` and `&` no longer drop a `::Currency` result or a DateTime: the amount is written as
+  its number and a DateTime as its `::String` text. `DB` matches Microsoft's 7-period example and
+  gives `#NUM!` for bad arguments instead of NaN or 0. `UNIQUE` keeps every type and `REVERSE`
+  reverses strings (B-7, B-8, B-11, #96).
 - `DATEADD` with a huge amount gives `#NUM!`; before, it panicked or looped (#103).
 - Two fuzz findings: an input starting with `==` overflowed in the lexer (release builds reported
   position `usize::MAX`, now 0), and `[1][-1e300]` overflowed in index clamping. Both panicked in
@@ -297,7 +329,7 @@ Planned as 0.7.0. It contains breaking changes, marked **BREAKING** below; the
   no response), and `.sort()` returned arrays of up to 20 items containing NaN unsorted (#59).
 - `TIME(h, m, s)` returns `h*3600 + m*60 + s`; it used to ignore its arguments and return the
   current time. `TIME()` still returns the current local time, and one or two arguments are an
-  error (#61). From #84 the result is a fraction of a day (see Changed).
+  error (#61). From #83 the result is a fraction of a day (see Changed).
 - `sk_http_server` serves its built-in documentation page on `GET /` from any working directory
   (#54).
 - The "Range operations" case in `sk_http_bench` failed every request (#57).
@@ -305,6 +337,10 @@ Planned as 0.7.0. It contains breaking changes, marked **BREAKING** below; the
   now give `Expression nested too deeply (max 128)` (#79).
 
 ### Security
+- `COUNTIF`/`SUMIF`/`AVERAGEIF` wildcard criteria match in linear time and honour the evaluation
+  deadline (BL-080, #116).
+- Request variables can no longer replace the reserved `:arguments` or silently overwrite each
+  other through key renaming (BL-077, #111).
 - `SORT`, `UNIQUE`, `JOIN`, `TEXTJOIN` and `.sort`/`.unique`/`.join` check the deadline inside
   their loops: with a 1 ms deadline and 3M items `.unique` stops after 3.8 ms instead of 1064 ms
   and returns the timeout error. `UPPER`/`LOWER` and the methods check that case-mapped text fits
@@ -320,7 +356,7 @@ Planned as 0.7.0. It contains breaking changes, marked **BREAKING** below; the
 - Stack-overflow DoS through nesting depth is closed (#44).
 - CPU and allocation DoS through lambdas copying the scope is closed (#45).
 - Memory and CPU exhaustion from a single evaluation is bounded by the evaluation budget and, on
-  the servers, the 10 s deadline (#46).
+  the servers, the evaluation deadline (20 s by default since #106) (#46).
 - The crate release workflow runs with read-only `contents` permission.
 - An empty token no longer turns authentication off while reporting it as enabled; the servers
   refuse to start (#62).
