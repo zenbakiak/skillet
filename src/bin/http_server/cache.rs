@@ -281,6 +281,12 @@ pub fn return_pooled_buffer(buffer: Vec<u8>) {
     HTTP_BUFFER_POOL.with(|pool| pool.borrow_mut().return_buffer(buffer));
 }
 
+/// Buffers waiting in this thread's pool.
+#[cfg(test)]
+pub fn pooled_buffer_count() -> usize {
+    HTTP_BUFFER_POOL.with(|pool| pool.borrow().buffers.len())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
