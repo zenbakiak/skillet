@@ -51,9 +51,11 @@ info:
 
     ## Request limits
     - A request (headers + body) may be at most 1 MB (1,048,576 bytes). A larger request, or a
-      `Content-Length` over 1 MB, gets HTTP 400 with `"error": "413 Payload Too Large"`.
+      `Content-Length` over 1 MB, gets HTTP 413 on any path.
     - The whole request must arrive within 30 s of the first read. Otherwise the server answers
-      HTTP 400 with `"error": "408 Request Timeout"`.
+      HTTP 408 on any path.
+    - After a 413 or 408 the server reads and discards the rest of the request until the client
+      closes or the 30 s pass, then closes, so the client receives the error.
     - Writing one response may take at most 10 s in total. If the client reads more slowly, the
       server stops writing and closes the connection: the client gets a body shorter than
       `Content-Length` and no error message. Reading the largest results (up to the 256 MiB
@@ -137,6 +139,11 @@ paths:
                   entries: 150
                   evictions: 12
                   total_saved_time_ms: 1248.67
+                parse_cache:
+                  hits: 640
+                  misses: 46
+                  hit_rate: 0.933
+                  entries: 38
         '429':
           $ref: '#/components/responses/TooManyConnections'
 
@@ -215,9 +222,6 @@ paths:
             `Expression nested too deeply (max 128)`, `Evaluation budget exceeded (max 256 MB)`
             (also returned when the serialized result would exceed the budget), or
             `Evaluation timed out (max 10 s)`. See docs/guide/limits.md.
-
-            Request limits also answer 400 (not 413 or 408): `413 Payload Too Large` when the
-            request is over 1 MB, `408 Request Timeout` when it takes more than 30 s to arrive.
           content:
             application/json:
               schema:
@@ -228,6 +232,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '408':
+          $ref: '#/components/responses/RequestTimeout'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
         '415':
           $ref: '#/components/responses/UnsupportedMediaType'
         '429':
@@ -287,12 +295,16 @@ paths:
                 example: "14"
         '400':
           description: |
-            Missing or invalid expression, an evaluation limit was hit, or a request limit was
-            hit (same texts as POST /eval). See docs/guide/limits.md.
+            Missing or invalid expression, or an evaluation limit was hit (same texts as
+            POST /eval). See docs/guide/limits.md.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '408':
+          $ref: '#/components/responses/RequestTimeout'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
         '429':
           $ref: '#/components/responses/TooManyConnections'
 
@@ -532,13 +544,27 @@ paths:
                 error: "Invalid filename"
         '404':
           description: |
-            Function file not found, or JavaScript plugins are not enabled in this build
-            (`"error": "JavaScript plugins are not enabled in this build"`; that body has no
-            `message` field).
+            JavaScript plugins are not enabled in this build (server built without the
+            `plugins` feature). The body has no `message` field.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                error: "JavaScript plugins are not enabled in this build"
+        '500':
+          description: |
+            The file does not exist or could not be deleted. A missing file is a 500, not a
+            404: the 404 above only means the plugins are not built in.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/DeleteJSResponse'
+              example:
+                success: false
+                message: "Failed to delete file 'old_function.js'"
+                error: "File 'old_function.js' does not exist"
         '415':
           $ref: '#/components/responses/UnsupportedMediaType'
         '429':
@@ -651,8 +677,12 @@ paths:
       tags: [cache]
       summary: Clear expression cache
       description: |
-        Clear the expression evaluation cache to force re-evaluation of all expressions.
-        Useful for development and testing scenarios.
+        Clear the expression evaluation cache to force re-evaluation of all expressions,
+        and the parse cache: the parsed trees of every worker thread, and its `/health`
+        counters. The worker that answers drops its trees at once; each other worker drops
+        its own before its next request (a parsed tree cannot be shared between threads, see
+        ADR-0021), so `parse_cache.entries` can stay above 0 until every worker has served a
+        request. Useful for development and testing scenarios.
       security:
         - adminToken: []
       responses:
@@ -687,6 +717,28 @@ components:
           example:
             success: false
             error: "Too many connections from this address (max 2)"
+    PayloadTooLarge:
+      description: |
+        The request (headers + body) is over 1 MB, or its `Content-Length` is. Any path.
+        See "Request limits".
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error: "Request body too large (max 1MB)"
+    RequestTimeout:
+      description: |
+        The whole request did not arrive within 30 s of the first read. Any path.
+        See "Request limits".
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error: "Request read timed out (max 30 s)"
     UnsupportedMediaType:
       description: |
         The request has a body but its `Content-Type` is not `application/json` (or, on
@@ -786,11 +838,14 @@ components:
           description: Average execution time across all requests
         cache_stats:
           $ref: '#/components/schemas/CacheStatsResponse'
+        parse_cache:
+          $ref: '#/components/schemas/ParseCacheStatsResponse'
       required:
         - status
         - version
         - requests_processed
         - avg_execution_time_ms
+        - parse_cache
 
     CacheStatsResponse:
       type: object
@@ -809,10 +864,39 @@ components:
           description: Current number of cached entries
         evictions:
           type: integer
-          description: Number of cache evictions
+          description: |
+            Entries dropped because the cache was full (1,000 entries, least recently used
+            first). Replacing an entry that is already cached is not counted. Reset by
+            `DELETE /cache`.
         total_saved_time_ms:
           type: number
           description: Total time saved by caching
+
+    ParseCacheStatsResponse:
+      type: object
+      description: |
+        The cache of parsed expressions, summed over the worker threads. Each worker keeps
+        its own (at most 256 expressions, 128 KiB of text). A lookup is a hit when the exact
+        expression text was parsed before by that worker; a request answered from the result
+        cache does not reach the parse cache. Reset by `DELETE /cache`.
+      properties:
+        hits:
+          type: integer
+          description: Lookups that reused a parsed tree
+        misses:
+          type: integer
+          description: Lookups that parsed the expression (parse errors included)
+        hit_rate:
+          type: number
+          description: hits / (hits + misses), 0.0 when there were none
+        entries:
+          type: integer
+          description: Parsed trees stored, summed over the worker threads
+      required:
+        - hits
+        - misses
+        - hit_rate
+        - entries
 
     UploadJSRequest:
       type: object

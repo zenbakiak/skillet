@@ -1,0 +1,2 @@
+:a.map(:x.price * :x.qty).sum()
+{"a": [{"price": 10, "qty": 2}]}

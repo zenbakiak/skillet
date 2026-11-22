@@ -133,3 +133,53 @@ fn docs_page_points_at_openapi_spec() {
     assert!(spec.starts_with("HTTP/1.1 200"), "{}", spec);
     assert!(spec.contains("openapi:"), "{}", spec);
 }
+
+/// The spec's response block for `status` under `path` (text up to the next status or path).
+fn spec_response(path: &str, status: &str) -> String {
+    let spec = include_str!("../openapi.yml");
+    let start = spec
+        .find(&format!("\n  {path}:\n"))
+        .unwrap_or_else(|| panic!("{path} missing"));
+    let rest = &spec[start + 1..];
+    let end = rest[1..].find("\n  /").map_or(rest.len(), |i| i + 1);
+    let section = &rest[..end];
+    let key = format!("        '{status}':\n");
+    let at = section
+        .find(&key)
+        .unwrap_or_else(|| panic!("{path} {status} missing"));
+    let block = &section[at + key.len()..];
+    let stop = block.find("\n        '").map_or(block.len(), |i| i + 1);
+    block[..stop].to_string()
+}
+
+/// BL-057: the plugin-free 404 of `/delete-js` has no `message` field, so the spec must not
+/// describe it with `DeleteJSResponse` (which requires `message`).
+#[test]
+fn delete_js_404_is_documented_as_an_error_response() {
+    let block = spec_response("/delete-js", "404");
+    assert!(
+        block.contains("$ref: '#/components/schemas/ErrorResponse'"),
+        "{block}"
+    );
+    assert!(block.contains("not enabled in this build"), "{block}");
+    let block = spec_response("/delete-js", "500");
+    assert!(
+        block.contains("$ref: '#/components/schemas/DeleteJSResponse'"),
+        "{block}"
+    );
+}
+
+/// The body the spec describes: a build without plugins answers `/delete-js` with exactly
+/// `success` and `error`.
+#[cfg(not(feature = "plugins"))]
+#[test]
+fn delete_js_without_plugins_matches_the_spec() {
+    let server = Server::spawn();
+    let resp = server.get("/delete-js").expect("delete-js request");
+    assert!(resp.starts_with("HTTP/1.1 404"), "{resp}");
+    let body = resp.split_once("\r\n\r\n").map_or("", |(_, b)| b);
+    assert_eq!(
+        body,
+        r#"{"error":"JavaScript plugins are not enabled in this build","success":false}"#
+    );
+}

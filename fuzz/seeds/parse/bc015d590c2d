@@ -1,0 +1,1 @@
+:obj := NULL; :obj&.dig(['a','b'])

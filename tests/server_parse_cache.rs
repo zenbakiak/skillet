@@ -142,3 +142,65 @@ fn bl012_sk_server_repeated_expressions_use_each_requests_variables() {
     });
     check_repeated_expressions(&server, false);
 }
+
+/// One raw HTTP request; returns the JSON body.
+fn http(server: &Server, head: &str) -> serde_json::Value {
+    let mut s = server.connect();
+    s.write_all(format!("{head}\r\nHost: localhost\r\nConnection: close\r\n\r\n").as_bytes())
+        .unwrap();
+    let mut resp = String::new();
+    let _ = s.read_to_string(&mut resp);
+    let body = resp.split_once("\r\n\r\n").map_or("", |(_, b)| b);
+    serde_json::from_str(body).unwrap_or_else(|e| panic!("{e}: {resp}"))
+}
+
+/// BL-067: `/health` reports the parse cache, and `DELETE /cache` clears it as well as the
+/// result cache.
+#[test]
+fn bl067_health_reports_the_parse_cache_and_delete_cache_clears_it() {
+    let server = Server::spawn(env!("CARGO_BIN_EXE_sk_http_server"), |port| {
+        // No tokens (development mode), so DELETE /cache needs none.
+        vec![port.to_string(), "--threads".into(), "1".into()]
+    });
+    let parse = |server: &Server| http(server, "GET /health HTTP/1.1")["parse_cache"].clone();
+    assert_eq!(
+        parse(&server),
+        serde_json::json!({"hits": 0, "misses": 0, "hit_rate": 0.0, "entries": 0})
+    );
+
+    // New variables each time, so the result cache misses and the parse cache is used.
+    for a in 0..3 {
+        let r = server.eval(
+            true,
+            &body(true, ":a + 1", serde_json::json!({"a": a}), false),
+        );
+        assert_eq!(r["success"], true, "{r}");
+    }
+    server.eval(true, &body(true, "2 +", serde_json::json!({}), false));
+    let p = parse(&server);
+    assert_eq!(
+        (p["hits"].as_u64(), p["misses"].as_u64()),
+        (Some(2), Some(2)),
+        "{p}"
+    );
+    assert_eq!(p["entries"], 1, "{p}");
+    assert_eq!(p["hit_rate"], 0.5, "{p}");
+
+    let r = http(&server, "DELETE /cache HTTP/1.1");
+    assert_eq!(r["success"], true, "{r}");
+    assert_eq!(
+        parse(&server),
+        serde_json::json!({"hits": 0, "misses": 0, "hit_rate": 0.0, "entries": 0})
+    );
+    let r = server.eval(
+        true,
+        &body(true, ":a + 1", serde_json::json!({"a": 9}), false),
+    );
+    assert_eq!(r["result"].as_f64(), Some(10.0), "{r}");
+    let p = parse(&server);
+    assert_eq!(
+        (p["hits"].as_u64(), p["misses"].as_u64()),
+        (Some(0), Some(1)),
+        "{p}"
+    );
+}

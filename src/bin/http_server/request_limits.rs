@@ -49,6 +49,15 @@ impl Read for DeadlineReader<'_> {
     }
 }
 
+/// After rejecting a request, close so the client still receives the error: closing a socket
+/// with unread input sends a reset, which can discard the response before the client reads it.
+/// Send FIN, then discard input until the client closes or `reader`'s deadline passes.
+pub fn close_after_reject(stream: &TcpStream, reader: &mut DeadlineReader<'_>) {
+    let _ = stream.shutdown(std::net::Shutdown::Write);
+    let mut sink = [0u8; 8192];
+    while matches!(reader.read(&mut sink), Ok(n) if n > 0) {}
+}
+
 fn timed_out() -> io::Error {
     io::Error::new(io::ErrorKind::TimedOut, "Request read timed out (max 30 s)")
 }

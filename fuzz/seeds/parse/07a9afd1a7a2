@@ -1,0 +1,1 @@
+:user := {profile: {settings: {theme: 'dark'}}}; :user.profile.settings.theme
