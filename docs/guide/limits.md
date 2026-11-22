@@ -418,8 +418,8 @@ The slow client received more than 10 MB because the operating system's socket b
 the server already wrote.
 
 What this means for sizing: a response can be as large as the evaluation budget (1 GiB by
-default), and sending 1 GiB within 10 s needs about 100 MB/s (256 MiB: about 25 MB/s). Clients on slower links, or results in the tens of
-megabytes over a WAN, can hit the deadline. Check that a response is complete (HTTP: body length
+default), and sending 1 GiB within 10 s needs about 100 MB/s (256 MiB: about 25 MB/s). Clients
+on slower links, or results in the tens of megabytes over a WAN, can hit the deadline. Check that a response is complete (HTTP: body length
 equals `Content-Length`; `sk_server`: the line ends with `\n`) and keep large results small, for
 example by returning `.length()`, a sum or `LEFT(text, n)` instead of the whole value.
 
