@@ -1,0 +1,1 @@
+=IF(:config.enabled, :config.price * :config.quantity, 0)

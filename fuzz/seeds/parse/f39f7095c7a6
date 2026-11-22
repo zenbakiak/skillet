@@ -1,0 +1,1 @@
+=ROUND(AVG(:scores.map(:x::Integer)), 2)
