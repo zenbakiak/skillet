@@ -8,7 +8,7 @@ ADRs 0001–0008 are **retroactive**: they record decisions already embodied in 
 |---|---|---|
 | [0001](0001-record-architecture-decisions.md) | Record architecture decisions | Accepted |
 | [0002](0002-tree-walking-interpreter.md) | Tree-walking interpreter over an `Rc` AST | Accepted (retroactive) |
-| [0003](0003-dynamic-value-f64-numbers.md) | Single dynamic `Value` enum; all numbers are `f64` | Accepted (retroactive) |
+| [0003](0003-dynamic-value-f64-numbers.md) | Single dynamic `Value` enum; all numbers are `f64` | Accepted (retroactive), amended by 0033 |
 | [0004](0004-json-objects-as-strings.md) | Nested JSON objects carried as strings | Superseded by 0030 |
 | [0005](0005-hybrid-excel-ruby-syntax.md) | Hybrid Excel + Ruby syntax with `:var` sigil | Accepted (retroactive), amended by 0018 |
 | [0006](0006-null-safety-model.md) | Null safety via `&.` and total conversions | Accepted (retroactive) |
@@ -31,11 +31,13 @@ ADRs 0001–0008 are **retroactive**: they record decisions already embodied in 
 | [0023](0023-excel-equality-and-coercion.md) | Equality and comparison, and Excel number coercion in arithmetic | Accepted, amended by 0027 |
 | [0024](0024-hooks-cannot-override-builtins.md) | JS hooks cannot override builtins | Accepted |
 | [0025](0025-per-ip-connection-limit.md) | Optional limit on concurrent connections per IP address | Accepted |
-| [0027](0027-date-and-currency-arithmetic.md) | Date and currency arithmetic | Accepted, amended by 0031 |
+| [0027](0027-date-and-currency-arithmetic.md) | Date and currency arithmetic | Accepted, amended (amendment 1 in the file, BL-082) and by 0031; Currency parts superseded by 0033 |
 | [0028](0028-fuzzing.md) | Fuzz the parser and evaluator with cargo-fuzz on a schedule | Accepted |
 | [0029](0029-logic-operators.md) | Logical operators and the Excel logical functions | Accepted |
 | [0030](0030-structured-and-shared-values.md) | Structured and shared values: `Value::Object`, and `Arc`-shared strings, arrays and objects | Accepted |
-| [0031](0031-date-text-and-currency-aggregates.md) | Dates as ISO 8601 text; Currency in the aggregates | Accepted |
+| [0031](0031-date-text-and-currency-aggregates.md) | Dates as ISO 8601 text; Currency in the aggregates | Accepted, amended (amendment 1 in the file, BL-078); Currency parts superseded by 0033 |
+| [0032](0032-edition-2024.md) | Edition 2024, MSRV unchanged, std `LazyLock`, rustfmt style 2021 for now | Accepted |
+| [0033](0033-one-numeric-type.md) | One numeric type; `::Currency` is a conversion | Accepted |
 
 Number 0026 is unused: no ADR was filed under it.
 

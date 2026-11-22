@@ -1209,15 +1209,15 @@ Let operators set the servers' evaluation deadline and budget. Defaults (revised
 ### BL-076 · ISO 8601 date text and `SUM` with Currency · P2 · `done` (PR #108, ADR-0031; follow-ups in BL-078) · rust-engineer
 Read ISO 8601 date text where a date is expected, and let `SUM` take Currency (B-13).
 
-### BL-077 · `arguments` key collision and `/reload-hooks` leftovers · P3 · `review` (PR #111) · rust-engineer
+### BL-077 · `arguments` key collision and `/reload-hooks` leftovers · P3 · `done` (PR #111) · rust-engineer
 No decision needed. From the threat model:
 - 2.2: a JSON key named `arguments` overwrites the reserved `:arguments` variable that
   `sk_http_server` builds for `JQ` (`http_server/eval.rs`). Keep the reserved variable.
 - 2.5: `/reload-hooks` adds and replaces functions but never removes those whose file was
   deleted from disk. Drop them on reload.
 
-### BL-078 · Follow-ups from ADR-0031 (#108) · P3 · `review` (PR #112, ADR-0031 amendment 1; decisions as recommended) · language-designer → rust-engineer
-Recommendations, waiting for the maintainer:
+### BL-078 · Follow-ups from ADR-0031 (#108) · P3 · `done` (PR #112, ADR-0031 amendment 1; decisions as recommended; Currency parts 3 and 5 superseded by BL-097) · language-designer → rust-engineer
+Recommendations, accepted by the maintainer:
 1. Allow chained casts: `DATE(...)::String::DateTime` (today a parse error; needs parentheses).
 2. `.to_json()` on a date stays the ISO text (the `::Json` cast still gives a number).
 3. `.join()` accepts Currency and NULL like `JOIN`.
@@ -1231,21 +1231,21 @@ Also decide when rustfmt moves to `style_edition = "2024"` (a fmt-only commit, t
 
 ---
 
-Items BL-080 to BL-094 come from the audit of PRs #73-#109 (2026-11-22, five read-only role
+Items BL-080 to BL-096 come from the audit of PRs #73-#109 (2026-11-22, five read-only role
 reviews). Maintainer decisions of 2026-11-22 are recorded on each item.
 
-### BL-080 · Criteria wildcard matching ignores the deadline · P1 · `review` (PR #116) · security-reviewer → rust-engineer
+### BL-080 · Criteria wildcard matching ignores the deadline · P1 · `done` (PR #116) · security-reviewer → rust-engineer
 SEC-1. The `*`/`?` matcher behind `COUNTIF`/`SUMIF`/`AVERAGEIF` (`src/runtime/criteria.rs`) is
 quadratic and never checks the evaluation deadline, so one request can run far past
 `--eval-timeout`. Fix: a linear-time wildcard matcher and `tick_item` per row; regression test
 that the deadline is honoured. No decision needed.
 
-### BL-081 · Lambda criteria pick up an outer `:x` · P1 · `review` (PR #116) · rust-engineer
+### BL-081 · Lambda criteria pick up an outer `:x` · P1 · `done` (PR #116) · rust-engineer
 PERF-3. A lambda criterion is first evaluated once against the outer variables; when those define
 `x`, a number result becomes a fixed criterion (`COUNTIF([5,5,1], :x)` with `x=5` gives 2). Also
 stop cloning every item (+18-37% on `COUNTIF`). No decision needed.
 
-### BL-082 · Compare Currency with numbers by amount · P1 · `review` (PR #115, ADR-0027 amendment 1) · rust-engineer
+### BL-082 · Compare Currency with numbers by amount · P1 · `done` (PR #115, ADR-0027 amendment 1; superseded by BL-097, #119) · rust-engineer
 LANG-1. Since #108 `SUM(10::Currency, 5)` is Currency, but ordering Currency against a Number is an
 error (ADR-0027), so `SUM(...) > 10` fails and `SUM(...) == 15` is silently false.
 Decision (maintainer): `== != < <= > >=` compare Currency with Number by amount (amends ADR-0027).
@@ -1300,7 +1300,10 @@ Settings for the maintainer (GitHub → Settings → Rules → Rulesets, and Set
 - REL-3: migration guide misses silent changes: `[1,2]==[1,2]` false→true (also objects, Currency,
   dates), `FALSE<TRUE` false→true, `SUBSTITUTE` with an instance, `CONCAT` with Currency, `DB`,
   `SORT(…,-1)`, hooks can't use builtin names (#86). Mark #88 BREAKING.
-- REL-7: CHANGELOG credits the unmerged #84; relative links break in release notes.
+- REL-7: CHANGELOG credits the unmerged #84; relative links break in release notes. Done in the
+  round 10 sync: #84 credits moved to #83, links absolute, `**BREAKING:**` spelled one way, the
+  stale 10 s line and `Token::Ampersand` fixed. Still open: order Changed newest first, group the
+  BREAKING items, shorten the 0.7.0 body, edit "Planned as 0.7.0" at release time.
 - SEC-4: threat model is stale (10 s timeout, 400 read errors, CI image, pinning) and contradicts
   itself.
 - LANG-11, LANG-10: excel-compat lists bugs #96 fixed; X-3's stated reason is wrong.
@@ -1309,19 +1312,19 @@ Settings for the maintainer (GitHub → Settings → Rules → Rulesets, and Set
 - PERF-6: refresh `benches/BASELINE.md`; record that the +10-18% parse cost from #82 is accepted.
 - REL-10: AGENTS.md, README and role-file drift.
 
-### BL-085 · Result cache serves stale results · P2 · `ready` · rust-engineer
+### BL-085 · Result cache serves stale results · P2 · `in-progress` (lane cache) · rust-engineer
 SEC-2. The HTTP result cache returns old values for volatile builtins (`NOW()`, `TODAY()`, `RAND`)
 and drops `variables` when `include_variables` differs.
 Decision (maintainer): never cache results that use a volatile builtin; add `include_variables` to
 the key. Custom-function results stay cached (reload clears the cache since BL-077).
 
-### BL-086 · HTTP JSON variables bypass the budget · P2 · `ready` · rust-engineer
+### BL-086 · HTTP JSON variables bypass the budget · P2 · `in-progress` (lane budget) · rust-engineer
 SEC-3. With `--max-eval-bytes 1M`, a 0.75 MB body used 37 MB and succeeded; the banner understates
 the worst case.
 Decision (maintainer): charge the parsed variables to the evaluation budget; fix the banner.
 Migration-guide row (some large requests now fail with the budget error).
 
-### BL-087 · Test safety nets · P2 · `ready` · qa-engineer
+### BL-087 · Test safety nets · P2 · `in-progress` (lane safety) · qa-engineer
 - QA-1: give `evaluator_parity` expected values (it compares a function with itself; 10 results
   changed with no failing test).
 - QA-2: run the 10 `#[ignore]` tests (408, read/write deadlines, ~100 s) in a scheduled CI job.
@@ -1337,7 +1340,7 @@ Migration-guide row (some large requests now fail with the budget error).
 - PERF-2: `AND`/`OR`/`XOR` allocate a `Vec<bool>` per call (+18-24% in filters).
 - PERF-4: date to text is 2x slower (chrono re-parses the pattern; `.to_s()`/`CONCAT` format twice).
 
-### BL-089 · One truth rule for conditions · P2 · `in-progress` (spec done on feature/bl-089-truth-rule; implementation after #116) · language-designer (ADR-0029 amendment) → rust-engineer
+### BL-089 · One truth rule for conditions · P2 · `review` (PR #120, ADR-0029 amendment 1) · language-designer (ADR-0029 amendment) → rust-engineer
 LANG-2, LANG-3, QA-9. A NULL flag (e.g. from `&.`) gets different answers by form: `AND()` TRUE
 (NULL skipped), the `AND`/`&&` operators an error, `IF` FALSE, `? :` an error, `NOT` TRUE but `!`
 an error; `FALSE AND NULL` is false but `NULL AND FALSE` errors. `? :` rejects numbers that `IF`
@@ -1368,6 +1371,7 @@ node. The Currency text form is moot: BL-097 removes the Currency type.
 ### BL-092 · API changes that are cheap only in 0.7.0 · P2 · `ready` · rust-engineer
 REL-4. Decision (maintainer): deprecate `Value::Json` (ADR-0030 step 2) and `Value::Currency`
 (BL-097) in 0.7.0, not 0.7.x, and add `#[non_exhaustive]` to `Value`, `Token`, `Expr` and `BinaryOp`.
+`Value::Currency` is deprecated since #119; the rest is open.
 
 ### BL-093 · Capacity for large data · P2 · `ready` · performance-engineer → rust-engineer
 PERF-5, PERF-7. With the `48 + len` string cost, a `.map` over 2M short strings exceeds 256 MiB; the
@@ -1385,12 +1389,14 @@ floating Traefik tag and the Docker socket; no Host check in dev mode.
 ### BL-095 · Organise tests by feature area · P3 · `todo` · qa-engineer
 QA-5. Test files are named by PR; the same facts are pinned in 3-4 files.
 
-### BL-096 · Small leftovers from BL-077 · P3 · `todo` · maintainer decision → rust-engineer
+### BL-096 · Small leftovers from BL-077 · P3 · `in-progress` · rust-engineer
 `sk --json` exits 2 on the library path and 1 on the `:=` path for the same JSON errors; `sk_server`
 keeps JSON keys as written, so a key like `first-name` can't be read. Decide: unify the exit code,
 and whether `sk_server` sanitizes keys like the other surfaces.
+Decision (maintainer, 2026-11-22): `sk --json` exits 1 for JSON errors on both paths; `sk_server`
+sanitizes keys and rejects colliding keys like the library, `sk --json` and `sk_http_server`.
 
-### BL-097 · One numeric type: `::Currency` becomes a conversion · P1 · `in-progress` (ADR-0033 being written; implementation after #112 and #115) · language-designer (ADR-0033) → rust-engineer
+### BL-097 · One numeric type: `::Currency` becomes a conversion · P1 · `done` (PR #119, ADR-0033 Accepted) · language-designer (ADR-0033) → rust-engineer
 `Value::Currency(f64)` is a label on the same float as `Number`: no exact money math
 (`0.1::Currency + 0.2::Currency` is `0.30000000000000004`), but every operator, builtin, method and
 comparison has to handle the mix (ADR-0023, 0027, 0031, BL-078, BL-082), Currency arithmetic is
@@ -1402,3 +1408,10 @@ Currency precision) and returns a Number. `Value::Currency` is deprecated in 0.7
 Exact decimal money math is not built now; a later ADR can add a real decimal type.
 Supersedes the BL-082 follow-up (`CONTAINS`/`IN`/`UNIQUE` with Currency) and the Currency part of BL-091.
 Implement after #112 and #115 merge (they touch the same Currency code).
+
+### BL-098 · A TRUE criterion matches only TRUE · P3 · `todo` · rust-engineer
+From BL-089: `COUNTIF([TRUE, 1], TRUE)` gives 2; Excel gives 1, because a boolean criterion matches
+only booleans. Fix `Criterion::from_value`/`matches` in `src/runtime/criteria.rs` (same for FALSE
+and 0), with a migration-guide row. No decision needed (Excel behaviour is clear).
+Also: the eager `__TERNARY__` arm in `src/runtime/logical.rs` is unreachable from expressions;
+delete it in the same PR.

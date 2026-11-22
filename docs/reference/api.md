@@ -166,13 +166,19 @@ Number (ADR-0033), so `1 == 1::Currency` is `TRUE`.
 - `NOT`, `!` - Logical NOT
 
 The operators short-circuit (ADR-0029): the right side is evaluated only when the left side does
-not decide the result. Both sides must be booleans; `1 AND TRUE` is an error.
+not decide the result. Each side is a condition, read like the condition of `IF` (see
+[Conditions](#conditions)), and the result is always `TRUE` or `FALSE`.
 
 ```bash
 FALSE AND 1/0              # FALSE (1/0 is not evaluated)
 TRUE OR 1/0                # TRUE
 TRUE AND 1/0               # Error: Division by zero (#DIV/0!)
 :n == 0 OR 10 / :n > 1     # safe when :n is 0
+1 AND 2                    # TRUE (numbers: non-zero is TRUE)
+NULL AND FALSE             # FALSE (NULL is FALSE, on either side)
+TRUE AND NULL              # FALSE
+NULL OR TRUE               # TRUE
+"x" AND TRUE               # Error: AND condition must be TRUE, FALSE or a number, got string (#VALUE!)
 ```
 
 `NOT` (any case) is a prefix keyword that binds looser than the comparisons and tighter than
@@ -191,8 +197,27 @@ TRUE == (NOT FALSE)        # TRUE
 ```
 
 `NOT` followed directly by `(`, with no space, is the `NOT(...)` call. A call is an atom, so it
-works anywhere: `TRUE == NOT(FALSE)`, `NOT(0) == FALSE` (FALSE). `!` stays a tight unary
-operator that takes booleans only: `!TRUE == FALSE` is `(!TRUE) == FALSE`, and `!0` is an error.
+works anywhere: `TRUE == NOT(FALSE)`, `NOT(0) == FALSE` (FALSE). `!x` gives the same value as
+`NOT(x)` (`!0` is `TRUE`, `!NULL` is `TRUE`, `!"x"` is an error), but it stays a tight unary
+operator: `!TRUE == FALSE` is `(!TRUE) == FALSE`, so `!0 == FALSE` is `FALSE` while
+`NOT 0 == FALSE` is `TRUE`.
+
+#### Conditions
+Every condition follows one rule (ADR-0029 Amendment 1): in `IF`, `IFS`, `? :`, the `AND`/`OR`/
+`&&`/`||`/`NOT`/`!` operators, the `filter`/`find`/`FILTER`/`FIND` lambdas and the lambda
+criteria of `COUNTIF`/`SUMIF`/`AVERAGEIF`.
+
+| Value | As a condition |
+|---|---|
+| `TRUE`, `FALSE` | itself |
+| a number or Currency | `FALSE` when 0, otherwise `TRUE` |
+| NaN (only from a host variable or a custom function) | error: `<name> condition is not a number (#NUM!)` |
+| `NULL` (for example a missing key read with `&.`) | `FALSE` |
+| text (also `""`), a date, an array, a JSON object | error: `<name> condition must be TRUE, FALSE or a number, got string (#VALUE!)` |
+
+The `AND()`, `OR()` and `XOR()` functions are the exception: they skip a `NULL` argument, as
+Excel skips an empty cell (see [Logical Functions](#logical-functions)). A NaN is the `#NUM!`
+error in them too (`AND condition is not a number (#NUM!)`).
 
 ### Unary Operators
 - `+` - Positive (unary plus)
@@ -200,7 +225,15 @@ operator that takes booleans only: `!TRUE == FALSE` is `(!TRUE) == FALSE`, and `
 - `!` - Logical NOT
 
 ### Ternary Operator
-- `condition ? true_value : false_value` - Conditional expression
+- `condition ? true_value : false_value` - Conditional expression. The condition follows the
+  `IF` rule ([Conditions](#conditions)), and only the chosen value is evaluated.
+
+```bash
+1 ? "a" : "b"              # "a"
+NULL ? "a" : "b"           # "b"
+TRUE ? 1 : 1/0             # 1
+"x" ? 1 : 2                # Error: Ternary condition must be TRUE, FALSE or a number, got string (#VALUE!)
+```
 
 ### Special Operators
 - `&.` - Safe navigation operator
@@ -461,7 +494,7 @@ QUARTILE_INC([1,2,3,4], -0.5)      # Error: Quartile must be 0-4 (#NUM!)
 Basic conditional. Only the chosen branch is evaluated, so it can guard an error. The condition
 must be `TRUE`/`FALSE` or a number (non-zero is true, as in Excel); `NULL` is false, like a blank
 cell. Text or any other value is an error (Excel `#VALUE!`). Without `false_value` the result is
-`FALSE`.
+`FALSE`. More than 3 arguments is an error, as in Excel.
 ```bash
 IF(5 > 3, "Yes", "No")       # "Yes"
 IF(false, 10, 20)            # 20
@@ -469,6 +502,7 @@ IF(2, "a", "b")              # "a"
 IF(NULL, "a", "b")           # "b"
 IF(:a == 0, 0, 1 / :a)       # 0 when :a is 0
 IF("x", 1, 2)                # Error: IF condition must be TRUE, FALSE or a number, got string (#VALUE!)
+IF(1, 2, 3, 4)               # Error: IF expects at most 3 arguments
 ```
 
 #### `IFS(condition1, value1, condition2, value2, ...)`
@@ -490,6 +524,12 @@ and so is having no logical value at all (`AND()`, `AND([])`, `AND(NULL)`).
 
 Unlike the `AND`/`OR` operators, these functions evaluate every argument, as Excel does:
 `AND(FALSE, 1/0)` is an error, while `FALSE AND 1/0` is `FALSE`.
+
+> **Warning: a missing flag passes `AND(...)`.** The functions skip `NULL`, and `&.` gives `NULL`
+> for a missing key, so `AND(:u&.is_admin, :on)` is `TRUE` when `is_admin` is absent. Everywhere
+> else `NULL` is `FALSE`. For a permission or feature check, use the operator
+> (`:u&.is_admin AND :on` is `FALSE`), `IF`, or an explicit comparison
+> (`AND(:u&.is_admin == TRUE, :on)`).
 ```bash
 AND(true, true, false)       # false
 AND(TRUE, 1)                 # true
@@ -744,10 +784,14 @@ which can be negative: `DATEDIF(DATE(2011, 1, 31), DATE(2011, 3, 1), "md")` is `
 ### Array Functions
 
 #### `FILTER(array, expression)`
-Filter array elements.
+Filter array elements: an item is kept when `expression` is a true condition
+([Conditions](#conditions)): `TRUE` or a non-zero number. `FALSE`, 0 and `NULL` drop the item;
+text, a date or an array is an error for the whole call.
 ```bash
 FILTER([1,2,3,4,5], :x > 3)   # [4, 5]
 FILTER(data, :x.active == true)
+FILTER([0, 1, 2], :x)         # [1, 2]
+FILTER([1, 2], "yes")         # Error: FILTER condition must be TRUE, FALSE or a number, got string (#VALUE!)
 ```
 
 #### `MAP(array, expression)`
@@ -758,7 +802,9 @@ MAP(users, :x.name.upper())
 ```
 
 #### `FIND(array, expression)`
-Find first matching element (`NULL` when none). With text first, `FIND` is Excel's text search
+Find the first element for which `expression` is a true condition (`NULL` when none); the
+condition rule is the one of `FILTER`. Items after the first match are not evaluated. With text
+first, `FIND` is Excel's text search
 (see [Text Functions](#findfind_text-within_text-start_num)).
 ```bash
 FIND([1,2,3,4,5], :x > 3)     # 4
@@ -790,7 +836,7 @@ the item at the same position is summed; only numbers are summed or averaged.
 | `">b"` | text after `b` (ignoring case) |
 | `"TRUE"`, `"FALSE"` | booleans |
 | `""`, `"="` | blanks (`NULL` or `""`); `"<>"` matches everything else |
-| `:x > 2` (lambda) | items for which the expression is TRUE. It must return a boolean (`NULL` counts as FALSE); any other result is an error |
+| `:x > 2` (lambda) | items for which the expression is a true condition, as in `IF`: `TRUE` or a non-zero number; `FALSE`, 0 and `NULL` do not match; text, a date or an array is an error |
 
 ```bash
 COUNTIF([1, 2, 3, 4], ">2")                       # 2
@@ -799,7 +845,8 @@ COUNTIF(["A", "b", "a"], "a")                     # 2 (case-insensitive)
 COUNTIF(["apple", "Avocado", "kiwi"], "a*")       # 2
 COUNTIF(5, ">2")                                  # 1 (a single value is a one-item range)
 COUNTIF([1, 2, 3, 4], :x % 2 == 0)                # 2 (lambda)
-COUNTIF([1, 2, 3], :x)                            # Error: COUNTIF criteria expression must return TRUE or FALSE, got number
+COUNTIF([0, 1, 2], :x)                            # 2 (non-zero numbers match)
+COUNTIF(["a"], :x)                                # Error: COUNTIF condition must be TRUE, FALSE or a number, got string (#VALUE!)
 
 SUMIF([1, -2, 3, -4], :x > 0)                     # 4
 SUMIF([10, 20, 30, 40], ">25")                    # 70
@@ -1040,7 +1087,7 @@ Remove null values.
 #### Higher-order methods:
 
 #### `.filter(expression)`
-Filter elements.
+Filter elements. Same condition rule as `FILTER`: `[0, 1, 2].filter(:x)` is `[1, 2]`.
 ```bash
 [1,2,3,4,5].filter(:x > 3)   # [4, 5]
 ```
@@ -1052,7 +1099,8 @@ Transform elements.
 ```
 
 #### `.find(expression)`
-Find first match.
+Find first match. Same condition rule as `FIND`; an error for an item before the first match is
+the result.
 ```bash
 [1,2,3,4,5].find(:x > 3)     # 4
 ```

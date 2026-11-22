@@ -688,7 +688,10 @@ paths:
       tags: [cache]
       summary: Clear expression cache
       description: |
-        Clear the expression evaluation cache to force re-evaluation of all expressions,
+        Clear the expression evaluation cache to force re-evaluation of all expressions
+        (the result cache: keyed by the expression, the variables and `include_variables`;
+        results of expressions that read the clock, such as `NOW()` and `TODAY()`, and errors
+        are never stored),
         and the parse cache: the parsed trees of every worker thread, and its `/health`
         counters. The worker that answers drops its trees at once; each other worker drops
         its own before its next request (a parsed tree cannot be shared between threads, see

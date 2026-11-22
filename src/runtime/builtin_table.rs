@@ -12,6 +12,8 @@
 //! variadic. Each function still does its own argument checks, so errors and defaults for
 //! missing or extra arguments are unchanged by this table.
 
+use crate::ast::Expr;
+
 /// Which builtin module runs a function, and the section it is documented under.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Category {
@@ -49,8 +51,12 @@ pub(crate) struct Builtin {
     pub args: &'static str,
     pub summary: &'static str,
     pub example: &'static str,
-    /// Result depends on the clock, so the docs do not show a result.
+    /// Result depends on the clock, so the docs do not show a result and the server's result
+    /// cache does not keep it (BL-085).
     pub volatile: bool,
+    /// Reads the clock when called with no arguments (`DATE()`, `TIME()`); the docs example
+    /// passes arguments, so it still shows a result.
+    pub volatile_without_args: bool,
 }
 
 impl Builtin {
@@ -66,6 +72,12 @@ impl Builtin {
     const fn volatile(self) -> Self {
         Builtin {
             volatile: true,
+            ..self
+        }
+    }
+    const fn volatile_without_args(self) -> Self {
+        Builtin {
+            volatile_without_args: true,
             ..self
         }
     }
@@ -96,6 +108,7 @@ const fn f(
         summary,
         example,
         volatile: false,
+        volatile_without_args: false,
     }
 }
 
@@ -173,9 +186,9 @@ pub(crate) static BUILTINS: &[Builtin] = &[
     f("REDUCE", Array, 3, n(5), "array, expr, initial, [param], [acc_param]", "Fold: `expr` over `:acc` and `:x`, starting from `initial`.", "REDUCE([1, 2, 3], :acc + :x, 0)").evaluator(),
     // Date and time
     f("NOW", DateTime, 0, n(0), "", "Current UTC time as a DateTime (seconds).", "NOW()").volatile(),
-    f("DATE", DateTime, 0, n(3), "[year, month, day]", "Midnight UTC of the given date, Excel rules: months and days roll over, years 0-1899 get 1900 added. Today's local date with no arguments.", "DATE(2024, 1, 15)"),
+    f("DATE", DateTime, 0, n(3), "[year, month, day]", "Midnight UTC of the given date, Excel rules: months and days roll over, years 0-1899 get 1900 added. Today's local date with no arguments.", "DATE(2024, 1, 15)").volatile_without_args(),
     f("TODAY", DateTime, 0, n(0), "", "Excel `TODAY`: today's local date at midnight, as a UTC DateTime (same as `DATE()`).", "TODAY()").volatile(),
-    f("TIME", DateTime, 0, n(3), "[hour, minute, second]", "Time as a fraction of a day (Excel): parts truncated, wrapped at 24 hours; the current local time with no arguments.", "TIME(14, 30, 0)"),
+    f("TIME", DateTime, 0, n(3), "[hour, minute, second]", "Time as a fraction of a day (Excel): parts truncated, wrapped at 24 hours; the current local time with no arguments.", "TIME(14, 30, 0)").volatile_without_args(),
     f("YEAR", DateTime, 1, n(1), "datetime", "Year (UTC).", "YEAR(DATE(2024, 3, 9))"),
     f("MONTH", DateTime, 1, n(1), "datetime", "Month 1-12 (UTC).", "MONTH(DATE(2024, 3, 9))"),
     f("DAY", DateTime, 1, n(1), "datetime", "Day of the month (UTC).", "DAY(DATE(2024, 3, 9))"),
@@ -224,6 +237,53 @@ pub(crate) fn is_reserved_function_name(name: &str) -> bool {
     let upper = name.trim().to_uppercase();
     INTERNAL_NAMES.contains(&upper.as_str())
         || BUILTINS.iter().flat_map(Builtin::names).any(|n| n == upper)
+}
+
+/// True when a call to `name` can read the clock, so its result differs from one evaluation to
+/// the next. `may_have_no_args` is true when the call can receive no arguments (none written,
+/// or only spreads of possibly empty arrays).
+fn is_volatile_call(name: &str, may_have_no_args: bool) -> bool {
+    BUILTINS
+        .iter()
+        .find(|b| b.names().any(|n| n.eq_ignore_ascii_case(name)))
+        .is_some_and(|b| b.volatile || (may_have_no_args && b.volatile_without_args))
+}
+
+/// True when `expr` calls a volatile builtin anywhere: nested in arguments, operands, method
+/// receivers or lambdas. Custom functions are not volatile. Recursion is bounded by the parser's
+/// depth limit, like evaluation.
+pub(crate) fn expr_is_volatile(expr: &Expr) -> bool {
+    let any = |items: &[Expr]| items.iter().any(expr_is_volatile);
+    match expr {
+        Expr::Number(_) | Expr::StringLit(_) | Expr::Null | Expr::Variable(_) => false,
+        Expr::Unary(_, e)
+        | Expr::Spread(e)
+        | Expr::TypeCast { expr: e, .. }
+        | Expr::Assignment { value: e, .. }
+        | Expr::PropertyAccess { target: e, .. }
+        | Expr::SafePropertyAccess { target: e, .. } => expr_is_volatile(e),
+        Expr::Binary(a, _, b)
+        | Expr::Index {
+            target: a,
+            index: b,
+        } => expr_is_volatile(a) || expr_is_volatile(b),
+        Expr::FunctionCall { name, args } => {
+            let may_have_no_args = args.iter().all(|a| matches!(a, Expr::Spread(_)));
+            is_volatile_call(name, may_have_no_args) || any(args)
+        }
+        Expr::MethodCall { target, args, .. } | Expr::SafeMethodCall { target, args, .. } => {
+            expr_is_volatile(target) || any(args)
+        }
+        Expr::Array(items) | Expr::Sequence(items) => any(items),
+        Expr::ObjectLiteral(pairs) => pairs.iter().any(|(_, v)| expr_is_volatile(v)),
+        Expr::Slice { target, start, end } => {
+            expr_is_volatile(target)
+                || [start, end]
+                    .into_iter()
+                    .flatten()
+                    .any(|e| expr_is_volatile(e))
+        }
+    }
 }
 
 #[cfg(test)]
@@ -438,5 +498,52 @@ mod tests {
             "docs/reference/functions.md is out of date; run \
              `UPDATE_DOCS=1 cargo test --lib builtin_table` and commit the result"
         );
+    }
+
+    fn volatile(src: &str) -> bool {
+        expr_is_volatile(&crate::parse(src).expect("parses"))
+    }
+
+    #[test]
+    fn volatility_walk_finds_clock_calls_anywhere() {
+        for src in [
+            "NOW()",
+            "TODAY()",
+            "now() + 1",
+            "IF(TRUE, NOW(), 1)",
+            "[1, 2].map(:x + DAY(TODAY()))",
+            "{a: {b: NOW()}}",
+            ":a := 1; :a + NOW()",
+            "DATE()",
+            "TIME()",
+            "DATE(...:parts)",
+            "[1, 2][0:DAY(TODAY())]",
+            "(TODAY())::String",
+            ":u&.f(NOW())",
+            "TRUE ? 1 : NOW()",
+        ] {
+            assert!(volatile(src), "{src} should be volatile");
+        }
+        for src in [
+            "1 + 2",
+            "DATE(2024, 1, 15)",
+            "TIME(14, 30, 0)",
+            "[1, 2].map(:x * 2).sum()",
+            "MYHOOK(1)",
+            ":x.now",
+            "'NOW()'",
+        ] {
+            assert!(!volatile(src), "{src} should not be volatile");
+        }
+    }
+
+    #[test]
+    fn every_clock_reader_is_flagged() {
+        let flagged: Vec<_> = BUILTINS
+            .iter()
+            .filter(|b| b.volatile || b.volatile_without_args)
+            .map(|b| b.name)
+            .collect();
+        assert_eq!(flagged, ["NOW", "DATE", "TODAY", "TIME"]);
     }
 }
