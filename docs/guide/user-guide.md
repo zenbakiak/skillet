@@ -118,7 +118,7 @@ sk "=:missing_var + 5"
 
 # Type errors
 sk "=5 + \"hello\""
-# Output: Error: Arithmetic op on non-number
+# Output: Error: Cannot convert "hello" to a number (#VALUE!)
 ```
 
 Errors go to stderr and `sk` exits with code 2. Bad input that stops `sk` before it evaluates (a
@@ -1015,9 +1015,7 @@ sk "=MOD(-10, 3)"                             # 2 (sign of the divisor, as in Ex
 sk "=SQRT(-1)"                                # Error: SQRT of a negative number (#NUM!)
 sk "=POWER(2, 8)"                             # 256
 
-# Trigonometric (if extended)
 sk "=SQRT(16)"                                 # 4
-sk "=PI()"                                     # 3.14159...
 
 # With method syntax
 sk "=(-5).abs()"                              # 5
@@ -1050,15 +1048,16 @@ sk "=IF(:data.blank?, \"No data\", :data.upper())" data=""
 
 ```bash
 # Loan payments with PMT function
-sk "=PMT(0.05/12, 30*12, 100000)"              # Mortgage: $536.82/month
-sk "=PMT(0.04/12, 5*12, 25000)"                # Car loan: $460.41/month
-sk "=PMT(0.06/12, 10*12, 0, 50000)"            # Savings goal: $305.10/month
+# Results follow Excel's sign convention: money you pay is negative
+sk "=PMT(0.05/12, 30*12, 100000)"              # -536.82... (mortgage, per month)
+sk "=PMT(0.04/12, 5*12, 25000)"                # -460.41... (car loan, per month)
+sk "=PMT(0.06/12, 10*12, 0, 50000)"            # -305.10... (savings goal, per month)
 
 # PMT with balloon payment
-sk "=PMT(0.04/12, 5*12, 50000, 10000)"         # Loan with $10k balloon
+sk "=PMT(0.04/12, 5*12, 50000, 10000)"         # -1071.65... (loan with a $10k balloon)
 
 # PMT with beginning-of-period payments
-sk "=PMT(0.05/12, 30*12, 100000, 0, 1)"        # Payment at start of month
+sk "=PMT(0.05/12, 30*12, 100000, 0, 1)"        # -534.59... (payment at the start of the month)
 
 # Simple interest
 sk "=:principal * :rate * :time" principal=1000 rate=0.05 time=2  # 100
@@ -1318,13 +1317,14 @@ sk 'JQ(:arguments, "$.items[*].price").sum()' --json '{"items":[{"price":10}]}'
 
 ```bash
 # E-commerce calculation
-sk "=SUM(:items.map(:price * :quantity)) * (1 + :tax_rate)" --json '{
+sk "=SUM(:items.map(:x.price * :x.quantity)) * (1 + :tax_rate)" --json '{
   "items": [
     {"name": "laptop", "price": 999.99, "quantity": 1},
     {"name": "mouse", "price": 29.99, "quantity": 2}
   ],
   "tax_rate": 0.08
 }'
+# Output: Number(1144.7676000000001); wrap it in ROUND(…, 2) for 1144.77
 
 # Employee payroll
 sk "=IF(:employee.type = \"full-time\",
@@ -1435,13 +1435,13 @@ sk "[1, 2, 3].to_bool()"      # true - non-empty arrays are true
 **Problem**: Accessing properties that might be null causes errors:
 ```bash
 # This fails if FechaCierreCuenta is null
-sk ":data.FechaCierreCuenta.length()"  # Error: No methods available for Null type
+sk ":data.FechaCierreCuenta.length()" --json '{"data": {"FechaCierreCuenta": null}}'  # Error: No methods available for Null type
 ```
 
 **Solution**: Use conversion methods for null-safe operations:
 ```bash
 # This works even if FechaCierreCuenta is null
-sk ":data.FechaCierreCuenta.to_s().length()"  # 0 (length of empty string)
+sk ":data.FechaCierreCuenta.to_s().length()" --json '{"data": {"FechaCierreCuenta": null}}'  # 0 (length of empty string)
 ```
 
 #### 2. Filtering with Null Safety
@@ -1463,7 +1463,7 @@ sk ":cuentas := [
 # Convert mixed data to consistent types
 sk ":mixed := [null, \"hello\", 123, true, []]; 
 :mixed.map(:x.to_s())"
-# Returns: ["", "hello", "123", "true", "[]"]
+# Returns: ["", "hello", "123", "TRUE", "[]"]
 
 # Convert all to numbers (with safe defaults)
 sk ":mixed := [\"123\", null, true, \"45.5\", \"abc\"]; 
@@ -1516,7 +1516,8 @@ Skillet's conversion methods follow Ruby conventions for intuitive behavior:
 2. **Boolean to Number**: `true` → 1, `false` → 0
 3. **Empty Values to Boolean**: Empty strings and arrays become `false`
 4. **Null Safety**: `null` converts to safe defaults for all types
-5. **String Arrays**: Strings convert to character arrays (`"hi"` → `["h", "i"]`)
+5. **String Arrays**: `.to_a()` splits a string into characters (`"hi".to_a()` → `["h", "i"]`);
+   the `::Array` cast does not (`"hi"::Array` → `["hi"]`)
 
 ### Method Name Variants
 
@@ -1570,7 +1571,7 @@ sk ":obj := {\"name\": \"John\"}; :obj&.missing"     # null (no error)
 sk ":null_obj := null; :null_obj&.anything"          # null (no error)
 
 # Without safe navigation (would cause errors)
-sk ":null_obj := null; :null_obj.anything"           # Error!
+sk ":null_obj := null; :null_obj.anything"           # Error: Property access requires JSON object
 ```
 
 ### Safe Method Calls
@@ -1592,15 +1593,16 @@ sk ":obj := {\"name\": null}; :obj&.name&.length()"         # null (no error)
 Safe navigation works perfectly with conversion methods:
 
 ```bash
-# Safe navigation + conversion for ultimate null safety
+# Safe navigation alone is not enough: `&.` gives NULL for that step only, and the
+# plain `.length()` after it fails on NULL
 sk ":data := [{\"date\": null}, {\"date\": \"2023-01-01\"}]; 
 :data.filter(:x&.date&.to_s().length() > 0)"
-# Returns: [{"date": "2023-01-01"}]
+# Error: No methods available for Null type
 
-# Traditional approach (safer)
+# Convert instead: to_s() turns NULL into ""
 sk ":data := [{\"date\": null}, {\"date\": \"2023-01-01\"}]; 
 :data.filter(:x.date.to_s().length() > 0)"
-# Also works - conversion methods handle null gracefully
+# Returns: [{"date": "2023-01-01"}]
 ```
 
 ### When to Use Safe Navigation vs Conversions
@@ -1636,7 +1638,7 @@ sk "=\"  hello world  \".trim().upper().reverse()"  # "DLROW OLLEH"
 sk "=[5, 2, 8, 2, 1, 9, 2].unique().sort().reverse()"  # [9, 8, 5, 2, 1]
 
 # Complex chaining
-sk "=:data.filter(x > 0).map(x * 2).sum()" data=[1,-2,3,-4,5]  # 18
+sk "=:data.filter(:x > 0).map(:x * 2).sum()" data=[1,-2,3,-4,5]  # 18
 
 # Range checking method
 sk "=(75).between(60, 100)"                    # true
@@ -1646,17 +1648,17 @@ sk "=(75).between(60, 100)"                    # true
 
 ```bash
 # Numeric predicates
-sk "=(42).positive()"     # true
-sk "=(-5).negative()"     # true
-sk "=(0).zero()"          # true
-sk "=(4).even()"          # true
-sk "=(5).odd()"           # true
+sk "=(42).positive?"      # true
+sk "=(-5).negative?"      # true
+sk "=(0).zero?"           # true
+sk "=(4).even?"           # true
+sk "=(5).odd?"            # true
 
 # Value predicates
-sk "=(\"\").blank()"      # true
-sk "=(\"hello\").present()"  # true
-sk "=([]).blank()"        # true
-sk "=([1,2,3]).present()" # true
+sk "=(\"\").blank?"       # true
+sk "=(\"hello\").present?"  # true
+sk "=([]).blank?"         # true
+sk "=([1,2,3]).present?"  # true
 ```
 
 ### Values as text
@@ -1703,8 +1705,9 @@ sk "=(0.1 + 0.2)::Currency"    # 0.3
 sk "=SUM(...[1, 2, 3, 4, 5])"              # 15
 sk "=MAX(...:scores)" scores=[85,92,78,90]  # 92
 
-# Array construction with spread
-sk "=[0, ...[1, 2, 3], 4]"                 # [0, 1, 2, 3, 4]
+# Spread works in argument lists only, not inside an array literal
+sk "=MERGE([0], [1, 2, 3], 4)"             # [0, 1, 2, 3, 4]
+sk "=[0, ...[1, 2, 3], 4]"                 # Error: Unexpected token: Ellipsis at position 5
 ```
 
 ### Object Literals
@@ -1714,7 +1717,7 @@ Skillet supports JSON-style object literal syntax for creating structured data:
 ```bash
 # Simple object literals
 sk ":obj := {name: 'John', age: 30, active: true}; :obj"
-# Output: Json("{\"name\":\"John\",\"age\":30.0,\"active\":true}")
+# Output: Json("{\"active\":true,\"age\":30.0,\"name\":\"John\"}") (keys are sorted)
 
 # Objects with quoted keys
 sk ":obj := {\"first-name\": \"Jane\", \"last-name\": \"Doe\"}; :obj"
