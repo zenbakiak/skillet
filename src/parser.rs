@@ -218,18 +218,25 @@ impl<'a> Parser<'a> {
     }
 
     /// Left-associative binary operators by precedence climbing, loosest first:
-    /// `or` (1), `and` (2), `== !=` (3), `> < >= <=` (4), `&` (5), `+ -` (6), `* / %` (7).
+    /// `or` (1), `and` (2), prefix `NOT` (see `parse_not_keyword`), `== !=` (3),
+    /// `> < >= <=` (4), `&` (5), `+ -` (6), `* / %` (7).
     /// Operands are `unary`, then postfix `%` and `^` (see `parse_power_rest`), so the full
     /// Excel order is: negation > `%` > `^` > `* /` > `+ -` > `&` > comparisons (D-10).
     /// Builds the same tree, in the same order, as one function per level would, but
     /// with one frame instead of two per level on the path to an operand. Each operator
     /// wraps the tree one level deeper, so chain length counts against the depth limit.
     fn parse_binary(&mut self, min_prec: u8) -> Parsed {
-        let mut parsed = self.parse_unary()?;
-        if matches!(self.lookahead, Token::Percent | Token::Caret) {
-            parsed = self.parse_power_rest(parsed)?;
-        }
-        let (mut node, mut depth) = parsed;
+        // `NOT` starts an operand of `AND`/`OR` (the right one of `AND` is parsed at
+        // `AND_PREC + 1`), never an operand of a comparison or arithmetic.
+        let (mut node, mut depth) = if min_prec <= AND_PREC + 1 && self.at_not_keyword() {
+            self.parse_not_keyword()?
+        } else {
+            let mut parsed = self.parse_unary()?;
+            if matches!(self.lookahead, Token::Percent | Token::Caret) {
+                parsed = self.parse_power_rest(parsed)?;
+            }
+            parsed
+        };
         while let Some((op, prec)) = binary_op(&self.lookahead) {
             if prec < min_prec {
                 break;
@@ -248,15 +255,12 @@ impl<'a> Parser<'a> {
         Ok((node, depth))
     }
 
-    /// Prefix `-`, `+`, `!` and the `NOT` keyword bind tightest (Excel: `-2^2` is 4).
+    /// Prefix `-`, `+` and `!` bind tightest (Excel: `-2^2` is 4).
     fn parse_unary(&mut self) -> Parsed {
-        let op = match &self.lookahead {
+        let op = match self.lookahead {
             Token::Plus => UnaryOp::Plus,
             Token::Minus => UnaryOp::Minus,
             Token::Bang => UnaryOp::Not,
-            Token::Identifier(name) if name.eq_ignore_ascii_case("NOT") && !self.call_follows() => {
-                return self.parse_not_keyword();
-            }
             _ => return self.parse_postfix(),
         };
         self.bump()?;
@@ -268,8 +272,14 @@ impl<'a> Parser<'a> {
         Ok((Expr::Unary(op, Rc::new(expr)), depth))
     }
 
-    /// With a name as the lookahead: does `(` follow it directly, with no space? Then it is a
-    /// call (`NOT(x)`); otherwise `NOT` is the prefix keyword (`NOT x`, `NOT (x)`).
+    /// Is the lookahead the `NOT` keyword: a `NOT` name (any case) not followed directly by `(`
+    /// (`NOT(x)` with no space is the builtin call)?
+    fn at_not_keyword(&self) -> bool {
+        matches!(&self.lookahead, Token::Identifier(name) if name.eq_ignore_ascii_case("NOT"))
+            && !self.call_follows()
+    }
+
+    /// With a name as the lookahead: does `(` follow it directly, with no space?
     #[inline(never)]
     fn call_follows(&self) -> bool {
         let end = self.lexer.last_end();
@@ -277,13 +287,16 @@ impl<'a> Parser<'a> {
         matches!(next.next_token(), Ok(Token::LParen)) && next.last_start() == end
     }
 
-    /// `NOT operand` (ADR-0029): the `NOT` builtin applied to the operand, with the precedence
-    /// of `!`, so it gives the same result as `NOT(operand)`.
+    /// `NOT operand` (ADR-0029): the `NOT` builtin applied to the operand, so it gives the same
+    /// result as `NOT(operand)`. As in VB and SQL it binds looser than the comparisons and
+    /// tighter than `AND`: the operand is everything up to the next `AND`/`OR` (or `&&`/`||`),
+    /// so `NOT :x > 1` is `NOT (:x > 1)`. It starts an operand only where an `AND` operand
+    /// can start; elsewhere (`1 + NOT x`) it needs parentheses.
     #[inline(never)]
     fn parse_not_keyword(&mut self) -> Parsed {
         self.bump()?; // 'NOT'
         self.enter()?;
-        let operand = self.parse_unary();
+        let operand = self.parse_binary(AND_PREC + 1);
         self.nesting -= 1;
         let (expr, d) = operand?;
         let depth = self.node_depth(Some(d))?;
@@ -470,6 +483,9 @@ impl<'a> Parser<'a> {
                     self.parse_call_args("Expected ',' or ')' in argument list")?;
                 let depth = self.node_depth(max_child)?;
                 Ok((Expr::FunctionCall { name, args }, depth))
+            }
+            _ if name == "NOT" => {
+                self.err_here("NOT binds looser than comparisons here; write (NOT x)")
             }
             _ => self.err_here("Unexpected identifier (expected function call)"),
         }
@@ -780,16 +796,19 @@ impl<'a> Parser<'a> {
 /// `CONCAT` rules). Like `__TERNARY__`, the evaluator handles it before custom functions.
 pub(crate) const CONCAT_OP: &str = "__CONCAT__";
 
+/// Precedence of `AND`/`&&`. The `NOT` keyword sits between it and the comparisons.
+const AND_PREC: u8 = 2;
+
 /// Binary operator and precedence (higher binds tighter) for a token, if it is one. The
 /// operator is `None` for `&`, which has no `BinaryOp` and becomes a `CONCAT_OP` call.
 fn binary_op(tok: &Token) -> Option<(Option<BinaryOp>, u8)> {
     let (op, prec) = match tok {
         Token::Or | Token::OrOr => (BinaryOp::Or, 1),
-        Token::And | Token::AndAnd => (BinaryOp::And, 2),
+        Token::And | Token::AndAnd => (BinaryOp::And, AND_PREC),
         // The lexer reads `AND`/`OR` as names; after an operand they are the operators, before
         // one they stay the `AND(...)`/`OR(...)` builtins.
         Token::Identifier(name) if name.eq_ignore_ascii_case("OR") => (BinaryOp::Or, 1),
-        Token::Identifier(name) if name.eq_ignore_ascii_case("AND") => (BinaryOp::And, 2),
+        Token::Identifier(name) if name.eq_ignore_ascii_case("AND") => (BinaryOp::And, AND_PREC),
         Token::EqEq => (BinaryOp::Eq, 3),
         Token::NotEq => (BinaryOp::Ne, 3),
         Token::Greater => (BinaryOp::Gt, 4),

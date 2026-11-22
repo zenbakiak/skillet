@@ -1,8 +1,10 @@
 //! ADR-0029 (BL-073): the `NOT` keyword, short-circuit `AND`/`OR` operators, Excel `AND`/`OR`/
 //! `NOT`/`XOR` builtins, and the `IF`/`IFS` condition rules of ADR-0018 D-8 (B-18).
 
+use skillet::ast::{BinaryOp, Expr};
 use skillet::{evaluate, evaluate_with, parse, Value};
 use std::collections::HashMap;
+use std::rc::Rc;
 
 fn ok(src: &str) -> Value {
     evaluate(src).unwrap_or_else(|e| panic!("{src}: {}", e.message))
@@ -66,29 +68,114 @@ fn not_keyword_matches_the_builtin() {
 fn not_followed_directly_by_paren_is_the_call() {
     // The call is an atom, so a method applies to its result.
     assert_eq!(ok("NOT(TRUE).to_s()"), Value::String("false".into()));
-    // The keyword takes the postfix chain as its operand: NOT ((TRUE).to_s()) is text.
+    // The keyword's operand includes the postfix chain: NOT ((TRUE).to_s()) is text.
     err_has("NOT (TRUE).to_s()", "#VALUE!");
     err_has("NOT(1, 2)", "NOT expects 1 argument");
     assert!(evaluate("NOT (1, 2)").is_err());
 }
 
+fn var(name: &str) -> Rc<Expr> {
+    Rc::new(Expr::Variable(name.into()))
+}
+
+fn not(arg: Expr) -> Expr {
+    Expr::FunctionCall {
+        name: "NOT".into(),
+        args: vec![arg],
+    }
+}
+
+fn tree(src: &str) -> Expr {
+    parse(src).unwrap_or_else(|e| panic!("{src}: {}", e.message))
+}
+
+/// Comparisons > `NOT` > `AND` > `OR`, as in VB and SQL (ADR-0029 §3).
 #[test]
-fn not_keyword_has_the_precedence_of_bang() {
-    is("NOT TRUE AND FALSE", false); // (NOT TRUE) AND FALSE
-    is("NOT FALSE AND TRUE", true);
-    is("TRUE AND NOT FALSE", true);
-    is("FALSE OR NOT FALSE", true);
-    is("NOT (1 > 2)", true);
-    // Like `!:x > 1`, `NOT :x > 1` is `(NOT :x) > 1`.
-    let v = vars(&[("x", Value::Number(5.0))]);
-    let keyword = evaluate_with("NOT :x > 1", &v).map_err(|e| e.message);
-    assert!(keyword.is_err(), "{keyword:?}");
+fn not_keyword_binds_looser_than_comparisons() {
+    // NOT :x > 1  =>  NOT(:x > 1)
+    let gt = Expr::Binary(var("x"), BinaryOp::Gt, Rc::new(Expr::Number(1.0)));
+    assert_eq!(tree("NOT :x > 1"), not(gt));
+    // NOT 1 > 2 AND TRUE  =>  NOT(1 > 2) AND TRUE
+    let lt = Expr::Binary(
+        Rc::new(Expr::Number(1.0)),
+        BinaryOp::Gt,
+        Rc::new(Expr::Number(2.0)),
+    );
     assert_eq!(
-        evaluate_with("NOT (:x > 1)", &v).unwrap(),
+        tree("NOT 1 > 2 AND :t"),
+        Expr::Binary(Rc::new(not(lt)), BinaryOp::And, var("t"))
+    );
+    // NOT :a OR :b  =>  NOT(:a) OR :b
+    assert_eq!(
+        tree("NOT :a OR :b"),
+        Expr::Binary(
+            Rc::new(not(Expr::Variable("a".into()))),
+            BinaryOp::Or,
+            var("b")
+        )
+    );
+    // :a AND NOT :b == :c  =>  :a AND NOT(:b == :c)
+    let eq = Expr::Binary(var("b"), BinaryOp::Eq, var("c"));
+    assert_eq!(
+        tree(":a AND NOT :b == :c"),
+        Expr::Binary(var("a"), BinaryOp::And, Rc::new(not(eq)))
+    );
+    // The same trees as the explicit calls.
+    assert_eq!(tree("NOT :x > 1"), tree("NOT(:x > 1)"));
+    assert_eq!(tree("NOT 1 > 2 AND TRUE"), tree("NOT(1 > 2) AND TRUE"));
+    assert_eq!(tree("NOT :a || :b"), tree("NOT(:a) || :b"));
+    assert_eq!(tree("NOT NOT :a"), tree("NOT(NOT(:a))"));
+    assert_eq!(tree("NOT :x"), tree("NOT(:x)"));
+}
+
+#[test]
+fn not_keyword_results() {
+    let v = vars(&[("x", Value::Number(5.0))]);
+    assert_eq!(
+        evaluate_with("NOT :x > 1", &v).unwrap(),
         Value::Boolean(false)
     );
-    // The AST is the same as for the call.
-    assert_eq!(parse("NOT :x").unwrap(), parse("NOT(:x)").unwrap());
+    assert_eq!(
+        evaluate_with("NOT :x < 1", &v).unwrap(),
+        Value::Boolean(true)
+    );
+    is("NOT 1 > 2 AND TRUE", true);
+    is("NOT 1 > 2 AND FALSE", false);
+    is("NOT TRUE OR TRUE", true); // (NOT TRUE) OR TRUE
+    is("NOT FALSE AND FALSE", false); // (NOT FALSE) AND FALSE
+    is("TRUE AND NOT 1 > 2", true);
+    is("FALSE OR NOT 1 > 2", true);
+    is("NOT TRUE && TRUE", false);
+    is("NOT FALSE || FALSE", true);
+    is("NOT 1 + 1 == 2", false);
+    is("NOT NOT 1 > 2", false);
+    is("IF(NOT 1 > 2, TRUE, FALSE)", true);
+    assert_eq!(ok("NOT 1 > 0 ? 'a' : 'b'"), Value::String("b".into()));
+}
+
+#[test]
+fn bang_stays_a_tight_unary() {
+    // `!` binds tighter than comparisons: `!TRUE == FALSE` is `(!TRUE) == FALSE`.
+    is("!TRUE == FALSE", true);
+    is("NOT TRUE == FALSE", true); // NOT (TRUE == FALSE)
+    is("NOT !TRUE", true);
+    let v = vars(&[("x", Value::Number(5.0))]);
+    assert!(evaluate_with("!:x > 1", &v).is_err());
+}
+
+#[test]
+fn not_keyword_inside_a_tighter_operator_needs_parentheses() {
+    for src in [
+        "1 + NOT TRUE",
+        "-NOT TRUE",
+        "!NOT TRUE",
+        "TRUE == NOT FALSE",
+    ] {
+        err_has(src, "write (NOT x)");
+    }
+    is("TRUE == (NOT FALSE)", true);
+    // With no space, `NOT(` is the call, which is an atom anywhere.
+    is("TRUE == NOT(FALSE)", true);
 }
 
 #[test]

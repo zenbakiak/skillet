@@ -190,11 +190,24 @@ TRUE AND 1/0               # Error: Division by zero (#DIV/0!)
 :n == 0 OR 10 / :n > 1     # safe when :n is 0
 ```
 
-`NOT` (any case) is a prefix keyword with the precedence of `!`: `NOT TRUE`, `not (:a > 1)`.
-`NOT` followed directly by `(` (no space) is the `NOT(...)` builtin, and both give the same
-result, with the builtin's rules (`NOT 0` is `TRUE`, `NOT "x"` is an error). `!` takes booleans
-only (`!0` is an error). Because `NOT` binds tightly, `NOT :x > 1` is `(NOT :x) > 1`; write
-`NOT (:x > 1)`.
+`NOT` (any case) is a prefix keyword that binds looser than the comparisons and tighter than
+`AND`, as in VB and SQL. Its operand runs to the next `AND`, `OR`, `&&` or `||`. It gives the
+same result as the `NOT(...)` builtin, with the builtin's rules (`NOT 0` is `TRUE`, `NOT "x"` is
+an error).
+
+```bash
+NOT :x > 1                 # NOT (:x > 1)
+NOT 1 > 2 AND TRUE         # (NOT (1 > 2)) AND TRUE  ->  TRUE
+NOT :a OR :b               # (NOT :a) OR :b
+:a AND NOT :b == :c        # :a AND NOT (:b == :c)
+NOT (0) == FALSE           # NOT ((0) == FALSE)  ->  TRUE
+1 + NOT TRUE               # Error: NOT binds looser than comparisons here; write (NOT x)
+TRUE == (NOT FALSE)        # TRUE
+```
+
+`NOT` followed directly by `(`, with no space, is the `NOT(...)` call. A call is an atom, so it
+works anywhere: `TRUE == NOT(FALSE)`, `NOT(0) == FALSE` (FALSE). `!` stays a tight unary
+operator that takes booleans only: `!TRUE == FALSE` is `(!TRUE) == FALSE`, and `!0` is an error.
 
 ### Unary Operators
 - `+` - Positive (unary plus)
@@ -215,7 +228,7 @@ Tightest first, as in Excel. Operators on the same row are left-associative.
 | Level | Operators |
 |---|---|
 | 1 | postfix `.method()`, `.prop`, `&.`, `[i]`, `::type` |
-| 2 | unary `-`, `+`, `!`, `NOT` (`-2^2` is `4`) |
+| 2 | unary `-`, `+`, `!` (`-2^2` is `4`) |
 | 3 | percent suffix `%` |
 | 4 | `^` (`2^3^2` is `64`) |
 | 5 | `*`, `/`, `%` (modulo) |
@@ -223,9 +236,10 @@ Tightest first, as in Excel. Operators on the same row are left-associative.
 | 7 | `&` |
 | 8 | `>`, `<`, `>=`, `<=` |
 | 9 | `==`, `!=` |
-| 10 | `AND`, `&&` |
-| 11 | `OR`, `\|\|` |
-| 12 | `? :` |
+| 10 | prefix `NOT` keyword (starts an operand of `AND`/`OR` only) |
+| 11 | `AND`, `&&` |
+| 12 | `OR`, `\|\|` |
+| 13 | `? :` |
 
 `-(2^2)` gives `-4`. Before BL-054, `^` was right-associative (`2^3^2` was `512`) and
 unary minus bound looser than `^` (`-2^2` was `-4`).

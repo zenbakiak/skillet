@@ -38,16 +38,24 @@ The builtin calls `AND(...)`, `OR(...)` and `XOR(...)` follow Excel, which evalu
 `AND(FALSE, 1/0)` is an error.
 
 ### 3. `NOT` as a prefix keyword
-- `NOT x`, in any case (`NOT TRUE`, `not (:a > 1)`), negates its operand with the precedence of
-  `!`. It binds tighter than `^` and every binary operator, so `NOT TRUE AND FALSE` is
-  `(NOT TRUE) AND FALSE`, and `NOT :x > 1` is `(NOT :x) > 1`. Write `NOT (:x > 1)` to negate a
-  comparison.
-- A `NOT` name followed directly by `(`, with no space, is the `NOT(...)` builtin call. With a
-  space, `NOT (x)` is the keyword. The keyword parses to the same call, `NOT(x)`, so both give the
-  same result and the same errors: `NOT 0` is TRUE and `NOT "x"` is `#VALUE!`. The only
-  difference is that the call is an atom: `NOT(TRUE).to_s()` is `"false"`, while
-  `NOT (TRUE).to_s()` is `NOT("true")`, an error.
-- `!` is unchanged and takes booleans only (`!0` is an error).
+- `NOT x`, in any case (`NOT TRUE`, `not (:a > 1)`), negates its operand. As in VB and SQL it
+  binds looser than the comparisons and tighter than `AND`. From tightest to loosest:
+  `!` and the other unary operators, `^`, arithmetic, `&`, comparisons, `NOT`, `AND`/`&&`,
+  `OR`/`||`, `? :`.
+  - `NOT :x > 1` is `NOT (:x > 1)`.
+  - `NOT 1 > 2 AND TRUE` is `(NOT (1 > 2)) AND TRUE`.
+  - `NOT :a OR :b` is `(NOT :a) OR :b`, and `:a AND NOT :b == :c` is `:a AND NOT (:b == :c)`.
+  - `NOT NOT x` nests.
+- `NOT` starts an operand of `AND`, `OR`, `? :` or the whole expression. Inside a tighter operator
+  it is a parse error, `NOT binds looser than comparisons here; write (NOT x)`: `1 + NOT TRUE`,
+  `-NOT TRUE`, `TRUE == NOT FALSE`. Write `TRUE == (NOT FALSE)`.
+- A `NOT` name followed directly by `(`, with no space, is the `NOT(...)` builtin call. It is an
+  atom, so it is allowed anywhere: `TRUE == NOT(FALSE)`, `NOT(TRUE).to_s()`. With a space,
+  `NOT (x)` is the keyword, whose operand runs to the next `AND`/`OR`: `NOT (0) == FALSE` is
+  `NOT ((0) == FALSE)`. The keyword parses to the same call, `NOT(operand)`, so the builtin's rules
+  apply: `NOT 0` is TRUE and `NOT "x"` is `#VALUE!`.
+- `!` is unchanged: a tight unary that takes booleans only. `!TRUE == FALSE` is
+  `(!TRUE) == FALSE`, and `!0` is an error.
 
 ### 4. `IF` and `IFS` conditions (ADR-0018 D-8, B-18)
 - A condition is TRUE/FALSE, or a number: non-zero is TRUE, as in Excel. A Currency value counts as
@@ -77,7 +85,8 @@ The builtin calls `AND(...)`, `OR(...)` and `XOR(...)` follow Excel, which evalu
 
 ### Where the Excel documentation was not clear
 These choices follow Microsoft's documentation where it speaks, and the maintainer's rules where
-it does not. Each one is pinned by a test in `tests/logic_operators.rs`.
+it does not. The maintainer accepted all four on 2026-11-21. Each one is pinned by a test in
+`tests/logic_operators.rs`.
 - **Text `"TRUE"`/`"FALSE"` passed directly.** The documentation says arguments must evaluate to
   logical values, but Excel probably converts the text `"TRUE"` typed into the formula
   (`=AND("TRUE")`). Not verified in a workbook. Skillet follows the maintainer's rule: direct text
@@ -101,6 +110,7 @@ it does not. Each one is pinned by a test in `tests/logic_operators.rs`.
 | `AND(TRUE, "x")`, `OR(FALSE, "TRUE")`, `NOT("x")` | `false`, `false`, `true` | `Error` (`#VALUE!`) |
 | `AND()`, `OR()`, `AND([])` | `true`, `false`, `true` | `Error` (`#VALUE!`) |
 | `FALSE AND 1/0`, `TRUE OR UPPER(1)` | `Error` | `false`, `true` |
+| `NOT (0) == FALSE` (space before `(`) | `false` (`NOT(0) == FALSE`) | `true` (`NOT (0 == FALSE)`) |
 
 Additive: `NOT x` (was a parse error), `XOR` with 1 or 3+ arguments (was an error).
 
@@ -109,17 +119,21 @@ Additive: `NOT x` (was a parse error), `XOR` with 1 or 3+ arguments (was an erro
 - \+ Logical functions copied from a spreadsheet give the spreadsheet's result or an error.
 - − `AND(...)` and `a AND b` differ: the function evaluates every argument and accepts numbers;
   the operator stops early and takes booleans only. The reference says so.
-- − `NOT :x > 1` does not mean `NOT (:x > 1)`. This matches `!` and Excel's tight unary operators,
-  but readers from SQL or Python may expect the other meaning; the reference and the migration
-  guide call it out.
+- \+ `NOT :x > 1` reads as it does in VB, SQL and Python: `NOT (:x > 1)`.
+- − `NOT` and `!` have different precedence: `NOT :a == :b` is `NOT (:a == :b)`, while
+  `!:a == :b` is `(!:a) == :b`. The reference shows both.
+- − `NOT (x) ...` with a space before `(` changed meaning when a comparison follows (table above).
 - − `AND(TRUE, NULL)` changes from FALSE to TRUE without an error. The migration guide lists it
   first.
 
 ## Alternatives considered
-- **`NOT` with the precedence of SQL/Python (looser than comparisons).** Not chosen: the
-  maintainer gave `NOT` the precedence of `!`, so the two prefix forms parse alike.
+- **`NOT` with the precedence of `!`.** An earlier draft of this decision. The maintainer changed
+  it on 2026-11-21: with it, `NOT :x > 1` was `(NOT :x) > 1`, an error for a number, which is
+  not what readers from VB or SQL expect.
+- **`NOT` allowed inside tighter operators (`1 == NOT x`).** Not chosen: the operand would have to
+  stop at an unclear point. A parse error that asks for parentheses is clearer.
 - **Short-circuit the builtins too.** Not chosen: Excel evaluates every argument of `AND`/`OR`,
   and ADR-0018 makes Excel the contract for UPPERCASE builtins.
-- **`NULL` as FALSE in `AND`/`OR`/`XOR`, as in `IF`.** Not chosen by the implementation: Excel
-  ignores empty cells there, and ADR-0018 treats `NULL` like a blank cell in aggregates. Open for
-  the maintainer to confirm (see "Where the Excel documentation was not clear").
+- **`NULL` as FALSE in `AND`/`OR`/`XOR`, as in `IF`.** Not chosen: Excel ignores empty cells
+  there, and ADR-0018 treats `NULL` like a blank cell in aggregates. The maintainer confirmed
+  `AND(TRUE, NULL)` = TRUE on 2026-11-21.

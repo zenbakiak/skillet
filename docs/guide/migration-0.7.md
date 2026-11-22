@@ -110,10 +110,15 @@ and `||` stop as soon as the left side decides the result.
 | `AND()`, `OR()`, `AND([])` | `true`, `false`, `true` | `Error` (`#VALUE!`) |
 | `XOR(TRUE, TRUE, TRUE)`, `XOR(TRUE)` | `Error` | `true` (odd number of TRUE) |
 | `FALSE && 1/0`, `TRUE \|\| UPPER(1)` | `Error` | `false`, `true` (right side not evaluated) |
-| `NOT TRUE`, `not (1 > 2)` | parse error | `false`, `true` (`NOT` keyword, binds like `!`) |
+| `NOT TRUE`, `NOT :x > 1` | parse error | `false`, `NOT (:x > 1)` (`NOT` keyword) |
+| `NOT (0) == FALSE` (space before `(`) | `false` (`NOT(0) == FALSE`) | `true` (`NOT ((0) == FALSE)`) |
 | `AND(1, TRUE)`, `NOT(0)`, `1 AND TRUE` | `true`, `true`, `Error` | unchanged |
 
-`NOT x` binds as tightly as `!`, so `NOT :x > 1` is `(NOT :x) > 1`; write `NOT (:x > 1)`.
+The `NOT` keyword binds looser than comparisons and tighter than `AND`, as in SQL:
+`NOT 1 > 2 AND TRUE` is `(NOT (1 > 2)) AND TRUE`. Inside a tighter operator it needs
+parentheses (`1 + (NOT x)`). `NOT(x)` with no space stays the function call, and `!` keeps its
+tight precedence (`!:a == :b` is `(!:a) == :b`). To keep a 0.6 `NOT (x) == y`, remove the space:
+`NOT(x) == y`.
 
 ### Dates (ADR-0018 D-5)
 | Expression | 0.6 | 0.7 |
