@@ -20,6 +20,8 @@ Check these first. They change results without an error:
 10. **`::Currency`** now rounds to 4 decimals and returns a Number (ADR-0033): there is one
    number type. `1.23456::Currency` is `1.2346`; `(2.5::Currency)::String` is `"2.5"` (was
    `"2.5000"`). Responses say `"type": "Number"` (was `"Currency"`).
+11. **`filter`, `find`, `FILTER`, `FIND` with a lambda that returns a number** now keep or find the
+   items where it is non-zero (ADR-0029 Amendment 1): `[0, 1, 2].filter(:x)` is `[1, 2]` (was `[]`).
 
 ## Expressions
 
@@ -86,7 +88,8 @@ Where Excel returns an error value (`#DIV/0!`, `#NUM!`, `#VALUE!`, `#N/A`), Skil
 | `MODE_SNGL(1, 2, 3)` (no repeated value) | `1` | `Error` |
 | `AVGIF([1, 2], :x > 5)` (no match) | `0` | `Error` |
 | `ROUND(2.567, "x")`, `PMT(0.05, 10, 1000, "x")` | argument ignored | `Error` |
-| `COUNTIF([1,2,3], :x)` (lambda returns a non-boolean) | `0` | `Error` |
+| `COUNTIF([1,2,3], :x)` (lambda returns a number) | `0` | `3` (non-zero counts, as in `IF`) |
+| `COUNTIF(["a"], :x)` (lambda returns text) | `0` | `Error` (`#VALUE!`) |
 | `SUM()`, `MAX()`, `SUM([1, NULL])` | `0`, `0`, `1` | unchanged |
 
 To keep a default, test first: `IF(:n == 0, 0, :total / :n)` (now lazy, see below).
@@ -117,31 +120,53 @@ The methods keep Ruby semantics and do not change: `"  a   b  ".trim()` is still
 `(-3.7).int()` is still `-3` (while `INT(-3.7)` is `-4`).
 
 ### Logical functions and operators (ADR-0018 D-8, ADR-0029)
-`IF` and `IFS` evaluate only the branch they pick. Their condition must be `TRUE`/`FALSE` or a
-number (non-zero is true); `NULL` is false. The `AND`/`OR`/`NOT`/`XOR` builtins follow Excel:
-inside an array, text and `NULL` are skipped; text passed directly is `#VALUE!`; no logical value
-at all is `#VALUE!`. The builtins evaluate every argument, while the operators `AND`, `OR`, `&&`
-and `||` stop as soon as the left side decides the result.
+Every condition follows one rule, the `IF` rule (ADR-0029 Amendment 1): `TRUE`/`FALSE` as they
+are, a number (or Currency) is true when it is not 0, `NULL` is false, and text, a date, an array
+or a JSON object is an error (`#VALUE!`), and NaN from a host variable is an error (`#NUM!`; it
+was TRUE in `IF` and in `AND()`/`OR()`/`XOR()`, which give the same error now). The rule applies to `IF`, `IFS`, `? :`, the `AND`, `OR`,
+`&&`, `||`, `NOT` and `!` operators, the `filter`/`find`/`FILTER`/`FIND` lambdas and lambda
+criteria in `COUNTIF`/`SUMIF`/`AVERAGEIF`. `IF` and `IFS` evaluate only the branch they pick, and
+the operators stop as soon as the left side decides the result.
+
+The `AND()`/`OR()`/`NOT()`/`XOR()` builtins follow Excel and evaluate every argument. `AND()`,
+`OR()` and `XOR()` skip a `NULL` argument like an empty cell, and skip text and `NULL` inside an
+array; text passed directly is `#VALUE!`; no logical value at all is `#VALUE!`.
+
+> **Warning.** `AND(:u&.is_admin, :on)` is `true` when `is_admin` is missing, because the builtin
+> skips the `NULL`. Write `:u&.is_admin AND :on` (`false`), `IF(:u&.is_admin, :on, FALSE)`, or
+> compare: `AND(:u&.is_admin == TRUE, :on)`.
 
 | Expression | 0.6 | 0.7 |
 |---|---|---|
 | `IF(TRUE, 1, UPPER(1))` | `Error` | `1` (only the chosen branch runs) |
 | `IF("x", 1, 2)`, `IF([1], 1, 2)` | `2` | `Error` (`#VALUE!`) |
+| `IF(1, 2, 3, 4)` | `2` (fourth argument ignored) | `Error: IF expects at most 3 arguments` |
 | `IFS(FALSE, 1)` (no true condition) | `false` | `Error` (`#N/A`) |
 | `AND(TRUE, NULL)`, `AND(TRUE, [TRUE, "x"])` | `false` | `true` (blank and text ignored) |
 | `AND(TRUE, "x")`, `OR(FALSE, "TRUE")`, `NOT("x")` | `false`, `false`, `true` | `Error` (`#VALUE!`) |
 | `AND()`, `OR()`, `AND([])` | `true`, `false`, `true` | `Error` (`#VALUE!`) |
 | `XOR(TRUE, TRUE, TRUE)`, `XOR(TRUE)` | `Error` | `true` (odd number of TRUE) |
 | `FALSE && 1/0`, `TRUE \|\| UPPER(1)` | `Error` | `false`, `true` (right side not evaluated) |
+| `1 AND TRUE`, `NULL AND FALSE`, `TRUE AND NULL`, `NULL OR TRUE` | `Error` | `true`, `false`, `false`, `true` |
+| `"x" AND TRUE`, `TRUE OR [1]` | `Error` | `Error` (`#VALUE!`), `true` (right side not evaluated) |
+| `1 ? "a" : "b"`, `NULL ? "a" : "b"` | `Error` | `"a"`, `"b"` |
+| `!0`, `!NULL`, `!"x"` | `Error` | `true`, `true`, `Error` (`#VALUE!`) |
+| `[0, 1, 2].filter(:x)`, `FILTER([0, 1, 2], :x)` | `[]` | `[1, 2]` |
+| `[0, 5].find(:x)` | `NULL` | `5` |
+| `[1, 2].filter("yes")`, `[DATE(2026, 1, 1)].filter(:x)` | `[]` | `Error` (`#VALUE!`) |
 | `NOT TRUE`, `NOT :x > 1` | parse error | `false`, `NOT (:x > 1)` (`NOT` keyword) |
 | `NOT (0) == FALSE` (space before `(`) | `false` (`NOT(0) == FALSE`) | `true` (`NOT ((0) == FALSE)`) |
-| `AND(1, TRUE)`, `NOT(0)`, `1 AND TRUE` | `true`, `true`, `Error` | unchanged |
+| `AND(1, TRUE)`, `NOT(0)` | `true`, `true` | unchanged |
+
+An error inside a `filter`/`find` lambda is the result of the whole call; it is never dropped
+(`[2, "a"].filter(:x)` is an error). `find` stops at the first match, so `[2, "a"].find(:x)` is
+`2`.
 
 The `NOT` keyword binds looser than comparisons and tighter than `AND`, as in SQL:
 `NOT 1 > 2 AND TRUE` is `(NOT (1 > 2)) AND TRUE`. Inside a tighter operator it needs
 parentheses (`1 + (NOT x)`). `NOT(x)` with no space stays the function call, and `!` keeps its
-tight precedence (`!:a == :b` is `(!:a) == :b`). To keep a 0.6 `NOT (x) == y`, remove the space:
-`NOT(x) == y`.
+tight precedence (`!:a == :b` is `(!:a) == :b`; `!0 == FALSE` is `FALSE`, while
+`NOT 0 == FALSE` is `TRUE`). To keep a 0.6 `NOT (x) == y`, remove the space: `NOT(x) == y`.
 
 ### Dates (ADR-0018 D-5)
 | Expression | 0.6 | 0.7 |
