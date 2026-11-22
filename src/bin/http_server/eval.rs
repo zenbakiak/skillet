@@ -10,6 +10,7 @@ use std::time::Instant;
 use super::auth::check_authentication;
 use super::cache::{clear_cache, evaluate_cached, get_cache_stats};
 use super::eval_limits::server_limits;
+use super::json_keys::sanitize_json_key;
 use super::parse_cache;
 use super::response_size;
 use super::stats::ServerStats;
@@ -17,9 +18,7 @@ use super::types::{
     CacheStatsResponse, EvalRequest, EvalResponse, HealthResponse, IncludeVariables,
     ParseCacheStatsResponse,
 };
-use super::utils::{
-    parse_json_body, sanitize_json_key, send_http_error, send_http_response, to_json_exact,
-};
+use super::utils::{parse_json_body, send_http_error, send_http_response, to_json_exact};
 
 pub fn handle_eval_post(
     stream: &mut TcpStream,
@@ -234,7 +233,6 @@ fn process_eval_request(
             for (key, value) in json_vars {
                 match skillet::json_to_value(value) {
                     Ok(v) => {
-                        // Only sanitize if necessary (fast path optimization)
                         let sanitized_key = sanitize_json_key(&key);
                         result.insert(sanitized_key, v);
                     }

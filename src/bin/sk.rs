@@ -5,18 +5,8 @@ use skillet::{evaluate_with_assignments, evaluate_with_custom, Value};
 use std::collections::HashMap;
 use std::time::Instant;
 
-/// Sanitize JSON keys by replacing special characters with underscores
-fn sanitize_json_key(key: &str) -> String {
-    key.chars()
-        .map(|c| {
-            if c.is_alphanumeric() || c == '_' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect()
-}
+#[path = "../json_keys.rs"]
+mod json_keys;
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -130,7 +120,7 @@ fn main() {
                                 std::process::exit(1);
                             }
                         };
-                        let sanitized_key = sanitize_json_key(&key);
+                        let sanitized_key = json_keys::sanitize_json_key(&key);
                         result.insert(sanitized_key, skillet_value);
                     }
                     // The original JSON for JQ, last so a key named `arguments` cannot

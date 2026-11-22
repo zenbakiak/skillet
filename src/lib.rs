@@ -49,6 +49,7 @@ pub mod error;
 /// JavaScript plugins run by QuickJS (`plugins` feature, on by default).
 #[cfg(feature = "plugins")]
 pub mod js_plugin;
+mod json_keys;
 /// Tokenizer used by the parser.
 pub mod lexer;
 mod limits;
@@ -69,19 +70,6 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 pub use types::Value;
 
-/// Sanitize JSON keys by replacing special characters with underscores
-fn sanitize_json_key(key: &str) -> String {
-    key.chars()
-        .map(|c| {
-            if c.is_alphanumeric() || c == '_' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect()
-}
-
 /// Build the variable map for the `*_json*` entry points: each top-level key
 /// becomes a sanitized variable, and the raw JSON is exposed as `:arguments`
 /// (for `JQ`).
@@ -97,7 +85,7 @@ fn json_vars_to_map(json_vars: &str) -> Result<HashMap<String, Value>, Error> {
 
     let mut vars = HashMap::with_capacity(map.len() + 1);
     for (key, value) in map {
-        vars.insert(sanitize_json_key(&key), json_to_value(value)?);
+        vars.insert(json_keys::sanitize_json_key(&key), json_to_value(value)?);
     }
     // Inserted last so a key named `arguments` cannot replace it (BL-077); that key's value is
     // `:arguments.arguments`.
