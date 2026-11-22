@@ -10,6 +10,7 @@ use std::sync::{
 use threadpool::Builder as ThreadPoolBuilder;
 
 use http_server::auth::TokenConfig;
+use http_server::cache::return_pooled_buffer;
 use http_server::conn_limit::{self, Admission, ConnLimiter};
 use http_server::daemon::{setup_signal_handlers, wake_address};
 use http_server::eval::{handle_cache_clear, handle_eval_get, handle_eval_post, handle_health};
@@ -18,10 +19,11 @@ use http_server::js_management::{
     handle_delete_js, handle_list_js, handle_reload_hooks, handle_update_js, handle_upload_js,
 };
 use http_server::pid_file::write_pid_file;
+use http_server::request_limits::{close_after_reject, DeadlineReader};
 use http_server::stats::ServerStats;
 use http_server::utils::{
-    handle_cors_preflight, load_html_file, read_complete_http_request, send_http_error,
-    send_http_response,
+    handle_cors_preflight, load_html_file, read_complete_http_request, read_error_status,
+    send_http_error, send_http_response,
 };
 
 #[cfg(unix)]
@@ -36,29 +38,40 @@ fn handle_http_request(
     server_token: Arc<Option<String>>,
     server_admin_token: Arc<Option<String>>,
 ) {
-    // Read the complete HTTP request properly
-    let request = match read_complete_http_request(&mut stream) {
+    let mut reader = DeadlineReader::new(&stream);
+    let request = match read_complete_http_request(&mut reader) {
         Ok(req) => req,
         Err(e) => {
-            // Log error for debugging but don't panic
             eprintln!("HTTP request read error: {}", e);
-            // Send proper HTTP error response
-            let error_msg = match e.kind() {
-                std::io::ErrorKind::InvalidData => {
-                    if e.to_string().contains("too large") {
-                        "413 Payload Too Large"
-                    } else {
-                        "400 Bad Request"
-                    }
-                }
-                std::io::ErrorKind::TimedOut => "408 Request Timeout",
-                _ => "500 Internal Server Error",
-            };
-            send_http_error(&mut stream, 400, error_msg);
+            let (status, message) = read_error_status(&e);
+            send_http_error(&stream, status, &message);
+            // Unread input left at close would reset the connection and can drop the error.
+            close_after_reject(&stream, &mut reader);
             return;
         }
     };
 
+    dispatch(
+        &mut stream,
+        &request,
+        stats,
+        request_counter,
+        server_token,
+        server_admin_token,
+    );
+    // Back to this worker's pool, so the next request reuses the allocation (BL-057).
+    return_pooled_buffer(request.into_bytes());
+}
+
+/// Route one complete request to its handler.
+fn dispatch(
+    stream: &mut TcpStream,
+    request: &str,
+    stats: Arc<ServerStats>,
+    request_counter: Arc<AtomicU64>,
+    server_token: Arc<Option<String>>,
+    server_admin_token: Arc<Option<String>>,
+) {
     // Parse HTTP request
     let lines: Vec<&str> = request.lines().collect();
     if lines.is_empty() {
@@ -68,7 +81,7 @@ fn handle_http_request(
     let request_line = lines[0];
     let parts: Vec<&str> = request_line.split_whitespace().collect();
     if parts.len() < 3 {
-        send_http_error(&mut stream, 400, "Bad Request");
+        send_http_error(stream, 400, "Bad Request");
         return;
     }
 
@@ -81,44 +94,42 @@ fn handle_http_request(
     // Before dispatch, so no handler runs for a browser in development mode or parses a body
     // that is not JSON (ADR-0019).
     if let Err(message) =
-        http_server::cors::check_browser_admin(path_only, &request, server_admin_token.is_some())
+        http_server::cors::check_browser_admin(path_only, request, server_admin_token.is_some())
     {
-        send_http_error(&mut stream, 403, message);
+        send_http_error(stream, 403, message);
         return;
     }
-    if let Err(message) = http_server::cors::check_content_type(method, path_only, &request) {
-        send_http_error(&mut stream, 415, message);
+    if let Err(message) = http_server::cors::check_content_type(method, path_only, request) {
+        send_http_error(stream, 415, message);
         return;
     }
 
     match (method, path_only) {
-        ("GET", "/health") => handle_health(&mut stream, &stats, &request, server_token),
-        ("GET", "/") => handle_root(&mut stream),
-        ("GET", "/docs") => handle_api_docs(&mut stream),
-        ("GET", "/openapi.yml") => handle_openapi_spec(&mut stream),
+        ("GET", "/health") => handle_health(stream, &stats, request, server_token),
+        ("GET", "/") => handle_root(stream),
+        ("GET", "/docs") => handle_api_docs(stream),
+        ("GET", "/openapi.yml") => handle_openapi_spec(stream),
         ("POST", "/eval") => {
-            handle_eval_post(&mut stream, &request, stats, request_counter, server_token)
+            handle_eval_post(stream, request, stats, request_counter, server_token)
         }
-        ("GET", "/eval") => {
-            handle_eval_get(&mut stream, &request, stats, request_counter, server_token)
-        }
+        ("GET", "/eval") => handle_eval_get(stream, request, stats, request_counter, server_token),
         #[cfg(feature = "plugins")]
-        ("POST", "/upload-js") => handle_upload_js(&mut stream, &request, server_admin_token),
+        ("POST", "/upload-js") => handle_upload_js(stream, request, server_admin_token),
         #[cfg(feature = "plugins")]
-        ("PUT", "/update-js") => handle_update_js(&mut stream, &request, server_admin_token),
+        ("PUT", "/update-js") => handle_update_js(stream, request, server_admin_token),
         #[cfg(feature = "plugins")]
-        ("DELETE", "/delete-js") => handle_delete_js(&mut stream, &request, server_admin_token),
+        ("DELETE", "/delete-js") => handle_delete_js(stream, request, server_admin_token),
         #[cfg(feature = "plugins")]
-        ("GET", "/list-js") => handle_list_js(&mut stream, &request, server_admin_token),
+        ("GET", "/list-js") => handle_list_js(stream, request, server_admin_token),
         #[cfg(feature = "plugins")]
-        ("POST", "/reload-hooks") => handle_reload_hooks(&mut stream, &request, server_admin_token),
+        ("POST", "/reload-hooks") => handle_reload_hooks(stream, request, server_admin_token),
         #[cfg(not(feature = "plugins"))]
         (_, "/upload-js" | "/update-js" | "/delete-js" | "/list-js" | "/reload-hooks") => {
-            handle_js_disabled(&mut stream, &request, server_admin_token)
+            handle_js_disabled(stream, request, server_admin_token)
         }
-        ("DELETE", "/cache") => handle_cache_clear(&mut stream, &request, server_admin_token),
-        ("OPTIONS", _) => handle_cors_preflight(&mut stream),
-        _ => send_http_error(&mut stream, 404, "Not Found"),
+        ("DELETE", "/cache") => handle_cache_clear(stream, request, server_admin_token),
+        ("OPTIONS", _) => handle_cors_preflight(stream),
+        _ => send_http_error(stream, 404, "Not Found"),
     }
 }
 
@@ -339,11 +350,11 @@ fn print_usage() {
     eprintln!("  sk_http_server 5074 -d --host 0.0.0.0 --token secret123 --admin-token admin456");
     eprintln!();
     eprintln!("Endpoints:");
-    eprintln!("  GET  /health          - Health check with cache stats");
+    eprintln!("  GET  /health          - Health check with result and parse cache stats");
     eprintln!("  GET  /                - API documentation");
     eprintln!("  POST /eval            - Evaluate expressions (JSON)");
     eprintln!("  GET  /eval?expr=...   - Evaluate expressions (query params)");
-    eprintln!("  DELETE /cache         - Clear expression cache (admin token required)");
+    eprintln!("  DELETE /cache         - Clear result and parse caches (admin token required)");
 }
 
 struct ServerArgs {
@@ -564,5 +575,39 @@ fn print_startup_messages(
             bind_host, port
         );
         eprintln!();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use http_server::cache::pooled_buffer_count;
+    use std::io::{Read, Write};
+
+    /// A served request hands its buffer back to the worker's pool (BL-057).
+    #[test]
+    fn request_buffer_returns_to_the_pool() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let client = std::thread::spawn(move || {
+            let mut s = TcpStream::connect(addr).unwrap();
+            s.write_all(b"GET /health HTTP/1.1\r\nHost: localhost\r\n\r\n")
+                .unwrap();
+            let mut resp = String::new();
+            s.read_to_string(&mut resp).unwrap();
+            resp
+        });
+        let (stream, _) = listener.accept().unwrap();
+        let before = pooled_buffer_count();
+        handle_http_request(
+            stream,
+            Arc::new(ServerStats::new()),
+            Arc::new(AtomicU64::new(0)),
+            Arc::new(None),
+            Arc::new(None),
+        );
+        let resp = client.join().unwrap();
+        assert!(resp.starts_with("HTTP/1.1 200"), "{resp}");
+        assert_eq!(pooled_buffer_count(), before + 1);
     }
 }

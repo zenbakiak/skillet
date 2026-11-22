@@ -68,13 +68,15 @@ mod response_size;
 
 #[path = "http_server/request_limits.rs"]
 mod request_limits;
-use request_limits::{DeadlineReader, DeadlineWriter, MAX_REQUEST_SIZE};
+use request_limits::{close_after_reject, DeadlineReader, DeadlineWriter, MAX_REQUEST_SIZE};
 
 #[path = "http_server/token_eq.rs"]
 mod token_eq;
 use token_eq::tokens_match;
 
+// Stats and clearing are only used by sk_http_server's /health and DELETE /cache.
 #[path = "http_server/parse_cache.rs"]
+#[allow(dead_code)]
 mod parse_cache;
 use parse_cache::parsed;
 
@@ -85,6 +87,14 @@ use conn_limit::{Admission, ConnLimiter};
 #[path = "http_server/pid_file.rs"]
 mod pid_file;
 use pid_file::write_pid_file;
+
+// The one fork/setsid implementation, shared with `sk_http_server`, so `unsafe` stays in
+// daemon.rs (BL-064). This server keeps its own signal handler, so the rest is unused here.
+#[path = "http_server/daemon.rs"]
+#[allow(dead_code)]
+mod daemon;
+#[cfg(unix)]
+use daemon::daemonize;
 
 /// Wall-clock limit for one evaluation (ADR-0011), same as `sk_http_server`. No flag or env var.
 const SERVER_EVAL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
@@ -232,15 +242,6 @@ fn answer(line: &str, request_id: u64, server_token: &Option<String>) -> (EvalRe
         }
     }
     (process_request(req, request_id), Outcome::Work)
-}
-
-/// After rejecting a request, close so the client still receives the error: closing a socket
-/// with unread input sends a reset, which can discard the response before the client reads it.
-/// Send FIN, then discard input until the client closes or the request deadline passes.
-fn close_after_reject(stream: &TcpStream, reader: &mut DeadlineReader<'_>) {
-    let _ = stream.shutdown(std::net::Shutdown::Write);
-    let mut sink = [0u8; 8192];
-    while matches!(reader.read(&mut sink), Ok(n) if n > 0) {}
 }
 
 fn process_request(req: EvalRequest, request_id: u64) -> EvalResponse {
@@ -398,66 +399,6 @@ fn write_response(stream: &TcpStream, response: &EvalResponse) -> std::io::Resul
     serde_json::to_writer(&mut out, response)?;
     out.write_all(b"\n")?;
     out.flush()
-}
-
-fn daemonize() -> Result<(), Box<dyn std::error::Error>> {
-    use std::fs::OpenOptions;
-    use std::os::unix::io::AsRawFd;
-
-    // Fork the process
-    match unsafe { libc::fork() } {
-        -1 => return Err("Failed to fork process".into()),
-        0 => {
-            // Child process continues
-        }
-        _ => {
-            // Parent process exits
-            std::process::exit(0);
-        }
-    }
-
-    // Create a new session
-    if unsafe { libc::setsid() } == -1 {
-        return Err("Failed to create new session".into());
-    }
-
-    // Fork again to ensure we're not a session leader
-    match unsafe { libc::fork() } {
-        -1 => return Err("Failed to fork second time".into()),
-        0 => {
-            // Grandchild continues
-        }
-        _ => {
-            // Child exits
-            std::process::exit(0);
-        }
-    }
-
-    // DON'T change working directory to root - stay in current directory
-    // This allows relative paths to work (like hooks directory)
-    // std::env::set_current_dir("/").ok();
-
-    // Close standard file descriptors
-    unsafe {
-        libc::close(libc::STDIN_FILENO);
-        libc::close(libc::STDOUT_FILENO);
-        libc::close(libc::STDERR_FILENO);
-    }
-
-    // Redirect stdin, stdout, stderr to /dev/null
-    let dev_null = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open("/dev/null")?;
-
-    let null_fd = dev_null.as_raw_fd();
-    unsafe {
-        libc::dup2(null_fd, libc::STDIN_FILENO);
-        libc::dup2(null_fd, libc::STDOUT_FILENO);
-        libc::dup2(null_fd, libc::STDERR_FILENO);
-    }
-
-    Ok(())
 }
 
 fn setup_signal_handlers() -> Arc<AtomicBool> {
