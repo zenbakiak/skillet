@@ -13,7 +13,7 @@ use skillet::Value;
 /// Every name in the dispatch sets at d3e6a5d (81 names), grouped by the set it was in, plus
 /// `BETWEEN`, registered later to restore its documented behaviour (82 names), plus the Excel
 /// names added for BL-054: `COUNTA`, the six sample variance names and the excel-compat D-9
-/// names (98 names).
+/// names (98 names), plus `DATEDIF` (B-15, 99 names).
 const DISPATCHED: &[&str] = &[
     // arithmetic (17)
     "SUM",
@@ -84,6 +84,7 @@ const DISPATCHED: &[&str] = &[
     "DAY",
     "DATEADD",
     "DATEDIFF",
+    "DATEDIF",
     "TODAY",
     // financial (4)
     "PMT",
@@ -147,8 +148,8 @@ const NOT_DISPATCHED: &[&str] = &[
 
 #[test]
 fn every_dispatched_name_resolves() {
-    assert_eq!(DISPATCHED.len(), 98);
-    assert_eq!(builtin_function_count(), 98);
+    assert_eq!(DISPATCHED.len(), 99);
+    assert_eq!(builtin_function_count(), 99);
     for name in DISPATCHED {
         assert!(has_builtin_function(name), "{name} should be a builtin");
         // Zero-arg call must reach the right module: no "Unknown … function" from any layer.
@@ -309,7 +310,7 @@ const CASES: &[(&str, &str)] = &[
     ("YEAR(DATE(2024, 3, 9))", "Ok(Number(2024.0))"),
     ("MONTH(DATE(2024, 3, 9))", "Ok(Number(3.0))"),
     ("DAY(DATE(2024, 3, 9))", "Ok(Number(9.0))"),
-    ("DATEADD(DATE(2024, 1, 31), 1, 'months')", "Ok(DateTime(1709078400))"),
+    ("DATEADD(DATE(2024, 1, 31), 1, 'months')", "Ok(DateTime(1709164800))"),
     ("DATEDIFF(DATE(2024, 1, 1), DATE(2024, 3, 1), 'days')", "Ok(Number(60.0))"),
     ("PMT(0.05 / 12, 360, 200000)", "Ok(Number(-1073.6432460242797))"),
     ("DB(10000, 1000, 5, 2)", "Ok(Number(2328.5017392669597))"),
@@ -363,7 +364,7 @@ const CASES: &[(&str, &str)] = &[
     ("DATE(1, 2)", "Err(Error { message: \"DATE expects either no arguments or three arguments (year, month, day)\", position: None })"),
     ("YEAR(1)", "Err(Error { message: \"YEAR expects datetime\", position: None })"),
     ("DATEADD(1, 2)", "Err(Error { message: \"DATEADD expects date, interval, unit\", position: None })"),
-    ("DATEADD(DATE(2024,1,1), 1, 'eons')", "Err(Error { message: \"DATEADD unit must be one of: days, hours, minutes, seconds, weeks, months, years\", position: None })"),
+    ("DATEADD(DATE(2024,1,1), 1, 'eons')", "Err(Error { message: \"DATEADD unit must be one of: yyyy, q, m, y, d, w, ww, h, n, s, years, months, weeks, days, hours, minutes, seconds (#VALUE!)\", position: None })"),
     ("SUBSTRING('x')", "Err(Error { message: \"SUBSTRING expects string, start, [length]\", position: None })"),
     ("MID('x')", "Err(Error { message: \"MID expects string, start, [num_chars]\", position: None })"),
     ("LEFT()", "Err(Error { message: \"LEFT expects string, [num_chars]\", position: None })"),
