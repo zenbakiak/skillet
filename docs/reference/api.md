@@ -73,36 +73,25 @@ is not a finite number (overflow, a non-real power) are a `#NUM!` error.
 - `<` - Less than
 - `>=` - Greater than or equal
 - `<=` - Less than or equal
-- `==` (or `=`) - Equal to; text ignores case, like Excel
-- `!=` - Not equal to (the opposite of `==`)
-- `===` - Strictly equal: same type and value, case-sensitive text
-- `!==` - Not strictly equal (the opposite of `===`)
+- `==` (or `=`) - Equal to
+- `!=` - Not equal to
 
-No comparison converts between types: `1 == "1"`, `TRUE == 1` and `1 == 1::Currency` are
-`FALSE` under both `==` and `===` (conversion happens only in arithmetic, ADR-0023).
+`==` is strict: a value equals only a value of the same type with the same value, and text is
+case-sensitive (`"a" == "A"` is `FALSE`). No comparison converts between types: `1 == "1"`,
+`TRUE == 1` and `1 == 1::Currency` are `FALSE` (conversion happens only in arithmetic,
+ADR-0023).
 
-| Expression | `==` | `===` |
-|---|---|---|
-| `"a"` vs `"A"` | `TRUE` | `FALSE` |
-| `"a"` vs `"a"` | `TRUE` | `TRUE` |
-| `1` vs `1.0` | `TRUE` | `TRUE` |
-| `1` vs `"1"`, `TRUE` vs `1` | `FALSE` | `FALSE` |
-| `NULL` vs `NULL` | `TRUE` | `TRUE` |
-| `["a", 1]` vs `["A", 1]` | `TRUE` | `FALSE` |
-| `DATE(2026,1,1)` vs `DATE(2026,1,1)` | `TRUE` | `TRUE` |
-| `DATE(2026,1,1)` vs `0` | `FALSE` | `FALSE` |
-
-- Arrays are equal when they have the same length and equal items, in order. JSON objects are
-  equal when they have the same keys (keys match exactly) and equal values. The item rule is
-  the operator's own: `==` ignores case in text items, `===` does not.
-- Two DateTimes compare by timestamp. A DateTime never equals a value of another type.
+- Arrays are equal when they have the same length and equal items, in order
+  (`[1, 2] == [1, 2]`). JSON objects are equal when they have the same keys and equal values;
+  key order does not matter. Two `Currency` values compare by amount.
+- Two DateTimes compare by timestamp (`DATE(2026,1,1) == DATE(2026,1,1)`). A DateTime never
+  equals a value of another type (`DATE(2026,1,1) == 0` is `FALSE`).
 - `NULL == NULL` is `TRUE` and `NULL` is unequal to every other value (`NULL == 0` is `FALSE`,
   ADR-0013).
 - `<`, `<=`, `>`, `>=` need two values of the same type: numbers, currency, booleans
-  (`FALSE < TRUE`), text, or DateTimes (earlier is less). Text orders case-insensitively, as
-  text even when it looks like a number (`"a" < "B"`, `"a" <= "A"`, `"10" < "9"`). Any other
-  pair, including a `NULL` operand, is an error.
-- Methods keep their own rules: `.includes()` and `.contains()` stay case-sensitive.
+  (`FALSE < TRUE`), text, or DateTimes (earlier is less). Text orders by Unicode code point,
+  case-sensitive (`"B" < "a"`), as text even when it looks like a number (`"10" < "9"`). Any
+  other pair, including a `NULL` operand, is an error.
 
 ### Logical Operators
 - `AND`, `&&` - Logical AND
@@ -135,7 +124,7 @@ Tightest first, as in Excel. Operators on the same row are left-associative.
 | 6 | `+`, `-` |
 | 7 | `&` |
 | 8 | `>`, `<`, `>=`, `<=` |
-| 9 | `==`, `!=`, `===`, `!==` |
+| 9 | `==`, `!=` |
 | 10 | `AND`, `&&` |
 | 11 | `OR`, `\|\|` |
 | 12 | `? :` |

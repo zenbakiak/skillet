@@ -849,21 +849,18 @@ sk "=IF(AND(:score >= 90, :attendance > 0.8), \"A\", IF(:score >= 80, \"B\", \"C
 
 ### Comparisons
 
-`==` works like Excel's `=`: text ignores case. `===` is strict: same type, same value,
-case-sensitive text. Neither converts between types.
+`==` is strict: same type and same value, case-sensitive text. No comparison converts between
+types.
 
 ```bash
-sk "=\"Apple\" == \"APPLE\""                # true (text ignores case)
-sk "=\"Apple\" === \"APPLE\""               # false (strict)
-sk "=\"Apple\" !== \"APPLE\""               # true
+sk "=\"Apple\" == \"Apple\""                # true
+sk "=\"Apple\" == \"APPLE\""                # false (case-sensitive)
 sk "=1 == \"1\""                            # false (no conversion between types)
 sk "=TRUE == 1"                             # false
-sk "=[\"a\", 1] == [\"A\", 1]"                # true (item by item)
+sk "=[1, 2] == [1, 2]"                      # true (item by item)
 sk "=DATE(2026, 1, 1) == DATE(2026, 1, 1)"  # true
 sk "=DATE(2026, 1, 1) < DATE(2026, 2, 1)"   # true (earlier is less)
-sk "=\"apple\" < \"Banana\""                # true (ordering ignores case too)
-sk "=1 + 1 === 2"                           # true (same precedence as ==)
-sk "=FILTER([\"Yes\", \"no\", \"YES\"], :x == \"yes\")"  # [\"Yes\", \"YES\"]
+sk "=FALSE < TRUE"                          # true
 ```
 
 Ordering (`<`, `>`, …) needs two values of the same type; `DATE(2026, 1, 1) < 1` and
