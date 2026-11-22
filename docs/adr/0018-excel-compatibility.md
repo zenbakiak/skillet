@@ -181,7 +181,7 @@ These differ from Excel on purpose. Docs must say so.
 | `%` operator | Remainder: `-10 % 3` → `-1` | Percent suffix: `10%` = 0.1 | Changing it would break every `%` |
 | `&` operator | Not an operator (`&.` is safe navigation) | Joins text | Use `CONCAT` |
 | `"a" == "A"` | `false` (case-sensitive) | `TRUE` | Revisit in a separate ADR if users ask |
-| Direct text arguments | `SUM(1, "2", TRUE)` → `1` | 4 | No cell ranges: every argument is treated like a range value (audit X-3) |
+| ~~Direct text arguments~~ | ~~`SUM(1, "2", TRUE)` → `1`~~ | 4 | **Superseded by [ADR-0029 amendment 2](0029-logic-operators.md#amendment-2-maintainer-2026-11-22-bl-107)** (BL-107): a direct argument converts like Excel (`SUM(1, "2", TRUE)` is 4), array items stay skipped |
 | `ISBLANK("")` | `true` | FALSE | ADR-0006 relies on "null or blank" |
 | `UPPER(1)`, `LEFT(12345, 2)` | `Error` | Number converted to text | Errors over silent coercion |
 | `YEAR(46000)` | `Error` | Serial numbers accepted | `DateTime` is a real type, not a serial number |

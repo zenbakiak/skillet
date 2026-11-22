@@ -78,7 +78,10 @@ given the same result as `==` for every pair of values, so it was dropped. The l
 - DateTime operands are never coerced (date arithmetic is unchanged), and Currency in the
   operators is unchanged.
 - Aggregates over arrays still ignore text and booleans (`SUM([1, "2", TRUE])` is `1`, audit X-3,
-  unchanged).
+  unchanged). **Superseded for direct arguments by
+  [ADR-0029 amendment 2](0029-logic-operators.md#amendment-2-maintainer-2026-11-22-bl-107)
+  (BL-107):** a direct argument of an aggregate converts with this section's rule
+  (`SUM(1, "2", TRUE)` is 4, `SUM(1, "x")` is `#VALUE!`); array items stay skipped.
 
 ### 7. `%`: percent suffix or modulo (lang-num lane)
 - `%` is modulo only when an operand starts directly after it: a number, a string, a name,

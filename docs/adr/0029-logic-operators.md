@@ -15,14 +15,14 @@
 > and "`!` ... takes booleans only" in §3. Full text and the before/after table:
 > [Amendment 1](#amendment-1-maintainer-2026-11-22-bl-089) below.
 
-> **Amendment 2 (Proposed, maintainer decision 2026-11-22, BL-107):** the aggregates (`SUM`,
+> **Amendment 2 (maintainer, 2026-11-22, BL-107):** the aggregates (`SUM`,
 > `AVERAGE`, `MIN`, `MAX`, `PRODUCT`, `COUNT`, `MEDIAN`, `MODE.SNGL`, `STDEV.*`, `VAR.*`,
 > `PERCENTILE.INC`, `QUARTILE.INC`) take this ADR's split between a direct argument and an item
 > inside an array. A direct number text or boolean counts (`SUM(1, "2", TRUE)` is 4), direct text
 > that is not a number is `#VALUE!` (`COUNT` skips it), and array items stay skipped. This
 > replaces audit X-3 ("skip direct text and booleans everywhere") and the ADR-0018 "Direct text
 > arguments" row. Full text and the before/after table:
-> [Amendment 2](#amendment-2-proposed-maintainer-decision-2026-11-22-bl-107) below.
+> [Amendment 2](#amendment-2-maintainer-2026-11-22-bl-107) below.
 
 ## Context
 - #93 (BL-069) made `AND` and `OR` between two operands parse as the `&&`/`||` operators. Before,
@@ -365,10 +365,12 @@ Unchanged, pinned by tests: `FALSE AND 1/0` (`false`), `TRUE OR 1/0` (`true`), `
 - **Keep §2's "the right side is still evaluated" for a non-boolean left side.** Not needed: with
   one rule, an invalid left side is an error by itself.
 
-## Amendment 2 (Proposed, maintainer decision 2026-11-22, BL-107)
+## Amendment 2 (maintainer, 2026-11-22, BL-107)
 
-- Status: Proposed. The maintainer chose the direction on 2026-11-22 ("the aggregates follow
-  ADR-0029"); the exact rules below wait for acceptance.
+- Status: Accepted (maintainer, 2026-11-22). The maintainer chose the direction ("the
+  aggregates follow ADR-0029") and accepted the rules below, including: a variable is a direct
+  argument, spread items in an argument list are direct arguments, a direct JSON object is
+  `#VALUE!`, and a NaN is `#NUM!`.
 - Related: excel-compat X-3 (LANG-10, found by BL-084), ADR-0018 "Deliberate differences"
   ("Direct text arguments"), ADR-0023 §6 (number coercion), ADR-0031 amendment 2 (dates in
   aggregates), ADR-0033 (one number type), ADR-0015 (NaN in statistics).
