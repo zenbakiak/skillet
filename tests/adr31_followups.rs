@@ -116,6 +116,37 @@ fn to_json_on_a_date_is_iso_text_and_json_cast_a_number() {
     );
 }
 
+// ---- A3. `.join()` with Currency and NULL ----------------------------------------------------
+
+#[test]
+fn join_method_writes_currency_and_null_like_join() {
+    assert_eq!(eval("[2.5::Currency].join(\"-\")"), s("2.5000"));
+    assert_eq!(
+        eval("[1::Currency, -2.25::Currency].join(\"; \")"),
+        s("1.0000; -2.2500")
+    );
+    assert_eq!(eval("[1, 2.5::Currency, NULL].join(\",\")"), s("1,2.5000,"));
+    assert_eq!(
+        eval("[1, 2.5::Currency, NULL].join(\",\")"),
+        eval("JOIN([1, 2.5::Currency, NULL], \",\")")
+    );
+    assert_eq!(eval("[1, NULL, 2].join(\"-\")"), s("1--2"));
+    assert_eq!(eval("[NULL].join()"), s(""));
+}
+
+#[test]
+fn join_method_keeps_its_other_behaviour() {
+    assert_eq!(eval("[TRUE, 1].join()"), s("true,1"));
+    assert_eq!(eval("JOIN([TRUE, 1])"), s("TRUE,1"));
+    assert_eq!(
+        err("[[1,2],3].join()").message,
+        "join method cannot convert value to string"
+    );
+    assert_eq!(eval("[].join()"), s(""));
+    assert_eq!(eval("[1.5, \"a\"].join()"), s("1.5,a"));
+    assert_eq!(eval("[DATE(2026,1,1)].join()"), s("2026-01-01T00:00:00Z"));
+}
+
 // ---- A4. `LEN` and `FIND` on a date ----------------------------------------------------------
 
 #[test]
