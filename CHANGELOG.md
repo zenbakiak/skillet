@@ -55,6 +55,10 @@ Each item is marked **BREAKING** in the sections below. In short:
   deprecated ([Rust API](https://github.com/zenbakiak/skillet/blob/develop/docs/guide/migration-0.7.md#rust-api)).
 
 ### Added
+- `Value::from_json_text` and `Value::to_json_text` read and write JSON text the way the
+  `evaluate_with_json*` entry points and `.to_json()` do; `Value::as_str`, `Value::as_array`;
+  `From<String | &str | Vec<Value> | f64 | bool> for Value`; `impl serde::Serialize for Value`
+  (ADR-0030 step 2, BL-104, #132).
 - `skillet::charge_variables(&vars)` charges a variable map to the current evaluation budget;
   `evaluate_with_json*` call it, a `HashMap` passed to `evaluate_with` is charged only when the
   caller does (ADR-0011 amendment 5, BL-086, #124).
@@ -249,7 +253,7 @@ BREAKING changes first, newest first; then the other changes, newest first.
 ### Deprecated
 - `Value::Json` (`#[deprecated(since = "0.7.0")]`): JSON objects become the structured
   `Value::Object` in 0.8.0 (ADR-0030, BL-011) and the variant is removed then. Behaviour is
-  unchanged; build objects with `skillet::json_to_value` (BL-092, #131).
+  unchanged; build objects with `Value::from_json_text` (BL-092, #131; BL-104, #132).
 - `Value::Currency` (`#[deprecated(since = "0.7.0")]`), removed in 0.8; use `Value::Number`. A
   Currency passed in from Rust is read as a Number, and results never contain one
   (ADR-0033, #119).
