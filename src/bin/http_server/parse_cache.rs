@@ -178,6 +178,14 @@ pub fn clear_all() {
 mod tests {
     use super::*;
 
+    // `clear_all` bumps the process-wide generation, which empties every thread's cache on its
+    // next lookup, so the tests in this module must not run concurrently with each other.
+    static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn serial() -> std::sync::MutexGuard<'static, ()> {
+        SERIAL.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     fn cached_len() -> usize {
         PARSE_CACHE.with(|c| c.borrow().map.len())
     }
@@ -187,6 +195,7 @@ mod tests {
 
     #[test]
     fn counters_track_hits_misses_and_entries() {
+        let _serial = serial();
         let shared = Shared::new();
         let mut cache = ParseCache::new();
         cache.lookup(&shared, "1 + 1").unwrap();
@@ -209,6 +218,7 @@ mod tests {
 
     #[test]
     fn clear_empties_every_workers_cache() {
+        let _serial = serial();
         let shared = Shared::new();
         let (mut a, mut b) = (ParseCache::new(), ParseCache::new());
         let old = a.lookup(&shared, ":x + 1").unwrap();
@@ -231,6 +241,7 @@ mod tests {
 
     #[test]
     fn clear_all_empties_this_threads_cache() {
+        let _serial = serial();
         parsed("7 + 7").unwrap();
         assert_eq!(cached_len(), 1);
         clear_all();
@@ -239,6 +250,7 @@ mod tests {
 
     #[test]
     fn repeated_expression_reuses_the_tree() {
+        let _serial = serial();
         let a = parsed("1 + :x").unwrap();
         let b = parsed("1 + :x").unwrap();
         assert!(Rc::ptr_eq(&a, &b));
@@ -248,6 +260,7 @@ mod tests {
 
     #[test]
     fn parse_errors_are_returned_and_not_cached() {
+        let _serial = serial();
         let deep = format!("{}1{}", "(".repeat(129), ")".repeat(129));
         for text in ["2 +", deep.as_str()] {
             let want = skillet::parse(text).unwrap_err();
@@ -264,6 +277,7 @@ mod tests {
 
     #[test]
     fn long_expressions_are_not_stored() {
+        let _serial = serial();
         let long = format!("[{}0]", "0,".repeat(MAX_ENTRY_BYTES / 2));
         assert!(long.len() > MAX_ENTRY_BYTES);
         let a = parsed(&long).unwrap();
@@ -274,6 +288,7 @@ mod tests {
 
     #[test]
     fn entry_count_is_bounded() {
+        let _serial = serial();
         for i in 0..MAX_ENTRIES + 10 {
             parsed(&format!("{i} + 1")).unwrap();
         }
@@ -289,6 +304,7 @@ mod tests {
 
     #[test]
     fn total_text_is_bounded() {
+        let _serial = serial();
         // Entries of just under MAX_ENTRY_BYTES: only MAX_TOTAL_BYTES / MAX_ENTRY_BYTES fit.
         for i in 0..10 {
             let text = format!("{i} + [{}0]", "0,".repeat(MAX_ENTRY_BYTES / 2 - 10));
