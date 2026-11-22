@@ -79,8 +79,8 @@ TRUE + 1       # 2
 "a" + "b"      # Error: Cannot convert "a" to a number (#VALUE!)   (use & to join text)
 ```
 
-`+` never joins text; `&` does. With a DateTime or Currency operand, the other operand converts
-the same way (ADR-0027); the date and currency rules are below.
+`+` never joins text; `&` does. With a DateTime operand, the other operand converts the same
+way (ADR-0027); the date rules are below.
 
 The scalar math builtins convert numeric text and booleans the same way: `ABS`, `SQRT`, `INT`,
 `MOD`, `POWER`, `ROUND`, `CEILING`, `FLOOR`, the arguments of the financial functions (`PMT`,
@@ -106,34 +106,18 @@ DATE(2026, 1, 1) + "x"                 # Error: Cannot convert "x" to a number (
 ```
 
 Other operators on a DateTime (`*`, `/`, `%`, `^`, `DateTime + DateTime`, `x - DateTime`) are an
-error, and so is a Currency operand (`DATE(2026, 1, 1) + 1::Currency`): money is not a number of
-days.
+error.
 
-Currency works in the arithmetic operators (ADR-0027). The other operand converts as for a
-number (numeric text, booleans, `NULL` as 0):
-
-| Operation | Result |
-|---|---|
-| `+`, `-`, `*` with a Currency operand | Currency |
-| `/` with one Currency operand | Currency |
-| `Currency / Currency` | Number (a ratio) |
-| `^` or `%` (modulo) with a Currency operand | Number |
-| unary `-` or `+` on Currency, percent suffix on Currency | Currency |
+Skillet has one number type (ADR-0033). `::Currency` is a conversion: it rounds to 4 decimals
+and returns a Number (see [Type Casting](#type-casting)), so its result works with every operator
+like any number. The operators do not round again:
 
 ```bash
-10::Currency + 2               # Currency(12)
-3 * 10::Currency               # Currency(30)
-10::Currency / 4::Currency     # 2.5
-2::Currency ^ 2                # 4
--(5::Currency)                 # Currency(-5)
-+(5::Currency)                 # Currency(5)
-10::Currency + "2"             # Currency(12)
-1::Currency / 3                # Currency(0.333…): not rounded; use ROUND(x, 2)
+10::Currency + 2               # 12
+1.23456::Currency * 2          # 2.4692 (1.2346 * 2)
+1::Currency / 3                # 0.3333333333333333: not rounded; use ROUND(x, 2)
+0.1::Currency + 0.2::Currency  # 0.30000000000000004; (0.1 + 0.2)::Currency is 0.3
 ```
-
-Currency is a tagged `f64` (ADR-0003): the operators do not round to cents. The comparison
-operators compare Currency with a Number by amount: `1 == 1::Currency` is `TRUE` and
-`SUM(10::Currency, 5) > 10` is `TRUE` (ADR-0027 Amendment 1).
 
 The arithmetic operators never produce NaN or infinity (BL-054, ADR-0018). Division or `%` by 0
 and `0 ^` a negative number are `Error: Division by zero (#DIV/0!)`; `0 ^ 0` and any result that
@@ -161,19 +145,17 @@ is not a finite number (overflow, a non-real power) are a `#NUM!` error.
 
 `==` is strict: a value equals only a value of the same type with the same value, and text is
 case-sensitive (`"a" == "A"` is `FALSE`). No comparison converts between types: `1 == "1"`,
-`TRUE == 1` and `15::Currency == "15"` are `FALSE` (conversion happens only in arithmetic,
-ADR-0023). Currency is the one exception: it is a tagged number, so Currency and Number
-compare by amount in every comparison operator, in either order (`15 == 15::Currency` is
-`TRUE`, `1::Currency < 2` is `TRUE`; ADR-0027 Amendment 1).
+`TRUE == 1` are `FALSE` (conversion happens only in arithmetic, ADR-0023). `::Currency` gives a
+Number (ADR-0033), so `1 == 1::Currency` is `TRUE`.
 
 - Arrays are equal when they have the same length and equal items, in order
-  (`[1, 2] == [1, 2]`, `[1::Currency] == [1]`). JSON objects are equal when they have the same
-  keys and equal values; key order does not matter.
+  (`[1, 2] == [1, 2]`). JSON objects are equal when they have the same keys and equal values;
+  key order does not matter.
 - Two DateTimes compare by timestamp (`DATE(2026,1,1) == DATE(2026,1,1)`). A DateTime never
   equals a value of another type (`DATE(2026,1,1) == 0` is `FALSE`).
 - `NULL == NULL` is `TRUE` and `NULL` is unequal to every other value (`NULL == 0` is `FALSE`,
   ADR-0013).
-- `<`, `<=`, `>`, `>=` need two values of the same type: numbers or currency (mixed freely), booleans
+- `<`, `<=`, `>`, `>=` need two values of the same type: numbers, booleans
   (`FALSE < TRUE`), text, or DateTimes (earlier is less). Text orders by Unicode code point,
   case-sensitive (`"B" < "a"`), as text even when it looks like a number (`"10" < "9"`). Any
   other pair, including a `NULL` operand, is an error.
@@ -287,7 +269,7 @@ Sum of all arguments.
 SUM(1, 2, 3, 4, 5)           # 15
 SUM([1, 2, 3], [4, 5])       # 15 (arrays are flattened)
 SUM(...[1, 2, 3])            # 6 (spread operator)
-SUM(10::Currency, 5)         # Currency(15)
+SUM(10::Currency, 5)         # 15
 ```
 
 #### `PRODUCT(...)`, `MULTIPLY(...)`
@@ -296,12 +278,11 @@ Product of all arguments.
 PRODUCT(1, 2, 3, 4)          # 24
 MULTIPLY(2, 3, 4)            # 24 (alias)
 PRODUCT([2, 3, 4])           # 24 (works with arrays)
-PRODUCT(2::Currency, 3)      # Currency(6)
+PRODUCT(2::Currency, 3)      # 6
 ```
 
-`SUM`, `PRODUCT`, `AVERAGE`, `MIN` and `MAX` return Currency when any value they count is
-Currency, as `Currency + Number` is Currency (ADR-0027, ADR-0031); otherwise a Number. The
-methods (`.sum()`, `.avg()`, `.min()`, `.max()`) still return a Number.
+`SUM`, `PRODUCT`, `AVERAGE`, `MIN` and `MAX` return a Number, also for values converted with
+`::Currency` (one number type, ADR-0033).
 
 UPPERCASE builtins follow Excel's documented behaviour (BL-054). Where Excel returns `#DIV/0!`,
 `#NUM!`, `#VALUE!` or `#N/A`, Skillet returns an error, and the message names the Excel error.
@@ -314,7 +295,7 @@ Average of the numbers in the arguments. No numbers is an error (Excel `#DIV/0!`
 AVERAGE(1, 2, 3, 4, 5)       # 3.0
 AVG(10, 20, 30)              # 20.0 (alias)
 AVERAGE([1, "x", TRUE])      # 1 (text and booleans in arrays are ignored)
-AVERAGE(10::Currency, 20)    # Currency(15)
+AVERAGE(10::Currency, 20)    # 15
 AVERAGE([])                  # Error: AVERAGE of no numbers (#DIV/0!)
 ```
 
@@ -323,12 +304,12 @@ Maximum/minimum value from arguments. As in Excel, no numbers gives 0.
 ```bash
 MAX(1, 5, 3, 9, 2)           # 9
 MIN([1, 5, 3, 9, 2])         # 1 (works with arrays too)
-MIN(1, 3::Currency)          # Currency(1)
+MIN(1, 3::Currency)          # 1
 MAX()                        # 0
 ```
 
 #### `COUNT(...)`, `COUNTA(...)`
-`COUNT` counts the numbers (and currency and datetime values) in its arguments; arrays are
+`COUNT` counts the numbers (and datetime values) in its arguments; arrays are
 flattened and other values are ignored. `COUNTA` counts every value that is not `NULL`, including
 empty text. Both need at least one argument. For the length of an array use `.length()`.
 ```bash
@@ -350,7 +331,7 @@ ABS("x")                     # Error: ABS expects number, got string
 #### `ROUND(number, [digits])`
 Round half away from zero to `digits` decimal places (default 0; `digits` is truncated). Negative
 `digits` round to the left of the decimal point. Rounding works on the number's 15-digit decimal
-form, as Excel does, so `ROUND(1.005, 2)` is 1.01. A currency number stays currency.
+form, as Excel does, so `ROUND(1.005, 2)` is 1.01. `x::Currency` is `ROUND(x, 4)`.
 ```bash
 ROUND(3.14159)               # 3 (default: 0 digits)
 ROUND(3.14159, 2)            # 3.14
@@ -571,7 +552,7 @@ FIND("x", "abc")                   # Error: FIND: find_text not found in within_
 ```
 
 #### `CONCAT(...)`
-Join every value as text, as Excel does. Numbers and currency are written as numbers
+Join every value as text, as Excel does. Numbers are written in Skillet's number text
 (`1.5::Currency` is `"1.5"`), booleans as `TRUE`/`FALSE`, and a DateTime as its `::String` text,
 ISO 8601 UTC (ADR-0031). Arrays are flattened. `NULL` and JSON objects add nothing. The `&`
 operator uses the same rules.
@@ -794,10 +775,8 @@ REDUCE(orders, :acc + :x.total, 0)
 #### `COUNTIF(range, criteria)`, `SUMIF(range, criteria, [sum_range])`, `AVERAGEIF(range, criteria, [average_range])`
 Count, sum or average the items that meet `criteria`. `AVGIF` is an alias of `AVERAGEIF`. The
 range is an array, or a single value (treated as a one-item range). With a sum or average range,
-the item at the same position is summed; only numbers and currency are summed or averaged.
+the item at the same position is summed; only numbers are summed or averaged.
 `AVERAGEIF` with no matching number is an error (`#DIV/0!`); `SUMIF` and `COUNTIF` give 0.
-`SUMIF` and `AVERAGEIF` return Currency when any value they sum or average is Currency, like `SUM`
-(ADR-0031 amendment 1); `COUNTIF` always returns a Number.
 
 `criteria` is either an Excel criterion (a string or a number) or a lambda over `:x`:
 
@@ -831,8 +810,6 @@ SUMIF(["apple", "avocado", "kiwi"], "a*", [1, 2, 4])  # 3
 AVERAGEIF([1, 2, 3, 4], ">2")                     # 3.5
 AVGIF([1, 3, 5, -1], :x > 0)                      # 3.0
 AVERAGEIF([1, 2], ">5")                           # Error: AVERAGEIF: no matching numbers (#DIV/0!)
-SUMIF([1, 2, 3], ">1", [10, 20::Currency, 30])    # Currency(50)
-SUMIF([1, 2, 3], ">1", [10::Currency, 20, 30])    # 50 (the Currency is not summed)
 ```
 
 #### `BETWEEN(min, max, value)`
@@ -860,7 +837,7 @@ UNIQUE(["a", "A"])           # ["a", "A"]
 #### `SORT(array, [order])`
 Sort ascending, or descending with `order` `-1` (Excel) or `"DESC"` (Skillet). As in Excel, numbers
 come before text and text before booleans; text ignores case, and `FALSE` comes before `TRUE`.
-Equal items keep their order. Currency sorts with the numbers. `NULL`, DateTime, arrays, JSON
+Equal items keep their order. `NULL`, DateTime, arrays, JSON
 objects and NaN are an error.
 ```bash
 SORT([3, 1, 2])                    # [1, 2, 3]
@@ -1031,13 +1008,13 @@ Numeric operations.
 
 #### `.join([separator])`
 Join to string. Strings, numbers, booleans (`true`/`false`), DateTimes (as ISO 8601 text),
-Currency (4 decimals, as `JOIN`) and `NULL` (as nothing, as `JOIN`) join; arrays and JSON values
+and `NULL` (as nothing, as `JOIN`) join; arrays and JSON values
 are an error.
 ```bash
 [1,2,3].join("-")            # "1-2-3"
 ["a","b","c"].join()         # "a,b,c" (default: comma)
 [DATE(2026,1,1)].join()      # "2026-01-01T00:00:00Z"
-[1, 2.5::Currency, NULL].join(",")   # "1,2.5000,"
+[1, 2.5, NULL].join(",")   # "1,2.5,"
 [TRUE, 1].join()             # "true,1" (JOIN gives "TRUE,1")
 ```
 
@@ -1343,7 +1320,7 @@ An unknown type name is `Error: Unknown cast type at position N`, N being where 
 - `String` - Convert to string
 - `Boolean` - Convert to boolean
 - `Array` - Convert to array
-- `Currency` - Convert to currency
+- `Currency` - Round to 4 decimals; the result is a Number (ADR-0033)
 - `DateTime` - Convert to datetime
 - `Json` - Convert to JSON
 
@@ -1354,6 +1331,34 @@ An unknown type name is `Error: Unknown cast type at position N`, N being where 
 1 :: Boolean                 # true
 0 :: Boolean                 # false
 "hello" :: Array             # ["h", "e", "l", "l", "o"]
+```
+
+### Number conversions
+Skillet has one number type, as Excel does; integer and currency are conversions, not types
+(ADR-0033). `::Integer`, `::Float` and `::Currency` all return a Number.
+
+- `::Integer` truncates toward zero, like Excel `TRUNC` (not `INT`, which rounds down:
+  `INT(-7.9)` is `-8`). Text is read up to the first character that is not part of a number, and
+  text with no number is `0`.
+- `::Float` keeps the number; text must be a number (`"12.5"`, `"1e3"`) with no spaces around it,
+  or it is an error.
+- `::Currency` reads its input as `::Float` does, then rounds to 4 decimals, half away from zero,
+  exactly as `ROUND(x, 4)` (so `0.00005` becomes `0.0001`, where VBA's `CCur` gives `0`). A `-0`
+  result is `0`. Later arithmetic is not rounded again.
+- For all three, `TRUE`/`FALSE`/`NULL` are `1`/`0`/`0`, and a DateTime, array or JSON object is an
+  error.
+
+```bash
+-7.9::Integer                # -7 (the cast applies first, then the minus)
+(0 - 7.9)::Integer           # -7
+"+3.9x"::Integer             # 3
+"abc"::Integer               # 0
+"12.5"::Float                # 12.5
+" 12.5 "::Float              # Error: Cannot cast String to Float
+1.23456789::Currency         # 1.2346
+(0.1 + 0.2)::Currency        # 0.3
+"$5"::Currency               # Error: Cannot cast String to Currency
+(2.5::Currency)::String      # "2.5"
 ```
 
 ### Dates as text

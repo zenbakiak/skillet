@@ -116,7 +116,7 @@ pub enum Value {
     Boolean(bool),     // true/false
     String(String),    // UTF-8 strings
     Null,             // Explicit null type
-    Currency(f64),    // Special formatting, same as Number
+    Currency(f64),    // Deprecated in 0.7 (ADR-0033), read as a Number; removed in 0.8
     DateTime(i64),    // Unix timestamp
     Json(String),     // JSON object as string
 }

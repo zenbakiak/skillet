@@ -11,14 +11,14 @@ pub fn is_blank(v: &Value) -> bool {
 }
 
 /// The type name used in error messages.
+#[allow(deprecated)] // `Value::Currency` is read as a Number (ADR-0033)
 pub(crate) fn type_name(v: &Value) -> &'static str {
     match v {
-        Value::Number(_) => "number",
+        Value::Number(_) | Value::Currency(_) => "number",
         Value::Array(_) => "array",
         Value::Boolean(_) => "boolean",
         Value::String(_) => "string",
         Value::Null => "null",
-        Value::Currency(_) => "currency",
         Value::DateTime(_) => "datetime",
         Value::Json(_) => "json",
     }
@@ -72,9 +72,10 @@ fn not_a_number_text(s: &str, context: &str) -> Error {
     )
 }
 
-/// A numeric argument of a builtin: a number or currency, or text or a boolean that Excel
+/// A numeric argument of a builtin: a number, or text or a boolean that Excel
 /// converts to one (see `coerce_to_number`). Anything else, or a missing
 /// argument, is an error (Excel `#VALUE!`), never a silent default.
+#[allow(deprecated)] // `Value::Currency` is read as a Number (ADR-0033)
 pub(crate) fn number_arg(name: &str, args: &[Value], i: usize, what: &str) -> Result<f64, Error> {
     match args.get(i) {
         Some(Value::Number(n) | Value::Currency(n)) => Ok(*n),
@@ -173,10 +174,12 @@ pub(crate) fn slice_items(
     Ok(Value::Array(items[s_idx..e_idx].to_vec()))
 }
 
+#[allow(deprecated)] // `Value::Currency` is read as a Number (ADR-0033)
 pub fn values_equal(a: &Value, b: &Value) -> bool {
+    if let (Some(x), Some(y)) = (a.as_number(), b.as_number()) {
+        return x == y;
+    }
     match (a, b) {
-        (Value::Number(x), Value::Number(y)) => x == y,
-        (Value::Currency(x), Value::Currency(y)) => x == y,
         (Value::Boolean(x), Value::Boolean(y)) => x == y,
         (Value::String(x), Value::String(y)) => x == y,
         (Value::DateTime(x), Value::DateTime(y)) => x == y,

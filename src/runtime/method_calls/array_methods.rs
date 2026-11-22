@@ -6,6 +6,7 @@ use crate::types::Value;
 use std::collections::BTreeSet;
 
 /// Handle array method calls
+#[allow(deprecated)] // `Value::Currency` is read as a Number (ADR-0033)
 pub fn exec_array_method(
     name: &str,
     recv: &Value,
@@ -64,7 +65,7 @@ pub fn exec_array_method(
             for val in recv_array {
                 crate::limits::tick_item(nums.len())?;
                 match val {
-                    Value::Number(n) => nums.push(*n),
+                    Value::Number(n) | Value::Currency(n) => nums.push(*n),
                     _ => return Err(Error::new("sort expects numeric array", None)),
                 }
             }
@@ -77,8 +78,7 @@ pub fn exec_array_method(
             let mut total = 0.0;
             for val in recv_array {
                 match val {
-                    Value::Number(n) => total += n,
-                    Value::Currency(c) => total += c,
+                    Value::Number(n) | Value::Currency(n) => total += n,
                     _ => return Err(Error::new("sum method expects numeric array", None)),
                 }
             }
@@ -92,8 +92,7 @@ pub fn exec_array_method(
             let mut total = 0.0;
             for val in recv_array {
                 match val {
-                    Value::Number(n) => total += n,
-                    Value::Currency(c) => total += c,
+                    Value::Number(n) | Value::Currency(n) => total += n,
                     _ => return Err(Error::new("avg method expects numeric array", None)),
                 }
             }
@@ -107,16 +106,10 @@ pub fn exec_array_method(
             let mut min_val = None;
             for val in recv_array {
                 match val {
-                    Value::Number(n) => {
+                    Value::Number(n) | Value::Currency(n) => {
                         min_val = Some(match min_val {
                             None => *n,
                             Some(current) => n.min(current),
-                        });
-                    }
-                    Value::Currency(c) => {
-                        min_val = Some(match min_val {
-                            None => *c,
-                            Some(current) => c.min(current),
                         });
                     }
                     _ => return Err(Error::new("min method expects numeric array", None)),
@@ -132,16 +125,10 @@ pub fn exec_array_method(
             let mut max_val = None;
             for val in recv_array {
                 match val {
-                    Value::Number(n) => {
+                    Value::Number(n) | Value::Currency(n) => {
                         max_val = Some(match max_val {
                             None => *n,
                             Some(current) => n.max(current),
-                        });
-                    }
-                    Value::Currency(c) => {
-                        max_val = Some(match max_val {
-                            None => *c,
-                            Some(current) => c.max(current),
                         });
                     }
                     _ => return Err(Error::new("max method expects numeric array", None)),
@@ -166,7 +153,7 @@ pub fn exec_array_method(
                 .enumerate()
                 .map(|(i, v)| {
                     crate::limits::tick_item(i)?;
-                    // Ruby text for booleans; Currency and NULL as `JOIN` writes them (ADR-0031 A3).
+                    // Ruby text for booleans; NULL as `JOIN` writes it (ADR-0031 A3).
                     match v {
                         Value::Boolean(b) => Ok(b.to_string()),
                         other => join_text(other).ok_or_else(|| {

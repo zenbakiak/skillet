@@ -168,21 +168,20 @@ fn main() {
     }
 }
 
+#[allow(deprecated)] // `Value::Currency` is read as a Number (ADR-0033)
 fn format_json_output(value: &Value, execution_time_ms: f64) -> String {
     let (result_value, type_name) = match value {
-        Value::Number(n) => (json!(n), "Number"),
+        Value::Number(n) | Value::Currency(n) => (json!(n), "Number"),
         Value::String(s) => (json!(s), "String"),
         Value::Boolean(b) => (json!(b), "Boolean"),
-        Value::Currency(c) => (json!(c), "Currency"),
         Value::DateTime(dt) => (json!(dt), "DateTime"),
         Value::Array(arr) => {
             let json_arr: Vec<serde_json::Value> = arr
                 .iter()
                 .map(|v| match v {
-                    Value::Number(n) => json!(n),
+                    Value::Number(n) | Value::Currency(n) => json!(n),
                     Value::String(s) => json!(s),
                     Value::Boolean(b) => json!(b),
-                    Value::Currency(c) => json!(c),
                     Value::DateTime(dt) => json!(dt),
                     Value::Null => json!(null),
                     Value::Array(_) => json!(format!("{:?}", v)), // Nested arrays as debug string for now

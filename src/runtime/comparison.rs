@@ -6,7 +6,7 @@
 //! - `==` / `!=`: a value equals only a value of the same type with the same value. Text is
 //!   case-sensitive. Arrays and JSON objects compare element by element with this rule.
 //!   DateTimes compare by timestamp. `NULL` equals only `NULL` (ADR-0013).
-//! - `<`, `<=`, `>`, `>=` order two numbers, two currency values, two booleans
+//! - `<`, `<=`, `>`, `>=` order two numbers, two booleans
 //!   (`FALSE < TRUE`), two texts (case-sensitive, by Unicode code point) or two DateTimes.
 //!   Anything else is an error.
 
@@ -54,17 +54,9 @@ fn incompatible() -> Error {
     Error::new("Comparison of incompatible types", None)
 }
 
-/// The amount of a Number or a Currency; `None` for every other value.
-fn amount(v: &Value) -> Option<f64> {
-    match v {
-        Value::Number(n) | Value::Currency(n) => Some(*n),
-        _ => None,
-    }
-}
-
-/// `==`: same type, same value. Number and Currency compare by amount (ADR-0027 Amendment 1).
+/// `==`: same type, same value. A deprecated `Currency` is a Number (ADR-0033).
 fn equal(a: &Value, b: &Value) -> Result<bool, Error> {
-    if let (Some(x), Some(y)) = (amount(a), amount(b)) {
+    if let (Some(x), Some(y)) = (a.as_number(), b.as_number()) {
         return Ok(x == y);
     }
     Ok(match (a, b) {
@@ -139,9 +131,9 @@ fn json_tree_eq(a: &serde_json::Value, b: &serde_json::Value) -> Result<bool, Er
     }
 }
 
-/// `<`, `<=`, `>`, `>=` on two values of the same orderable type (Number and Currency are one).
+/// `<`, `<=`, `>`, `>=` on two values of the same orderable type.
 fn order(a: &Value, b: &Value) -> Result<Ordering, Error> {
-    if let (Some(x), Some(y)) = (amount(a), amount(b)) {
+    if let (Some(x), Some(y)) = (a.as_number(), b.as_number()) {
         return x.partial_cmp(&y).ok_or_else(incompatible);
     }
     match (a, b) {
