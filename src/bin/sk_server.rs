@@ -101,6 +101,11 @@ use daemon::daemonize;
 mod eval_limits;
 use eval_limits::server_limits;
 
+// Variable names from JSON keys, shared with `sk --json`, `sk_http_server` and the library.
+#[path = "../json_keys.rs"]
+mod json_keys;
+use json_keys::{check_json_keys, sanitize_json_key};
+
 /// One request line read from a connection.
 enum Line {
     Request(String),
@@ -246,11 +251,21 @@ fn process_request(req: EvalRequest, request_id: u64) -> EvalResponse {
     // Convert JSON variables to Skillet values
     let vars = match req.variables {
         Some(json_vars) => {
+            // Keys are sanitized like the other surfaces; colliding keys are rejected (BL-096).
+            if let Err(e) = check_json_keys(json_vars.keys().map(String::as_str)) {
+                return EvalResponse {
+                    success: false,
+                    result: None,
+                    error: Some(e),
+                    execution_time_ms: start_time.elapsed().as_secs_f64() * 1000.0,
+                    request_id,
+                };
+            }
             let mut result = HashMap::new();
             for (key, value) in json_vars {
                 match skillet::json_to_value(value) {
                     Ok(v) => {
-                        result.insert(key, v);
+                        result.insert(sanitize_json_key(&key), v);
                     }
                     Err(e) => {
                         return EvalResponse {

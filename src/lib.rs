@@ -148,6 +148,24 @@ pub fn parse(input: &str) -> Result<Expr, Error> {
     })
 }
 
+/// True when `expr` calls a builtin whose result depends on the clock: `NOW()`, `TODAY()`, and
+/// `DATE()` or `TIME()` with no arguments. The whole tree counts, including nested calls,
+/// method receivers and lambdas. Custom functions are not counted.
+///
+/// A cache of results must not reuse the result of a volatile expression (`sk_http_server`
+/// does not store them, BL-085).
+///
+/// ```rust
+/// use skillet::{is_volatile, parse};
+///
+/// assert!(is_volatile(&parse("=IF(TRUE, NOW(), 1)").unwrap()));
+/// assert!(is_volatile(&parse("=[1, 2].map(:x + DAY(TODAY()))").unwrap()));
+/// assert!(!is_volatile(&parse("=DATE(2024, 1, 15)").unwrap()));
+/// ```
+pub fn is_volatile(expr: &Expr) -> bool {
+    runtime::builtin_table::expr_is_volatile(expr)
+}
+
 /// Parse and evaluate an expression that uses no variables.
 ///
 /// Returns the resulting [`Value`] (a number, string, array, …). A formula that reads a

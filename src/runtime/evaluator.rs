@@ -8,7 +8,7 @@ use crate::runtime::{
     logical,
     method_calls::exec_method_in,
     type_casting::cast_value,
-    utils::{clamp_index, coerce_to_number, slice_items, type_name},
+    utils::{clamp_index, coerce_to_number, slice_items},
 };
 use crate::types::{currency_to_number, holds_currency, Value};
 use std::borrow::Cow;
@@ -407,16 +407,14 @@ impl Evaluator {
                 Value::Number(n) => Ok(Value::Number(-*n)),
                 _ => coerced_negate(v),
             },
-            UnaryOp::Not => {
-                Ok(Value::Boolean(!v.as_bool().ok_or_else(|| {
-                    Error::new("Unary '!' on non-boolean", None)
-                })?))
-            }
+            // `!x` is `NOT(x)` with a tighter precedence (ADR-0029 amendment 1 A2).
+            UnaryOp::Not => Ok(Value::Boolean(logical::not(v)?)),
         }
     }
 
-    /// `a AND b`, `a OR b` (and `&&`, `||`): `b` is evaluated only when `a` does not decide the
-    /// result, so `FALSE AND 1/0` is FALSE (ADR-0029). Both sides must be booleans.
+    /// `a AND b`, `a OR b` (and `&&`, `||`): both sides are conditions (`logical::condition`),
+    /// and `b` is evaluated only when `a` does not decide the result, so `FALSE AND 1/0` is
+    /// FALSE (ADR-0029 amendment 1 A3). The result is always a boolean.
     #[inline(never)]
     fn eval_short_circuit<C: EvaluationContext>(
         op: BinaryOp,
@@ -424,15 +422,16 @@ impl Evaluator {
         r: &Expr,
         context: &C,
     ) -> Result<Value, Error> {
-        let a = Self::eval_operand(l, context)?;
+        let name = logical_op_name(op);
+        let a = logical::condition(name, &*Self::eval_operand(l, context)?)?;
         limits::tick()?;
-        match (op, a.as_bool()) {
-            (BinaryOp::And, Some(false)) => Ok(Value::Boolean(false)),
-            (BinaryOp::Or, Some(true)) => Ok(Value::Boolean(true)),
-            _ => {
-                let b = Self::eval_operand(r, context)?;
-                Self::eval_binary_op(op, &a, &b)
-            }
+        match (op, a) {
+            (BinaryOp::And, false) => Ok(Value::Boolean(false)),
+            (BinaryOp::Or, true) => Ok(Value::Boolean(true)),
+            _ => Ok(Value::Boolean(logical::condition(
+                name,
+                &*Self::eval_operand(r, context)?,
+            )?)),
         }
     }
 
@@ -457,16 +456,13 @@ impl Evaluator {
             | BinaryOp::Gt
             | BinaryOp::Ge => crate::runtime::comparison::compare(op, a, b),
             BinaryOp::And | BinaryOp::Or => {
-                let ab = a
-                    .as_bool()
-                    .ok_or_else(|| Error::new("Logical op on non-boolean", None))?;
-                let bb = b
-                    .as_bool()
-                    .ok_or_else(|| Error::new("Logical op on non-boolean", None))?;
-                Ok(Value::Boolean(match op {
-                    BinaryOp::And => ab && bb,
-                    BinaryOp::Or => ab || bb,
-                    _ => unreachable!(),
+                let name = logical_op_name(op);
+                let ab = logical::condition(name, a)?;
+                let bb = logical::condition(name, b)?;
+                Ok(Value::Boolean(if op == BinaryOp::And {
+                    ab && bb
+                } else {
+                    ab || bb
                 }))
             }
         }
@@ -554,9 +550,7 @@ impl Evaluator {
                 if args.len() != 3 {
                     return Err(Error::new("Ternary expects 3 args", None));
                 }
-                let cond = Self::eval(&args[0], context)?
-                    .as_bool()
-                    .ok_or_else(|| Error::new("Ternary condition must be boolean", None))?;
+                let cond = logical::condition("Ternary", &Self::eval(&args[0], context)?)?;
                 return if cond {
                     Self::eval(&args[1], context)
                 } else {
@@ -674,9 +668,7 @@ impl Evaluator {
     ) -> Result<Value, Error> {
         let truthy = |e: &Expr| Self::eval(e, context).and_then(|v| logical::condition(name, &v));
         if name == "IF" {
-            if args.len() < 2 {
-                return Err(Error::new("IF expects at least 2 arguments", None));
-            }
+            logical::if_arity(args.len())?;
             return if truthy(&args[0])? {
                 Self::eval(&args[1], context)
             } else {
@@ -684,12 +676,7 @@ impl Evaluator {
                     .map_or(Ok(Value::Boolean(false)), |e| Self::eval(e, context))
             };
         }
-        if args.len() % 2 != 0 {
-            return Err(Error::new(
-                "IFS expects pairs of condition,value arguments",
-                None,
-            ));
-        }
+        logical::ifs_arity(args.len())?;
         for pair in args.chunks(2) {
             if truthy(&pair[0])? {
                 return Self::eval(&pair[1], context);
@@ -722,8 +709,7 @@ impl Evaluator {
                 for it in items {
                     charge_value(&it)?;
                     scope.set(&param_name, it.clone());
-                    let matches = matches!(Self::eval(lambda, &scope)?, Value::Boolean(true));
-                    if matches {
+                    if logical::condition("FILTER", &Self::eval(lambda, &scope)?)? {
                         out.push(it);
                     }
                 }
@@ -763,8 +749,7 @@ impl Evaluator {
                 for it in items {
                     charge_value(&it)?;
                     scope.set(&param_name, it.clone());
-                    let matches = matches!(Self::eval(lambda, &scope)?, Value::Boolean(true));
-                    if matches {
+                    if logical::condition("FIND", &Self::eval(lambda, &scope)?)? {
                         return Ok(it);
                     }
                 }
@@ -848,8 +833,8 @@ impl Evaluator {
     }
 
     /// `COUNTIF`, `SUMIF`, `AVERAGEIF` (alias `AVGIF`): `(range, criteria, [values])`.
-    /// A criterion that reads `:x` is a lambda over each item that must return a boolean (`NULL`
-    /// counts as FALSE), even when the caller also defines `:x` (BL-081). Otherwise it is
+    /// A criterion that reads `:x` is a lambda over each item whose result is a condition
+    /// (`logical::condition`), even when the caller also defines `:x` (BL-081). Otherwise it is
     /// evaluated once: a string or number uses Excel's rules (`runtime::criteria`), and any other
     /// value is evaluated per item like a lambda.
     fn eval_conditional<C: EvaluationContext>(
@@ -909,20 +894,7 @@ impl Evaluator {
             scope.swap(x, item);
             let result = Self::eval(lambda, &scope)?;
             scope.swap(x, item);
-            flags.push(match result {
-                Value::Boolean(b) => b,
-                Value::Null => false,
-                other => {
-                    return Err(Error::new(
-                        format!(
-                            "{} criteria expression must return TRUE or FALSE, got {}",
-                            name,
-                            type_name(&other)
-                        ),
-                        None,
-                    ))
-                }
-            });
+            flags.push(logical::condition(name, &result)?);
         }
         Ok(flags)
     }
@@ -949,6 +921,15 @@ impl Evaluator {
                     .map_err(|e| Error::new(format!("Invalid JSON: {}", e), None))
             }
         }
+    }
+}
+
+/// The name of a logical operator in its condition error (ADR-0029 amendment 1 A2).
+fn logical_op_name(op: BinaryOp) -> &'static str {
+    if op == BinaryOp::And {
+        "AND"
+    } else {
+        "OR"
     }
 }
 

@@ -88,8 +88,8 @@ limits return an ordinary `Error`, never abort the process.
     cannot replace it; the key's value stays readable as `:arguments.arguments`. Two keys that
     sanitize to the same name (`a-b`, `a_b`) are an error naming both keys (HTTP 400 on
     `sk_http_server`), not a silent overwrite; one sanitizer, `src/json_keys.rs`, serves all
-    three (`tests/json_variable_keys.rs`, `tests/server_reserved_arguments.rs`). `sk_server`
-    builds no `:arguments` and does not sanitize keys, so it has neither problem.
+    of them and, since BL-096, `sk_server` too (`tests/json_variable_keys.rs`,
+    `tests/server_reserved_arguments.rs`). `sk_server` builds no `:arguments`.
 - **Gaps:**
   - Values passed in through the Rust API (`evaluate_with(vars)`) are not depth-checked until
     they are wrapped (BL-017 follow-up; documented on the public API in `src/lib.rs`).
