@@ -1316,6 +1316,7 @@ is, 0 false, other numbers true, NULL false, text `#VALUE!`. It applies to `IF`,
 `AND()`/`OR()` builtins keep skipping NULL like an empty Excel cell; the docs warn that
 `AND(:flag, …)` passes when the flag is missing and point to `IF` or the operators. `IF` with more
 than 3 arguments is an error.
+NaN as a condition is a `#NUM!` error (maintainer, 2026-11-22).
 
 ### BL-090 · Dates in aggregates, sort and criteria · P2 · `ready` · language-designer → rust-engineer
 LANG-5, LANG-6. `MAX`/`MIN`/`SUM` of dates return 0 silently; no sort accepts dates; ISO date text is
@@ -1328,12 +1329,12 @@ LANG-7, LANG-8, REL-8, LANG-12. Currency has four text forms and `&`/`CONCAT` pr
 (`0.30000000000000004`); `[DATE(..)]::String` prints Rust Debug output; `&` is an internal
 `__CONCAT__` call that formulas can call and that shows in the public AST; `"héllo".length()`
 counts bytes.
-Decision (maintainer): one text form per type, Currency at 2 decimals; `.length()` counts characters;
-`&` gets its own AST node.
+Decision (maintainer): one text form per type; `.length()` counts characters; `&` gets its own AST
+node. The Currency text form is moot: BL-097 removes the Currency type.
 
 ### BL-092 · API changes that are cheap only in 0.7.0 · P2 · `ready` · rust-engineer
-REL-4. Decision (maintainer): deprecate `Value::Json` (ADR-0030 step 2) in 0.7.0, not 0.7.x, and add
-`#[non_exhaustive]` to `Value`, `Token`, `Expr` and `BinaryOp`.
+REL-4. Decision (maintainer): deprecate `Value::Json` (ADR-0030 step 2) and `Value::Currency`
+(BL-097) in 0.7.0, not 0.7.x, and add `#[non_exhaustive]` to `Value`, `Token`, `Expr` and `BinaryOp`.
 
 ### BL-093 · Capacity for large data · P2 · `ready` · performance-engineer → rust-engineer
 PERF-5, PERF-7. With the `48 + len` string cost, a `.map` over 2M short strings exceeds 256 MiB; the
@@ -1355,3 +1356,16 @@ QA-5. Test files are named by PR; the same facts are pinned in 3-4 files.
 `sk --json` exits 2 on the library path and 1 on the `:=` path for the same JSON errors; `sk_server`
 keeps JSON keys as written, so a key like `first-name` can't be read. Decide: unify the exit code,
 and whether `sk_server` sanitizes keys like the other surfaces.
+
+### BL-097 · One numeric type: `::Currency` becomes a conversion · P1 · `ready` · language-designer (ADR-0033) → rust-engineer
+`Value::Currency(f64)` is a label on the same float as `Number`: no exact money math
+(`0.1::Currency + 0.2::Currency` is `0.30000000000000004`), but every operator, builtin, method and
+comparison has to handle the mix (ADR-0023, 0027, 0031, BL-078, BL-082), Currency arithmetic is
+2.2x slower and it has four text forms. Excel has one number type; currency is a format.
+Decision (maintainer, 2026-11-22): one numeric type, `Number` (f64, like Excel). `::Integer` and
+`::Float` stay conversions. `::Currency` becomes a conversion that rounds to 4 decimals (VBA's
+Currency precision) and returns a Number. `Value::Currency` is deprecated in 0.7.0 and removed in
+0.8; responses say `"type": "Number"`. The Currency rules in ADR-0027 and ADR-0031 are superseded.
+Exact decimal money math is not built now; a later ADR can add a real decimal type.
+Supersedes the BL-082 follow-up (`CONTAINS`/`IN`/`UNIQUE` with Currency) and the Currency part of BL-091.
+Implement after #112 and #115 merge (they touch the same Currency code).
