@@ -496,11 +496,14 @@ MID("Hello", 2, -1)          # Error: MID num_chars must not be negative (#VALUE
 Replace every occurrence of `old_text` with `new_text`, or, with `instance_num`, only that
 occurrence (1-based, as in Excel). An empty `old_text` returns the text unchanged. Matching is
 case-sensitive. `SUBSTITUTEM` replaces every occurrence and takes no `instance_num`.
+
+`SUBSTITUTEM` is **deprecated since 0.7.0** and will be removed in a later minor release: use
+`SUBSTITUTE`, which gives the same result for three arguments. It still works and gives no warning.
 ```bash
 SUBSTITUTE("foo bar foo", "foo", "baz")   # "baz bar baz"
 SUBSTITUTE("a-a-a", "-", "_")             # "a_a_a"
 SUBSTITUTE("a-b-c", "-", "+", 2)          # "a-b+c"
-SUBSTITUTEM("a-a-a", "-", "_")            # "a_a_a"
+SUBSTITUTEM("a-a-a", "-", "_")            # "a_a_a" (deprecated)
 ```
 
 #### `TRIM(text)`

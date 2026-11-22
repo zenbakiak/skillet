@@ -57,7 +57,7 @@ Methods (`:arr.sum()`), operators and the rest of the language: [api.md](api.md)
 | `SPLIT` | `SPLIT(text, [separator])` | 1-2 | Split into an array; without a separator, split on commas and trim each part. | `SPLIT('a, b,c')` | `["a", "b", "c"]` |
 | `REPLACE` | `REPLACE(text, start, count, new_text)` | 4 | Excel `REPLACE`: replace `count` characters from 1-based `start` with `new_text`; `start` < 1 or a negative `count` is an error, a `start` past the end appends. | `REPLACE('abcdef', 2, 3, 'X')` | `"aXef"` |
 | `SUBSTITUTE` | `SUBSTITUTE(text, find, replacement, [instance])` | 3-4 | Replace every occurrence of `find`, or only the `instance`-th. | `SUBSTITUTE('a-b-c', '-', '+', 2)` | `"a-b+c"` |
-| `SUBSTITUTEM` | `SUBSTITUTEM(text, find, replacement)` | 3 | Same as `SUBSTITUTE`. | `SUBSTITUTEM('a-b-c', '-', '')` | `"abc"` |
+| `SUBSTITUTEM` | `SUBSTITUTEM(text, find, replacement)` | 3 | Deprecated since 0.7.0: use `SUBSTITUTE`, which also takes `instance`; removed in a later minor release. Replaces every occurrence of `find`. | `SUBSTITUTEM('a-b-c', '-', '')` | `"abc"` |
 | `ISBLANK` | `ISBLANK(value)` | 1 | TRUE for NULL, a whitespace-only string or an empty array. | `ISBLANK('  ')` | `TRUE` |
 | `ISNUMBER` | `ISNUMBER(value)` | 1 | TRUE for a number or currency. | `ISNUMBER(5)` | `TRUE` |
 | `ISTEXT` | `ISTEXT(value)` | 1 | TRUE for a string. | `ISTEXT('x')` | `TRUE` |

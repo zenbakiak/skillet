@@ -145,7 +145,7 @@ pub(crate) static BUILTINS: &[Builtin] = &[
     f("SPLIT", Category::String, 1, n(2), "text, [separator]", "Split into an array; without a separator, split on commas and trim each part.", "SPLIT('a, b,c')"),
     f("REPLACE", Category::String, 4, n(4), "text, start, count, new_text", "Excel `REPLACE`: replace `count` characters from 1-based `start` with `new_text`; `start` < 1 or a negative `count` is an error, a `start` past the end appends.", "REPLACE('abcdef', 2, 3, 'X')"),
     f("SUBSTITUTE", Category::String, 3, n(4), "text, find, replacement, [instance]", "Replace every occurrence of `find`, or only the `instance`-th.", "SUBSTITUTE('a-b-c', '-', '+', 2)"),
-    f("SUBSTITUTEM", Category::String, 3, n(3), "text, find, replacement", "Same as `SUBSTITUTE`.", "SUBSTITUTEM('a-b-c', '-', '')"),
+    f("SUBSTITUTEM", Category::String, 3, n(3), "text, find, replacement", "Deprecated since 0.7.0: use `SUBSTITUTE`, which also takes `instance`; removed in a later minor release. Replaces every occurrence of `find`.", "SUBSTITUTEM('a-b-c', '-', '')"),
     f("ISBLANK", Category::String, 1, n(1), "value", "TRUE for NULL, a whitespace-only string or an empty array.", "ISBLANK('  ')"),
     f("ISNUMBER", Category::String, 1, n(1), "value", "TRUE for a number or currency.", "ISNUMBER(5)"),
     f("ISTEXT", Category::String, 1, n(1), "value", "TRUE for a string.", "ISTEXT('x')"),

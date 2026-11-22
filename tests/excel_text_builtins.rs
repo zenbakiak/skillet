@@ -313,3 +313,14 @@ fn db_out_of_range_arguments_are_num_errors() {
     err("DB(10000, -1, 5, 1)", "#NUM!");
     err("DB(10000, 1000, 0, 1)", "#NUM!");
 }
+
+// ---- SUBSTITUTEM (deprecated since 0.7.0) ----
+
+#[test]
+fn deprecated_substitutem_still_matches_substitute() {
+    assert_eq!(string(r#"SUBSTITUTEM("a-b-c", "-", "+")"#), "a+b+c");
+    assert_eq!(
+        eval(r#"SUBSTITUTEM("a-b-c", "-", "+")"#),
+        eval(r#"SUBSTITUTE("a-b-c", "-", "+")"#)
+    );
+}
