@@ -275,6 +275,10 @@ impl Evaluator {
                 Self::eval_unary_op(*op, &v)
             }
 
+            Expr::Binary(l, op @ (BinaryOp::And | BinaryOp::Or), r) => {
+                Self::eval_short_circuit(*op, l, r, context)
+            }
+
             Expr::Binary(l, op, r) => {
                 let a = Self::eval_operand(l, context)?;
                 let b = Self::eval_operand(r, context)?;
@@ -421,6 +425,27 @@ impl Evaluator {
                 Ok(Value::Boolean(!v.as_bool().ok_or_else(|| {
                     Error::new("Unary '!' on non-boolean", None)
                 })?))
+            }
+        }
+    }
+
+    /// `a AND b`, `a OR b` (and `&&`, `||`): `b` is evaluated only when `a` does not decide the
+    /// result, so `FALSE AND 1/0` is FALSE (ADR-0029). Both sides must be booleans.
+    #[inline(never)]
+    fn eval_short_circuit<C: EvaluationContext>(
+        op: BinaryOp,
+        l: &Expr,
+        r: &Expr,
+        context: &C,
+    ) -> Result<Value, Error> {
+        let a = Self::eval_operand(l, context)?;
+        limits::tick()?;
+        match (op, a.as_bool()) {
+            (BinaryOp::And, Some(false)) => Ok(Value::Boolean(false)),
+            (BinaryOp::Or, Some(true)) => Ok(Value::Boolean(true)),
+            _ => {
+                let b = Self::eval_operand(r, context)?;
+                Self::eval_binary_op(op, &a, &b)
             }
         }
     }
@@ -654,14 +679,14 @@ impl Evaluator {
     }
 
     /// `IF` / `IFS` evaluate a condition, then only the branch it picks (D-8, Excel). Same
-    /// argument checks and truthiness as the eager versions in `logical.rs`, which still run
-    /// calls with a spread argument.
+    /// argument checks and conditions (`logical::condition`) as the eager versions in
+    /// `logical.rs`, which still run calls with a spread argument.
     fn eval_lazy_if<C: EvaluationContext>(
         name: &str,
         args: &[Expr],
         context: &C,
     ) -> Result<Value, Error> {
-        let truthy = |e: &Expr| Self::eval(e, context).map(|v| logical::truthy(&v));
+        let truthy = |e: &Expr| Self::eval(e, context).and_then(|v| logical::condition(name, &v));
         if name == "IF" {
             if args.len() < 2 {
                 return Err(Error::new("IF expects at least 2 arguments", None));
@@ -684,7 +709,7 @@ impl Evaluator {
                 return Self::eval(&pair[1], context);
             }
         }
-        Ok(Value::Boolean(false))
+        Err(logical::ifs_no_match())
     }
 
     /// Helper for higher-order functions - these need access to context for lambda evaluation

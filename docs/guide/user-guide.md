@@ -1149,8 +1149,9 @@ and booleans convert, as in Excel: `ABS("-3")` is `3`, `ABS(TRUE)` is `1`.
 - `YEAR(date)` - Extract year
 - `MONTH(date)` - Extract month
 - `DAY(date)` - Extract day
-- `DATEADD(date, days)` - Add days to date
-- `DATEDIFF(date1, date2)` - Days between dates
+- `DATEADD(date, amount, unit)` - Add `amount` units (`"days"`, `"m"` for months, `"n"` for minutes, …)
+- `DATEDIFF(date1, date2, unit)` - `date2 - date1` in a unit (same units as `DATEADD`)
+- `DATEDIF(start_date, end_date, unit)` - Excel's complete years, months or days (`"y"`, `"m"`, `"d"`, `"md"`, `"ym"`, `"yd"`)
 
 ### Array Functions
 - `FILTER(array, expression)` - Filter array elements
