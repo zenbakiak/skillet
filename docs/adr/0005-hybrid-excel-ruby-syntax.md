@@ -5,9 +5,9 @@
 - Related: PRD-001
 - Amended by: [ADR-0018](0018-excel-compatibility.md) (2026-11-21). From 0.7.0, unary minus
   binds tighter than `^` and `^` is left-associative, as in Excel: `-3^2 = 9`, `2^3^2 = 64`.
-- Amendment 1 (**Proposed**, 2026-11-22, BL-106): spread `...` is also allowed as an element
-  of an array literal, `[0, ...:xs, 4]`, with the same rules as in argument lists. See
-  [Amendment 1](#amendment-1-proposed-2026-11-22-bl-106-spread-in-array-literals).
+- Amendment 1 (**Accepted**, orchestrator, 2026-11-22, BL-106): spread `...` is also allowed as
+  an element of an array literal, `[0, ...:xs, 4]`, with the same rules as in argument lists. See
+  [Amendment 1](#amendment-1-accepted-2026-11-22-bl-106-spread-in-array-literals).
 
 ## Context
 Target users are spreadsheet power users and backend developers. Each group knows a different idiom.
@@ -27,9 +27,9 @@ Target users are spreadsheet power users and backend developers. Each group know
 - − Two ways to do many things (`SUM(:a)` vs `:a.sum()`); docs must say which is canonical.
 - Any grammar change needs an ADR plus tests in `tests/prd_*.rs`.
 
-## Amendment 1 (Proposed, 2026-11-22, BL-106): spread in array literals
+## Amendment 1 (Accepted, 2026-11-22, BL-106): spread in array literals
 
-Status: **Proposed**. The rest of this ADR stays Accepted.
+Status: **Accepted** (orchestrator, 2026-11-22). The rest of this ADR stays Accepted.
 
 ### Context
 This ADR lists spread `...` as supported syntax but does not say where it may appear. Today it
