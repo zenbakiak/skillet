@@ -1316,7 +1316,8 @@ is, 0 false, other numbers true, NULL false, text `#VALUE!`. It applies to `IF`,
 `AND()`/`OR()` builtins keep skipping NULL like an empty Excel cell; the docs warn that
 `AND(:flag, …)` passes when the flag is missing and point to `IF` or the operators. `IF` with more
 than 3 arguments is an error.
-NaN as a condition is a `#NUM!` error (maintainer, 2026-11-22).
+NaN as a condition is a `#NUM!` error, in every form including the `AND()`/`OR()`/`XOR()` builtins
+(maintainer, 2026-11-22).
 
 ### BL-090 · Dates in aggregates, sort and criteria · P2 · `ready` · language-designer → rust-engineer
 LANG-5, LANG-6. `MAX`/`MIN`/`SUM` of dates return 0 silently; no sort accepts dates; ISO date text is
