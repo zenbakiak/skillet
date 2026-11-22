@@ -6,7 +6,7 @@
 
 mod common;
 
-use common::ServerProcess;
+use common::{ServerProcess, SLOW};
 use skillet::js_plugin::JavaScriptFunction;
 use skillet::{CustomFunction, EvalLimits, Value};
 use std::collections::HashMap;
@@ -56,8 +56,11 @@ fn deadline_stops_js_and_a_swallowed_error_still_times_out() {
         result.unwrap_err().message,
         "Evaluation timed out (max 200 ms)"
     );
+    // If the deadline did not reach into the hook, the 10 s per-call cap would stop it and the
+    // swallowed error would still end as this timeout, only later. So the bound sits just
+    // under the cap (it was 5 s; BL-087 QA-8): any time below it proves the deadline won.
     assert!(
-        started.elapsed() < Duration::from_secs(5),
+        started.elapsed() < Duration::from_secs(9),
         "{:?}",
         started.elapsed()
     );
@@ -148,10 +151,9 @@ fn server_deadline_stops_a_looping_hook_and_frees_the_worker() {
     let (resp, took) = server.eval("=JSLIMITSLOOP()");
     assert_eq!(status(&resp), "400", "{resp}");
     assert!(resp.contains("Evaluation timed out (max 2 s)"), "{resp}");
-    assert!(
-        took >= Duration::from_secs(2) && took < Duration::from_secs(20),
-        "{took:?}"
-    );
+    // The message proves the deadline, not the 10 s cap, stopped the hook; the lower bound
+    // that it did not fire early. The upper bound only guards against a hang (BL-087 QA-8).
+    assert!(took >= Duration::from_secs(2) && took < SLOW, "{took:?}");
     // The single worker is free again, and hostile results did not abort the process.
     for expr in ["=JSLIMITSDEEP()", "=JSLIMITSCYCLE()"] {
         let (resp, _) = server.eval(expr);
@@ -177,10 +179,9 @@ fn per_call_cap_stops_a_looping_hook_before_the_default_deadline() {
         resp.contains("JS function JSLIMITSLOOP timed out (max 10 s)"),
         "{resp}"
     );
-    assert!(
-        took >= Duration::from_secs(9) && took < Duration::from_secs(40),
-        "{took:?}"
-    );
+    // The message proves the cap, not the 20 s deadline, stopped the hook; the lower bound
+    // that it did not fire early. The upper bound only guards against a hang (BL-087 QA-8).
+    assert!(took >= Duration::from_secs(9) && took < SLOW, "{took:?}");
     let (resp, _) = server.eval("=2 + 3");
     assert_eq!(status(&resp), "200", "{resp}");
 }
@@ -199,5 +200,7 @@ fn upload_with_a_looping_example_answers() {
         resp.contains("JS function JSLIMITSUPLOAD timed out (max 10 s)"),
         "{resp}"
     );
-    assert!(took < Duration::from_secs(20), "{took:?}");
+    // Without the cap the example loops forever; the message proves the cap stopped it, so the
+    // bound only guards against a hang (BL-087 QA-8). The lower bound shows it was not skipped.
+    assert!(took >= Duration::from_secs(9) && took < SLOW, "{took:?}");
 }

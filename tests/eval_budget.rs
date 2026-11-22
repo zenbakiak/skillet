@@ -6,7 +6,7 @@
 
 mod common;
 
-use common::ServerProcess;
+use common::{ServerProcess, SLOW};
 use skillet::{
     evaluate, evaluate_with_assignments, evaluate_with_custom, evaluate_with_json_custom,
     with_limits, EvalLimits, Value, MAX_EVAL_BYTES,
@@ -558,10 +558,9 @@ fn t1_server_times_out_and_frees_the_worker() {
         "{}",
         head(&resp)
     );
-    assert!(
-        took >= Duration::from_secs(10) && took < Duration::from_secs(20),
-        "{took:?}"
-    );
+    // The message proves the deadline fired, the lower bound that it did not fire early. The
+    // upper bound only guards against a hang (BL-087 QA-8; it was 20 s).
+    assert!(took >= Duration::from_secs(10) && took < SLOW, "{took:?}");
     // The single worker is free again.
     assert!(quick.0.starts_with("HTTP/1.1 200"), "{}", quick.0);
     assert!(quick.0.contains('5'), "{}", quick.0);
@@ -761,7 +760,11 @@ fn bl027c_lambda_over_uncharged_reads_meets_the_deadline() {
         r.map_err(|e| e.message),
         Err("Evaluation timed out (max 1 ms)".to_string())
     );
-    assert!(took < Duration::from_secs(2), "{took:?}");
+    // The error is the proof: with no clock read inside the loop, the evaluation would finish
+    // and return Ok. The time bound cannot tell the two apart since the comparisons borrow
+    // (BL-027d): the whole loop without a deadline takes ~0.4 s in debug, under the old 2 s
+    // bound. So the bound is now only a hang guard (BL-087 QA-8).
+    assert!(took < SLOW, "{took:?}");
 }
 
 /// The deadline is 1 ms, far below the work done (thousands of 1 MB comparisons), so the
@@ -784,7 +787,10 @@ fn bl027c_flat_uncharged_reads_meet_the_deadline() {
         r.map_err(|e| e.message),
         Err("Evaluation timed out (max 1 ms)".to_string())
     );
-    assert!(took < Duration::from_millis(500), "{took:?}");
+    // As above, the error is the proof (before F1 this returned `success: true`). The whole
+    // list without a deadline takes ~60 ms in debug, under the old 500 ms bound, so the bound
+    // could not catch F1 coming back and only added flake risk under load (BL-087 QA-8).
+    assert!(took < SLOW, "{took:?}");
 }
 
 /// F2 (fixed in BL-027d): heap allocated before the budget check must stay within ~2× the
