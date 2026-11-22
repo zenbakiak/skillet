@@ -350,7 +350,9 @@ const CASES: &[(&str, &str)] = &[
     // BL-054: COUNT is variadic (Excel); was "COUNT expects 1 argument: array".
     ("COUNT()", "Err(Error { message: \"COUNT expects at least 1 argument\", position: None })"),
     ("IN([1])", "Err(Error { message: \"IN expects 2 arguments: array, value\", position: None })"),
-    ("XOR(TRUE)", "Err(Error { message: \"XOR expects 2 arguments\", position: None })"),
+    // ADR-0029: XOR takes 1..n arguments (Excel); was "XOR expects 2 arguments".
+    ("XOR(TRUE)", "Ok(Boolean(true))"),
+    ("XOR()", "Err(Error { message: \"XOR: no logical values (#VALUE!)\", position: None })"),
     ("IF(TRUE)", "Err(Error { message: \"IF expects at least 2 arguments\", position: None })"),
     ("IFS(TRUE)", "Err(Error { message: \"IFS expects pairs of condition,value arguments\", position: None })"),
     ("UPPER(1)", "Err(Error { message: \"UPPER expects string\", position: None })"),

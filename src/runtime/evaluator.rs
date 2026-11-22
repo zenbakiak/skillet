@@ -604,14 +604,14 @@ impl Evaluator {
     }
 
     /// `IF` / `IFS` evaluate a condition, then only the branch it picks (D-8, Excel). Same
-    /// argument checks and truthiness as the eager versions in `logical.rs`, which still run
-    /// calls with a spread argument.
+    /// argument checks and conditions (`logical::condition`) as the eager versions in
+    /// `logical.rs`, which still run calls with a spread argument.
     fn eval_lazy_if<C: EvaluationContext>(
         name: &str,
         args: &[Expr],
         context: &C,
     ) -> Result<Value, Error> {
-        let truthy = |e: &Expr| Self::eval(e, context).map(|v| logical::truthy(&v));
+        let truthy = |e: &Expr| Self::eval(e, context).and_then(|v| logical::condition(name, &v));
         if name == "IF" {
             if args.len() < 2 {
                 return Err(Error::new("IF expects at least 2 arguments", None));
@@ -634,7 +634,7 @@ impl Evaluator {
                 return Self::eval(&pair[1], context);
             }
         }
-        Ok(Value::Boolean(false))
+        Err(logical::ifs_no_match())
     }
 
     /// Helper for higher-order functions - these need access to context for lambda evaluation
