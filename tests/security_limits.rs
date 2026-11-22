@@ -354,6 +354,21 @@ fn regression_sec_arrays_depth_128() {
     assert!(out.contains("Number(1.0)"));
 }
 
+/// ADR-0005 amendment 1 S5: spread in an array literal removes one level, so `[...:a]` is
+/// exactly as deep as `:a` and passes at the limit; `[[...:a]]` is one level deeper and fails.
+/// `:a` is built at runtime (`reduce_wrap(128)` is 128 arrays deep).
+#[test]
+fn regression_sec_array_spread_depth() {
+    let a = format!(":a := {}; ", reduce_wrap(128));
+    let out = assert_ok_stdout("array_spread_128", expr(format!("{a}[...:a]")));
+    assert_eq!(out.matches("Array(").count(), 128, "array_spread_128");
+    assert_too_deep("array_spread_129", expr(format!("{a}[[...:a]]")));
+    assert_too_deep(
+        "array_spread_inline_129",
+        expr(format!("[[...{}]]", reduce_wrap(128))),
+    );
+}
+
 /// Object literals round-trip through serde_json, which caps depth at 128, so 100 is the
 /// deepest realistic positive case (pre-existing limit, not BL-017).
 #[test]

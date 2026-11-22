@@ -378,6 +378,12 @@ These used to fail with `Unknown function` or a parse error: `STDEV.P`, `STDEV.S
 `VAR.P`, `VAR.S`, `VAR`, `MODE.SNGL`, `MODE`, `PERCENTILE.INC`, `PERCENTILE`, `QUARTILE.INC`,
 `QUARTILE`, `COUNTA`, `LEN`, `TODAY`, `PPMT`, `PV`, `NPV`, `TEXTJOIN`, `AVERAGEIF`, `DATEDIF`.
 
+### Spread in array literals (additive, ADR-0005 amendment 1)
+`[0, ...:xs]` used to be a parse error; it now builds an array, with the same rules as spread in
+argument lists: `[0, ...[1, 2], 3]` is `[0, 1, 2, 3]`, and a non-array operand is
+`Spread expects array` (use `.to_a()` for `NULL` or a string). Rust code that walks
+`Expr::Array` items may now meet `Expr::Spread` there.
+
 ### Null equality (ADR-0013)
 | Expression | 0.6 | 0.7 |
 |---|---|---|

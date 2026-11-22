@@ -275,7 +275,7 @@ pub enum Token {
     LeftParen, RightParen, LeftBracket, RightBracket,
     Greater, Less, GreaterEqual, LessEqual, Equal, NotEqual,
     And, Or, Not, AndAnd, OrOr,
-    Comma, Colon, ColonEqual, Dot, Question, Spread,
+    Comma, Colon, ColonEqual, Dot, Question, Ellipsis, // `...` (spread)
     SafeNav,       // &.
     TypeCast,      // ::
     // ...

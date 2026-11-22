@@ -33,7 +33,7 @@ spreadsheet cell references (`A1`).
 | FR-6 | Chainable methods incl. predicates (`?`) and lambdas (`filter/map/reduce/find/...`) with `:x`/`:acc` defaults. Methods keep Ruby semantics, even where the builtin of the same name follows Excel (`.trim()`, `.int()`; ADR-0018) | `tests/arrays.rs`, `prd_chained_methods` |
 | FR-7 | Null safety: `&.`, total `to_*` conversions | `tests/null.rs`, `tests/safe_navigation.rs`, `tests/conversion_methods.rs` |
 | FR-8 | JSON access: property access, `DIG`, `JQ` (JSONPath) over `:arguments`. `JQ` returns a value for a singular path (`NULL` if absent) and an array for any other path (ADR-0014) | `tests/json_dig.rs`, `tests/jsonpath.rs` |
-| FR-9 | Object literals, spread, index and slice | `tests/object_literals.rs` |
+| FR-9 | Object literals, spread (in argument lists and array literals; the operand must be an array, ADR-0005 amendment 1), index and slice | `tests/object_literals.rs`, `tests/array_spread.rs` (BL-106) |
 | FR-10 | Comments and free whitespace | `tests/comments_and_whitespace_tests.rs` |
 | FR-11 | Errors carry a message and, when known, a source position | `src/error.rs` |
 | FR-12 | Custom functions: the entry point decides. `evaluate_with_custom`, `evaluate_with_json_custom` and the assignment entry points see registered functions in every sub-expression; `evaluate` and `evaluate_with` see none (ADR-0016) | `tests/custom_functions.rs` |

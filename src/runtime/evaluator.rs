@@ -304,7 +304,10 @@ impl Evaluator {
             Expr::Array(items) => {
                 let mut out = Vec::with_capacity(items.len());
                 for e in items {
-                    out.push(Self::eval(e, context)?);
+                    match e {
+                        Expr::Spread(inner) => Self::eval_spread(inner, context, &mut out)?,
+                        _ => out.push(Self::eval(e, context)?),
+                    }
                 }
                 check_value(Value::Array(out))
             }
@@ -495,6 +498,38 @@ impl Evaluator {
         Ok(Value::Json(json_str))
     }
 
+    /// The arguments of a function call, left to right, with `...expr` spread (`eval_spread`).
+    fn eval_items<C: EvaluationContext>(items: &[Expr], context: &C) -> Result<Vec<Value>, Error> {
+        let mut out = Vec::with_capacity(items.len());
+        for item in items {
+            match item {
+                Expr::Spread(inner) => Self::eval_spread(inner, context, &mut out)?,
+                _ => out.push(Self::eval(item, context)?),
+            }
+        }
+        Ok(out)
+    }
+
+    /// `...expr` in an argument list or an array literal: appends the items of the array
+    /// operand to `out`, one level (ADR-0005 amendment 1); any other operand is
+    /// `Spread expects array`. Spread adds no budget charge of its own: the operand is charged
+    /// where it is evaluated, the caller charges the result. Out of line so the array-literal
+    /// arm of the hot `eval` match keeps its code layout.
+    #[inline(never)]
+    fn eval_spread<C: EvaluationContext>(
+        inner: &Expr,
+        context: &C,
+        out: &mut Vec<Value>,
+    ) -> Result<(), Error> {
+        match Self::eval(inner, context)? {
+            Value::Array(items) => {
+                out.extend(items);
+                Ok(())
+            }
+            _ => Err(Error::new("Spread expects array", None)),
+        }
+    }
+
     fn with_target<C: EvaluationContext>(
         target: &Expr,
         context: &C,
@@ -572,23 +607,7 @@ impl Evaluator {
             .get_custom_registry()
             .and_then(|registry| registry.read().ok()?.get_shared(name));
         if let Some(function) = custom {
-            let mut ev_args = Vec::new();
-            for a in args {
-                match a {
-                    Expr::Spread(inner) => {
-                        let v = Self::eval(inner, context)?;
-                        if let Value::Array(items) = v {
-                            ev_args.extend(items);
-                        } else {
-                            return Err(Error::new("Spread expects array", None));
-                        }
-                    }
-                    _ => {
-                        let val = Self::eval(a, context)?;
-                        ev_args.push(val);
-                    }
-                }
-            }
+            let ev_args = Self::eval_items(args, context)?;
             return execute_checked(function.as_ref(), name, ev_args);
         }
 
@@ -630,24 +649,7 @@ impl Evaluator {
                 crate::runtime::jsonpath::apply_jsonpath(&json_data, &path)
             }
             _ => {
-                // Evaluate arguments for built-in functions
-                let mut ev_args = Vec::new();
-                for a in args {
-                    match a {
-                        Expr::Spread(inner) => {
-                            let v = Self::eval(inner, context)?;
-                            if let Value::Array(items) = v {
-                                ev_args.extend(items);
-                            } else {
-                                return Err(Error::new("Spread expects array", None));
-                            }
-                        }
-                        _ => {
-                            let val = Self::eval(a, context)?;
-                            ev_args.push(val);
-                        }
-                    }
-                }
+                let ev_args = Self::eval_items(args, context)?;
                 exec_builtin_fast(name, &ev_args)
             }
         }
