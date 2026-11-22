@@ -35,58 +35,43 @@ pub fn exec_arithmetic(name: &str, args: &[Value]) -> Result<Value, Error> {
     }
 }
 
-/// Visit every number and currency in the arguments, flattening arrays. Other values are
-/// ignored, as Excel ignores text and logical values in a range (excel-compat X-3). Returns
-/// whether a Currency was visited.
-fn for_each_number(args: &[Value], f: &mut impl FnMut(f64)) -> bool {
-    let mut currency = false;
+/// Visit every number in the arguments, flattening arrays. Other values are ignored, as Excel
+/// ignores text and logical values in a range (excel-compat X-3). A deprecated `Currency` is a
+/// number (ADR-0033).
+#[allow(deprecated)]
+fn for_each_number(args: &[Value], f: &mut impl FnMut(f64)) {
     for a in args {
         match a {
-            Value::Number(n) => f(*n),
-            Value::Currency(n) => {
-                currency = true;
-                f(*n)
-            }
-            Value::Array(items) => currency |= for_each_number(items, f),
+            Value::Number(n) | Value::Currency(n) => f(*n),
+            Value::Array(items) => for_each_number(items, f),
             _ => {}
         }
-    }
-    currency
-}
-
-/// An aggregate's result: Currency when a counted value was Currency, as `Currency op Number`
-/// is Currency (ADR-0027, ADR-0031); otherwise a Number.
-fn tagged(n: f64, currency: bool) -> Value {
-    if currency {
-        Value::Currency(n)
-    } else {
-        Value::Number(n)
     }
 }
 
 fn fold_numbers(args: &[Value], init: f64, op: impl Fn(f64, f64) -> f64) -> Value {
     let mut acc = init;
-    let currency = for_each_number(args, &mut |n| acc = op(acc, n));
-    tagged(acc, currency)
+    for_each_number(args, &mut |n| acc = op(acc, n));
+    Value::Number(acc)
 }
 
 fn average(args: &[Value]) -> Result<Value, Error> {
     let (mut sum, mut count) = (0.0, 0usize);
-    let currency = for_each_number(args, &mut |n| {
+    for_each_number(args, &mut |n| {
         sum += n;
         count += 1;
     });
     if count == 0 {
         return Err(Error::new("AVERAGE of no numbers (#DIV/0!)", None));
     }
-    Ok(tagged(sum / count as f64, currency))
+    Ok(Value::Number(sum / count as f64))
 }
 
 /// `MIN`/`MAX`: Excel returns 0 when the arguments contain no numbers.
 fn extreme(args: &[Value], pick: fn(f64, f64) -> f64) -> Value {
     let mut cur: Option<f64> = None;
-    let currency = for_each_number(args, &mut |n| cur = Some(cur.map_or(n, |c| pick(c, n))));
-    tagged(cur.unwrap_or(0.0), currency)
+    for_each_number(args, &mut |n| cur = Some(cur.map_or(n, |c| pick(c, n))));
+    Value::Number(cur.unwrap_or(0.0))
 }
 
 fn arity(name: &str, args: &[Value], min: usize, max: usize, sig: &str) -> Result<(), Error> {
@@ -108,7 +93,7 @@ fn unary(
 /// `ROUND(number, [num_digits])`: half away from zero, on the number's 15-significant-digit
 /// decimal form (so `ROUND(1.005, 2)` is 1.01, as in Excel). Negative digits round to the left
 /// of the decimal point. `num_digits` is truncated and defaults to 0 (a Skillet extension; Excel
-/// requires it). A currency number stays currency.
+/// requires it).
 fn round(args: &[Value]) -> Result<Value, Error> {
     arity("ROUND", args, 1, 2, "number, [num_digits]")?;
     let n = number_arg("ROUND", args, 0, "number")?;
@@ -120,10 +105,23 @@ fn round(args: &[Value]) -> Result<Value, Error> {
     if n.is_finite() && !r.is_finite() {
         return Err(Error::new("ROUND result is out of range (#NUM!)", None));
     }
-    Ok(match args[0] {
-        Value::Currency(_) => Value::Currency(r),
-        _ => Value::Number(r),
-    })
+    Ok(Value::Number(r))
+}
+
+/// The amount of `x::Currency` (ADR-0033 §3): `ROUND(n, 4)`, half away from zero, with `-0` as
+/// `0`. It never fails: a magnitude where 4 decimals cannot change an `f64` (`|n| >= 2^53 / 10^4`)
+/// and a non-finite number are returned as they are.
+pub(crate) fn round_currency(n: f64) -> f64 {
+    const UNCHANGED_FROM: f64 = 9_007_199_254_740_992.0 / 10_000.0;
+    if !n.is_finite() || n.abs() >= UNCHANGED_FROM {
+        return n;
+    }
+    let r = round_half_away(n, 4);
+    if r == 0.0 {
+        0.0
+    } else {
+        r
+    }
 }
 
 pub(crate) fn round_half_away(n: f64, digits: i32) -> f64 {

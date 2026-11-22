@@ -2,9 +2,10 @@
 //!
 //! - A1: casts chain left to right (`atom link* cast*`), with positioned cast errors.
 //! - A2: `.to_json()` on a date is the ISO text; `::Json` stays a number.
-//! - A3: `.join()` writes Currency and `NULL` as `JOIN` does; other items keep Ruby text.
+//! - A3: `.join()` writes `NULL` as `JOIN` does; other items keep Ruby text. A `::Currency`
+//!   item is a Number since ADR-0033.
 //! - A4: `LEN` and `FIND` on a date stay errors.
-//! - A5: `SUMIF`/`AVERAGEIF` return Currency when a summed value is Currency.
+//! - A5 (superseded by ADR-0033): `SUMIF`/`AVERAGEIF` with `::Currency` values return Numbers.
 
 use skillet::{evaluate, evaluate_with_json, Error, Value};
 
@@ -43,7 +44,8 @@ fn casts_chain_left_to_right() {
     );
     assert_eq!(eval("1::String::Integer + 1"), Value::Number(2.0));
     assert_eq!(eval("\"2\"::Integer::String"), s("2"));
-    assert_eq!(eval("1.5::Currency::String"), s("1.5000"));
+    // ADR-0033 §6: `::Currency` gives a Number, so its text is the number's text.
+    assert_eq!(eval("1.5::Currency::String"), s("1.5"));
     assert_eq!(
         eval("1.5::Currency::String"),
         eval("(1.5::Currency)::String")
@@ -116,16 +118,16 @@ fn to_json_on_a_date_is_iso_text_and_json_cast_a_number() {
     );
 }
 
-// ---- A3. `.join()` with Currency and NULL ----------------------------------------------------
+// ---- A3. `.join()` with Currency (a Number since ADR-0033) and NULL ------------------------
 
 #[test]
 fn join_method_writes_currency_and_null_like_join() {
-    assert_eq!(eval("[2.5::Currency].join(\"-\")"), s("2.5000"));
+    assert_eq!(eval("[2.5::Currency].join(\"-\")"), s("2.5"));
     assert_eq!(
         eval("[1::Currency, -2.25::Currency].join(\"; \")"),
-        s("1.0000; -2.2500")
+        s("1; -2.25")
     );
-    assert_eq!(eval("[1, 2.5::Currency, NULL].join(\",\")"), s("1,2.5000,"));
+    assert_eq!(eval("[1, 2.5::Currency, NULL].join(\",\")"), s("1,2.5,"));
     assert_eq!(
         eval("[1, 2.5::Currency, NULL].join(\",\")"),
         eval("JOIN([1, 2.5::Currency, NULL], \",\")")
@@ -159,11 +161,11 @@ fn len_and_find_on_a_date_stay_errors() {
     assert_eq!(eval("LEN(DATE(2026,1,1)::String)"), Value::Number(20.0));
 }
 
-// ---- A5. SUMIF / AVERAGEIF keep Currency -----------------------------------------------------
+// ---- A5. SUMIF / AVERAGEIF: Numbers since ADR-0033 (A5 superseded) -------------------------
 
 #[test]
-fn sumif_returns_currency_when_a_summed_value_is_currency() {
-    let c = Value::Currency;
+fn sumif_with_currency_values_is_a_number() {
+    let c = Value::Number;
     assert_eq!(eval("SUMIF([1,2::Currency,3], \">1\")"), c(5.0));
     assert_eq!(eval("SUMIF([1::Currency,2::Currency], \">0\")"), c(3.0));
     assert_eq!(
@@ -196,7 +198,7 @@ fn sumif_stays_a_number_when_no_summed_value_is_currency() {
 
 #[test]
 fn averageif_follows_the_same_rule() {
-    let (c, n) = (Value::Currency, Value::Number);
+    let (c, n) = (Value::Number, Value::Number);
     assert_eq!(eval("AVERAGEIF([1,2::Currency,3], \">1\")"), c(2.5));
     assert_eq!(eval("AVERAGEIF([1::Currency,2::Currency], \">0\")"), c(1.5));
     assert_eq!(eval("AVERAGEIF([1::Currency,2,3], \">1\")"), n(2.5));

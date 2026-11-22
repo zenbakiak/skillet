@@ -1,13 +1,16 @@
 use crate::ast::TypeName;
 use crate::error::Error;
+use crate::runtime::arithmetic::round_currency;
 use crate::runtime::datetime::{datetime_text, parse_datetime_text};
 use crate::types::Value;
 
+/// `v::ty`. Every number cast returns a `Number`; `::Currency` rounds to 4 decimals (ADR-0033).
+/// A deprecated `Value::Currency` input is read as the Number of the same amount.
+#[allow(deprecated)]
 pub fn cast_value(v: Value, ty: &TypeName) -> Result<Value, Error> {
     Ok(match ty {
         TypeName::Float => match v {
-            Value::Number(n) => Value::Number(n),
-            Value::Currency(n) => Value::Number(n),
+            Value::Number(n) | Value::Currency(n) => Value::Number(n),
             Value::String(s) => Value::Number(
                 s.parse::<f64>()
                     .map_err(|_| Error::new("Cannot cast String to Float", None))?,
@@ -17,8 +20,7 @@ pub fn cast_value(v: Value, ty: &TypeName) -> Result<Value, Error> {
             _ => return Err(Error::new("Cannot cast to Float", None)),
         },
         TypeName::Integer => match v {
-            Value::Number(n) => Value::Number((n as i64) as f64),
-            Value::Currency(n) => Value::Number((n as i64) as f64),
+            Value::Number(n) | Value::Currency(n) => Value::Number((n as i64) as f64),
             Value::String(s) => {
                 let mut clean_s = String::new();
                 let mut has_dot = false;
@@ -40,7 +42,7 @@ pub fn cast_value(v: Value, ty: &TypeName) -> Result<Value, Error> {
         },
         TypeName::String => match v {
             Value::String(s) => Value::String(s),
-            Value::Number(n) => Value::String(n.to_string()),
+            Value::Number(n) | Value::Currency(n) => Value::String(n.to_string()),
             Value::Boolean(b) => Value::String(if b { "TRUE".into() } else { "FALSE".into() }),
             Value::Null => Value::String(String::new()),
             Value::Array(items) => {
@@ -50,14 +52,12 @@ pub fn cast_value(v: Value, ty: &TypeName) -> Result<Value, Error> {
                 })?;
                 Value::String(format!("{:?}", items))
             }
-            Value::Currency(n) => Value::String(format!("{:.4}", n)),
             Value::DateTime(ts) => Value::String(datetime_text(ts)),
             Value::Json(s) => Value::String(s),
         },
         TypeName::Boolean => match v {
             Value::Boolean(b) => Value::Boolean(b),
-            Value::Number(n) => Value::Boolean(n != 0.0),
-            Value::Currency(n) => Value::Boolean(n != 0.0),
+            Value::Number(n) | Value::Currency(n) => Value::Boolean(n != 0.0),
             Value::String(s) => Value::Boolean(!s.trim().is_empty()),
             Value::Array(items) => Value::Boolean(!items.is_empty()),
             Value::Null => Value::Boolean(false),
@@ -69,19 +69,18 @@ pub fn cast_value(v: Value, ty: &TypeName) -> Result<Value, Error> {
             other => Value::Array(vec![other]),
         },
         TypeName::Currency => match v {
-            Value::Currency(n) => Value::Currency(n),
-            Value::Number(n) => Value::Currency(n),
-            Value::String(s) => Value::Currency(
+            Value::Number(n) | Value::Currency(n) => Value::Number(round_currency(n)),
+            Value::String(s) => Value::Number(round_currency(
                 s.parse::<f64>()
                     .map_err(|_| Error::new("Cannot cast String to Currency", None))?,
-            ),
-            Value::Boolean(b) => Value::Currency(if b { 1.0 } else { 0.0 }),
-            Value::Null => Value::Currency(0.0),
+            )),
+            Value::Boolean(b) => Value::Number(if b { 1.0 } else { 0.0 }),
+            Value::Null => Value::Number(0.0),
             _ => return Err(Error::new("Cannot cast to Currency", None)),
         },
         TypeName::DateTime => match v {
             Value::DateTime(ts) => Value::DateTime(ts),
-            Value::Number(n) => Value::DateTime(n as i64),
+            Value::Number(n) | Value::Currency(n) => Value::DateTime(n as i64),
             Value::String(s) => Value::DateTime(
                 parse_datetime_text(&s)
                     .ok_or_else(|| Error::new("Cannot cast String to DateTime", None))?,
@@ -91,14 +90,13 @@ pub fn cast_value(v: Value, ty: &TypeName) -> Result<Value, Error> {
         TypeName::Json => match v {
             Value::Json(s) => Value::Json(s),
             Value::String(s) => Value::Json(s),
-            Value::Number(n) => Value::Json(n.to_string()),
+            Value::Number(n) | Value::Currency(n) => Value::Json(n.to_string()),
             Value::Boolean(b) => Value::Json(if b {
                 "true".to_string()
             } else {
                 "false".to_string()
             }),
             Value::Null => Value::Json("null".to_string()),
-            Value::Currency(n) => Value::Json(n.to_string()),
             Value::DateTime(ts) => Value::Json(ts.to_string()),
             Value::Array(items) => {
                 let json_items: Result<Vec<String>, Error> = items

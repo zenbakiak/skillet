@@ -354,12 +354,12 @@ fn process_eval_request(
     }
 }
 
+#[allow(deprecated)] // `Value::Currency` is read as a Number (ADR-0033)
 fn format_structured_output(val: &Value, execution_time_ms: f64) -> serde_json::Value {
     let (result_value, type_name) = match val {
-        Value::Number(n) => (serde_json::json!(n), "Number"),
+        Value::Number(n) | Value::Currency(n) => (serde_json::json!(n), "Number"),
         Value::String(s) => (serde_json::json!(s), "String"),
         Value::Boolean(b) => (serde_json::json!(b), "Boolean"),
-        Value::Currency(c) => (serde_json::json!(c), "Currency"),
         Value::DateTime(dt) => (serde_json::json!(dt), "DateTime"),
         Value::Array(arr) => {
             let json_arr: Vec<serde_json::Value> = arr.iter().map(format_simple_output).collect();
@@ -379,12 +379,12 @@ fn format_structured_output(val: &Value, execution_time_ms: f64) -> serde_json::
     })
 }
 
+#[allow(deprecated)] // `Value::Currency` is read as a Number (ADR-0033)
 fn format_simple_output(val: &Value) -> serde_json::Value {
     match val {
-        Value::Number(n) => serde_json::json!(n),
+        Value::Number(n) | Value::Currency(n) => serde_json::json!(n),
         Value::String(s) => serde_json::json!(s),
         Value::Boolean(b) => serde_json::json!(b),
-        Value::Currency(c) => serde_json::json!(c),
         Value::DateTime(dt) => serde_json::json!(dt.to_string()),
         Value::Array(arr) => {
             let json_arr: Vec<serde_json::Value> = arr.iter().map(format_simple_output).collect();

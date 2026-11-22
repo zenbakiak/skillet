@@ -52,6 +52,7 @@ fn is_singular(query: &JpQuery) -> bool {
 }
 
 /// Convert our Value type to serde_json::Value
+#[allow(deprecated)] // `Value::Currency` is read as a Number (ADR-0033)
 fn value_to_json(value: &Value) -> Result<serde_json::Value, Error> {
     match value {
         Value::Number(n) => {
@@ -77,7 +78,7 @@ fn value_to_json(value: &Value) -> Result<serde_json::Value, Error> {
         }
         Value::Currency(n) => serde_json::Number::from_f64(*n)
             .map(serde_json::Value::Number)
-            .ok_or_else(|| Error::new("Invalid currency for JSON conversion", None)),
+            .ok_or_else(|| Error::new("Invalid number for JSON conversion", None)),
         Value::DateTime(ts) => Ok(serde_json::Value::Number(serde_json::Number::from(*ts))),
         Value::Json(json_str) => {
             limits::charge_json_parse(json_str)?;
@@ -124,6 +125,7 @@ pub fn is_jsonpath(s: &str) -> bool {
 }
 
 /// Extract values from JSONPath result for aggregation functions like SUM
+#[allow(deprecated)] // `Value::Currency` is read as a Number (ADR-0033)
 pub fn extract_numeric_values(value: &Value) -> Vec<f64> {
     let mut numbers = Vec::new();
 

@@ -1,5 +1,5 @@
 use crate::error::Error;
-use crate::types::Value;
+use crate::types::{currency_to_number, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -129,7 +129,8 @@ impl FunctionRegistry {
     }
 }
 
-/// Check the argument count against the function's bounds, then run it.
+/// Check the argument count against the function's bounds, then run it. A deprecated
+/// `Value::Currency` in the result is read as a Number (ADR-0033 §5).
 pub(crate) fn execute_checked(
     function: &dyn CustomFunction,
     name: &str,
@@ -160,7 +161,7 @@ pub(crate) fn execute_checked(
         }
     }
 
-    function.execute(args)
+    function.execute(args).map(currency_to_number)
 }
 
 #[cfg(test)]
