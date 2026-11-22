@@ -49,22 +49,22 @@ Methods (`:arr.sum()`), operators and the rest of the language: [api.md](api.md)
 | `LENGTH` | `LENGTH(text_or_array)` | 1 | Characters in a string or items in an array; 0 for NULL. | `LENGTH('héllo')` | `5` |
 | `LEN` | `LEN(text)` | 1 | Excel `LEN`: characters in the text; numbers and booleans count as their text, NULL as 0. | `LEN('héllo')` | `5` |
 | `TEXTJOIN` | `TEXTJOIN(delimiter, ignore_empty, text…)` | 3+ | Excel `TEXTJOIN`: join texts (arrays flattened) with `delimiter`; skip empty ones when `ignore_empty` is TRUE. | `TEXTJOIN(', ', TRUE, 'a', '', ['b', 'c'])` | `"a, b, c"` |
-| `CONCAT` | `CONCAT(values…)` | 0+ | Join strings, numbers, booleans and (flattened) arrays; other values add nothing. | `CONCAT('a', 1, TRUE)` | `"a1TRUE"` |
+| `CONCAT` | `CONCAT(values…)` | 0+ | Join values as text: numbers and currency as numbers, booleans as TRUE/FALSE, a DateTime as Unix seconds, arrays flattened; NULL and JSON add nothing. | `CONCAT('a', 1, TRUE)` | `"a1TRUE"` |
 | `UPPER` | `UPPER(text)` | 1 | Upper-case. | `UPPER('abc')` | `"ABC"` |
 | `LOWER` | `LOWER(text)` | 1 | Lower-case. | `LOWER('ABC')` | `"abc"` |
 | `TRIM` | `TRIM(text)` | 1 | Remove leading and trailing spaces and collapse inner runs of spaces (Excel). `.trim()` keeps inner spaces. | `TRIM('  a   b  ')` | `"a b"` |
 | `SUBSTRING` | `SUBSTRING(text, start, [length])` | 2-3 | Characters from 0-based `start`, to the end or `length` characters. | `SUBSTRING('hello', 1, 3)` | `"ell"` |
 | `SPLIT` | `SPLIT(text, [separator])` | 1-2 | Split into an array; without a separator, split on commas and trim each part. | `SPLIT('a, b,c')` | `["a", "b", "c"]` |
-| `REPLACE` | `REPLACE(text, start, count, new_text)` | 4 | Excel `REPLACE`: replace `count` characters from 1-based `start` with `new_text`. | `REPLACE('abcdef', 2, 3, 'X')` | `"aXef"` |
+| `REPLACE` | `REPLACE(text, start, count, new_text)` | 4 | Excel `REPLACE`: replace `count` characters from 1-based `start` with `new_text`; `start` < 1 or a negative `count` is an error, a `start` past the end appends. | `REPLACE('abcdef', 2, 3, 'X')` | `"aXef"` |
 | `SUBSTITUTE` | `SUBSTITUTE(text, find, replacement, [instance])` | 3-4 | Replace every occurrence of `find`, or only the `instance`-th. | `SUBSTITUTE('a-b-c', '-', '+', 2)` | `"a-b+c"` |
-| `SUBSTITUTEM` | `SUBSTITUTEM(text, find, replacement)` | 3 | Same as `SUBSTITUTE`. | `SUBSTITUTEM('a-b-c', '-', '')` | `"abc"` |
+| `SUBSTITUTEM` | `SUBSTITUTEM(text, find, replacement)` | 3 | Deprecated since 0.7.0: use `SUBSTITUTE`, which also takes `instance`; removed in a later minor release. Replaces every occurrence of `find`. | `SUBSTITUTEM('a-b-c', '-', '')` | `"abc"` |
 | `ISBLANK` | `ISBLANK(value)` | 1 | TRUE for NULL, a whitespace-only string or an empty array. | `ISBLANK('  ')` | `TRUE` |
 | `ISNUMBER` | `ISNUMBER(value)` | 1 | TRUE for a number or currency. | `ISNUMBER(5)` | `TRUE` |
 | `ISTEXT` | `ISTEXT(value)` | 1 | TRUE for a string. | `ISTEXT('x')` | `TRUE` |
 | `INCLUDES` | `INCLUDES(text, substring)` | 2 | TRUE when `text` contains `substring`. | `INCLUDES('hello', 'ell')` | `TRUE` |
-| `LEFT` | `LEFT(text, [count])` | 1-2 | First `count` characters (default 1). | `LEFT('hello', 2)` | `"he"` |
-| `RIGHT` | `RIGHT(text, [count])` | 1-2 | Last `count` characters (default 1). | `RIGHT('hello', 2)` | `"lo"` |
-| `MID` | `MID(text, start, [count])` | 2-3 | Characters from 1-based `start`, to the end or `count` characters. | `MID('hello', 2, 3)` | `"ell"` |
+| `LEFT` | `LEFT(text, [count])` | 1-2 | First `count` characters (default 1); a negative `count` is an error (Excel). | `LEFT('hello', 2)` | `"he"` |
+| `RIGHT` | `RIGHT(text, [count])` | 1-2 | Last `count` characters (default 1); a negative `count` is an error (Excel). | `RIGHT('hello', 2)` | `"lo"` |
+| `MID` | `MID(text, start, [count])` | 2-3 | Characters from 1-based `start`, to the end or `count` characters; `start` < 1 or a negative `count` is an error, a `start` past the end gives '' (Excel). | `MID('hello', 2, 3)` | `"ell"` |
 
 ## Array
 
@@ -78,9 +78,9 @@ Methods (`:arr.sum()`), operators and the rest of the language: [api.md](api.md)
 | `IN` | `IN(array, value)` | 2 | Same as `CONTAINS`, with an exact argument count. | `IN([1, 2, 3], 4)` | `FALSE` |
 | `COUNT` | `COUNT(values…)` | 1+ | How many numbers (currency, datetime) there are; arrays flattened, other values ignored (Excel). | `COUNT([1, 'a', TRUE], 2)` | `2` |
 | `COUNTA` | `COUNTA(values…)` | 1+ | How many values are not NULL; arrays flattened (Excel). | `COUNTA([1, 'a', NULL], '')` | `3` |
-| `UNIQUE` | `UNIQUE(array)` | 1 | Distinct numbers in first-seen order; non-numbers are dropped. | `UNIQUE([1, 2, 2, 3])` | `[1, 2, 3]` |
-| `SORT` | `SORT(array, [order])` | 1-2 | Numbers sorted ascending, or descending with order `-1` or `'DESC'`; non-numbers are an error. | `SORT([3, 1, 2], -1)` | `[3, 2, 1]` |
-| `REVERSE` | `REVERSE(array)` | 1 | Items in reverse order. (For strings use the `.reverse()` method.) | `REVERSE([1, 2, 3])` | `[3, 2, 1]` |
+| `UNIQUE` | `UNIQUE(array)` | 1 | Distinct values in first-seen order (`==` equality: same type and value, text case-sensitive). | `UNIQUE([1, 'a', 1, 'a'])` | `[1, "a"]` |
+| `SORT` | `SORT(array, [order])` | 1-2 | Sorted ascending (Excel: numbers < text < booleans, text ignores case), or descending with order `-1` or `'DESC'`; other values are an error. | `SORT(['b', 2, 'A', 1])` | `[1, 2, "A", "b"]` |
+| `REVERSE` | `REVERSE(array or text)` | 1 | Items of an array, or characters of a string, in reverse order. | `REVERSE([1, 2, 3])` | `[3, 2, 1]` |
 | `JOIN` | `JOIN(array, [separator])` | 1-2 | Items joined into a string with `separator` (default `,`); nested arrays are an error. | `JOIN([1, 'a', TRUE], '-')` | `"1-a-TRUE"` |
 | `MERGE` | `MERGE(values…)` | 0+ | Arrays concatenated; scalar arguments are appended as items. | `MERGE([1, 2], 3, [4])` | `[1, 2, 3, 4]` |
 | `FILTER` † | `FILTER(array, expr, [param])` | 2-3 | Items for which `expr` is TRUE; the item is `:x` (or `:param`). | `FILTER([1, 2, 3, 4], :x % 2 == 0)` | `[2, 4]` |
@@ -107,7 +107,7 @@ Methods (`:arr.sum()`), operators and the rest of the language: [api.md](api.md)
 | Function | Signature | Arity | Summary | Example | Result |
 |---|---|---|---|---|---|
 | `PMT` | `PMT(rate, nper, pv, [fv], [type])` | 3-5 | Payment per period of a loan (Excel `PMT`). | `PMT(0.05 / 12, 360, 200000)` | `-1073.6432460242797` |
-| `DB` | `DB(cost, salvage, life, period, [month])` | 4-5 | Fixed-declining-balance depreciation for a period (Excel `DB`). | `DB(10000, 1000, 5, 2)` | `2328.5017392669597` |
+| `DB` | `DB(cost, salvage, life, period, [month])` | 4-5 | Fixed-declining-balance depreciation for a period (Excel `DB`: rate rounded to 3 decimals; period `life + 1` when `month` < 12). | `DB(1000000, 100000, 6, 7, 7)` | `15845.098473848071` |
 | `FV` | `FV(rate, nper, pmt, [pv], [type])` | 3-5 | Future value of an investment (Excel `FV`). | `FV(0.05, 10, -100)` | `1257.789253554884` |
 | `IPMT` | `IPMT(rate, per, nper, pv, [fv], [type])` | 4-6 | Interest part of payment `per` (Excel `IPMT`; negative for a positive `pv`). | `IPMT(0.1 / 12, 1, 36, 8000)` | `-66.66666666666667` |
 | `PPMT` | `PPMT(rate, per, nper, pv, [fv], [type])` | 4-6 | Principal part of payment `per` (Excel `PPMT`). | `PPMT(0.1 / 12, 1, 24, 2000)` | `-75.62318600836664` |
