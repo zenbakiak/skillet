@@ -868,6 +868,25 @@ sk "=IF(:qty == 0, 0, :total / :qty)" qty=0 total=10        # 0
 sk "=IF(AND(:score >= 90, :attendance > 0.8), \"A\", IF(:score >= 80, \"B\", \"C\"))" score=85 attendance=0.9
 ```
 
+### Comparisons
+
+`==` is strict: same type and same value, case-sensitive text. No comparison converts between
+types.
+
+```bash
+sk "=\"Apple\" == \"Apple\""                # true
+sk "=\"Apple\" == \"APPLE\""                # false (case-sensitive)
+sk "=1 == \"1\""                            # false (no conversion between types)
+sk "=TRUE == 1"                             # false
+sk "=[1, 2] == [1, 2]"                      # true (item by item)
+sk "=DATE(2026, 1, 1) == DATE(2026, 1, 1)"  # true
+sk "=DATE(2026, 1, 1) < DATE(2026, 2, 1)"   # true (earlier is less)
+sk "=FALSE < TRUE"                          # true
+```
+
+Ordering (`<`, `>`, …) needs two values of the same type; `DATE(2026, 1, 1) < 1` and
+`1 < "2"` are errors. See the [operator reference](../reference/api.md#comparison-operators).
+
 ### Text Functions
 
 ```bash

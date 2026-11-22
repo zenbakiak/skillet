@@ -2,6 +2,7 @@ pub mod arithmetic;
 pub mod array;
 pub mod builtin_functions;
 pub(crate) mod builtin_table;
+pub(crate) mod comparison;
 pub(crate) mod criteria;
 pub mod datetime;
 pub mod evaluator;

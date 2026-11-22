@@ -76,8 +76,22 @@ is not a finite number (overflow, a non-real power) are a `#NUM!` error.
 - `==` (or `=`) - Equal to
 - `!=` - Not equal to
 
-`NULL == NULL` is `TRUE` and `NULL` is unequal to every other value (`NULL == 0` is `FALSE`).
-`<`, `<=`, `>`, `>=` with a `NULL` operand are an error (ADR-0013).
+`==` is strict: a value equals only a value of the same type with the same value, and text is
+case-sensitive (`"a" == "A"` is `FALSE`). No comparison converts between types: `1 == "1"`,
+`TRUE == 1` and `1 == 1::Currency` are `FALSE` (conversion happens only in arithmetic,
+ADR-0023).
+
+- Arrays are equal when they have the same length and equal items, in order
+  (`[1, 2] == [1, 2]`). JSON objects are equal when they have the same keys and equal values;
+  key order does not matter. Two `Currency` values compare by amount.
+- Two DateTimes compare by timestamp (`DATE(2026,1,1) == DATE(2026,1,1)`). A DateTime never
+  equals a value of another type (`DATE(2026,1,1) == 0` is `FALSE`).
+- `NULL == NULL` is `TRUE` and `NULL` is unequal to every other value (`NULL == 0` is `FALSE`,
+  ADR-0013).
+- `<`, `<=`, `>`, `>=` need two values of the same type: numbers, currency, booleans
+  (`FALSE < TRUE`), text, or DateTimes (earlier is less). Text orders by Unicode code point,
+  case-sensitive (`"B" < "a"`), as text even when it looks like a number (`"10" < "9"`). Any
+  other pair, including a `NULL` operand, is an error.
 
 ### Logical Operators
 - `AND`, `&&` - Logical AND
