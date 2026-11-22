@@ -20,9 +20,15 @@ pub fn exec_string_method(
     match lname.as_str() {
         "length" | "len" => Ok(Value::Number(recv_string.len() as f64)),
 
-        "upper" | "upcase" => Ok(Value::String(recv_string.to_uppercase())),
+        "upper" | "upcase" => Ok(Value::String(crate::limits::case_mapped(
+            &recv_string,
+            true,
+        )?)),
 
-        "lower" | "downcase" => Ok(Value::String(recv_string.to_lowercase())),
+        "lower" | "downcase" => Ok(Value::String(crate::limits::case_mapped(
+            &recv_string,
+            false,
+        )?)),
 
         "trim" => Ok(Value::String(recv_string.trim().to_string())),
 

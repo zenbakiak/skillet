@@ -31,9 +31,12 @@ use std::sync::Arc;
 /// builtin result, but the Rust code in [`execute`](CustomFunction::execute) is not metered,
 /// and the deadline set with [`with_limits`](crate::with_limits) is only checked after it
 /// returns. The budget is thread-local: work moved to another thread (spawned threads, pools,
-/// async runtimes) is outside the budget and the deadline, so such a function must bound that
-/// work itself. A `skillet::evaluate*` call made from `execute` on the same thread joins the
-/// caller's budget.
+/// async runtimes) is outside the budget and the deadline, and a `skillet::evaluate*` call made
+/// on that thread opens a fresh default scope (default budget, no deadline) instead of joining
+/// the caller's. Such a function must bound that work itself, for example by wrapping the
+/// evaluations on the other thread in [`with_limits`](crate::with_limits) with limits it chooses
+/// and by not waiting for the thread longer than it can afford. A `skillet::evaluate*` call made
+/// from `execute` on the same thread joins the caller's budget.
 pub trait CustomFunction: Send + Sync {
     /// The name of the function (case-insensitive)
     fn name(&self) -> &str;

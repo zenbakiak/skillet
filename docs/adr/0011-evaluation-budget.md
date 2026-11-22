@@ -15,6 +15,19 @@
 > `::String`, `CONCAT`, `MERGE`) are pre-charged with an upper bound, and the HTTP server rejects
 > results whose serialized size would exceed the budget. Removing the copy entirely (shared
 > values) is tracked as BL-036 and would let the read charge be dropped again.
+>
+> **Amendment 3 (BL-035, 2026-11-21, no decision needed):** the per-string constant is **48**, not
+> 32: `cost(String(s) | Json(s)) = 48 + s.len()` (32 for the `Value` plus 16 for the smallest heap
+> block). Other values keep 32, so the shape of the model is unchanged. Measured with the system
+> allocator's usable sizes (`malloc_size`, macOS): a 1-char string really holds 48.1 B and was
+> charged 33; it is now charged 49. glibc's smallest block is 24 usable bytes (56 B per 1-char
+> string, still within 1.25x). C3/C4 move from 36/35 to 52/51 bytes. Two further hardening steps
+> need no new rule: `UPPER`/`LOWER`/`.upper()`/`.lower()` check that their output fits the budget
+> **before** building it (up to 3x growth, e.g. U+0390; exact count only when the 3x worst case
+> does not fit, so the pass/fail boundary does not move), and `SORT`, `UNIQUE`, `JOIN`, `TEXTJOIN`
+> and their method forms tick the deadline every 64 items, so one such call no longer runs to
+> completion past the deadline. Custom functions that move work to another thread still escape
+> the budget and the deadline; that is documented on `CustomFunction` and `with_limits`.
 
 - Status: Accepted (2026-11-20, with amendment below)
 - Date: 2026-11-20
@@ -66,7 +79,7 @@ charged against it. The cost of a value is a deterministic estimate of its size:
 
 ```
 cost(Number | Boolean | Null | Currency | DateTime) = 32          // size_of::<Value>()
-cost(String(s) | Json(s))                           = 32 + s.len()
+cost(String(s) | Json(s))                           = 32 + s.len()   // 48 + s.len() since amendment 3
 cost(Array(items))                                  = 32 + Σ cost(item)
 ```
 
@@ -91,7 +104,7 @@ run. These must **charge before or while they allocate**, not afterwards:
 |---|---|
 | `SUBSTITUTE`, `SUBSTITUTEM`, `.replace` | exact output length, worked out first: `len + matches × (repl.len − find.len)`. An empty `find` matches `chars + 1` times. |
 | `JOIN`, `.join` | `Σ part.len + (n − 1) × sep.len`, worked out first |
-| `SPLIT`, `.split` | `32 + part.len` for each part, while collecting |
+| `SPLIT`, `.split` | `32 + part.len` (48 since amendment 3) for each part, while collecting |
 | `JQ` | `cost` of each match, before it is cloned out of the query result |
 | Parsing a `Json` string (property access, `DIG`, `.keys/.values/.dig`, `JQ` input, object literals that embed a `Json`) | `s.len() + 32 × (1 + count of ',' ':' '[' '{' in s)`, a one-pass upper bound on the nodes, charged before `serde_json::from_str` |
 
@@ -256,8 +269,8 @@ array literal of n ones.
 |---|---|---|---|
 | C1 | `max_bytes = 160` | `[1, 2, 3, 4]` | `Array([1,2,3,4])` (cost 32 + 4×32 = 160) |
 | C2 | `max_bytes = 160` | `[1, 2, 3, 4, 5]` | `Evaluation budget exceeded (max 160 bytes)` |
-| C3 | `max_bytes = 36` | `"abcd".upper()` | `String("ABCD")` (method result 32 + 4; literals are not charged) |
-| C4 | `max_bytes = 35` | `"abcd".upper()` | `Evaluation budget exceeded (max 35 bytes)` |
+| C3 | `max_bytes = 36` (52 since amendment 3) | `"abcd".upper()` | `String("ABCD")` (method result 32 + 4, now 48 + 4; literals are not charged) |
+| C4 | `max_bytes = 35` (51 since amendment 3) | `"abcd".upper()` | `Evaluation budget exceeded (max 35 bytes)` (now `max 51 bytes`) |
 | C5 | outer `max_bytes = 1000`, inner `with_limits(max_bytes = 10 MiB)` | `[1×40]` (1312 B) inside the inner scope | budget error (inner cannot raise outer) |
 | C6 | `timeout = 1 ms` | T1 expression | `Evaluation timed out (max 1 ms)` |
 

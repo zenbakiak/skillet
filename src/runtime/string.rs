@@ -60,6 +60,7 @@ fn textjoin_parts<'v>(v: &'v Value, out: &mut Vec<Cow<'v, str>>) -> Result<(), E
             let text = excel_text(v).ok_or_else(|| {
                 Error::new("TEXTJOIN expects text, numbers, booleans or arrays", None)
             })?;
+            limits::tick_item(out.len())?;
             out.push(text);
             Ok(())
         }
@@ -113,6 +114,7 @@ fn textjoin(args: &[Value]) -> Result<Value, Error> {
     limits::charge_string(total)?;
     let mut out = String::with_capacity(total);
     for (i, part) in parts.iter().enumerate() {
+        limits::tick_item(i)?;
         if i > 0 {
             out.push_str(&delimiters[(i - 1) % delimiters.len()]);
         }
@@ -160,7 +162,7 @@ pub(crate) fn find_text(args: &[Value]) -> Result<Value, Error> {
     }
 }
 
-/// Collect split parts, charging `32 + part.len` for each one while collecting (ADR-0011).
+/// Collect split parts, charging `48 + part.len` for each one while collecting (ADR-0011).
 pub(crate) fn split_charged<'s>(parts: impl Iterator<Item = &'s str>) -> Result<Value, Error> {
     let mut out = Vec::new();
     for p in parts {
@@ -206,11 +208,11 @@ pub fn exec_string(name: &str, args: &[Value]) -> Result<Value, Error> {
             Ok(Value::String(out))
         }
         "UPPER" => match args.first() {
-            Some(Value::String(s)) => Ok(Value::String(s.to_uppercase())),
+            Some(Value::String(s)) => Ok(Value::String(limits::case_mapped(s, true)?)),
             _ => Err(Error::new("UPPER expects string", None)),
         },
         "LOWER" => match args.first() {
-            Some(Value::String(s)) => Ok(Value::String(s.to_lowercase())),
+            Some(Value::String(s)) => Ok(Value::String(limits::case_mapped(s, false)?)),
             _ => Err(Error::new("LOWER expects string", None)),
         },
         // Excel TRIM: drop leading and trailing spaces and collapse inner runs of spaces to one.

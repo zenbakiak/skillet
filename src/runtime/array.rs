@@ -77,7 +77,7 @@ pub fn exec_array(name: &str, args: &[Value]) -> Result<Value, Error> {
             count_where(args, &|v| !matches!(v, Value::Null)) as f64,
         )),
         "UNIQUE" => match args.first() {
-            Some(Value::Array(items)) => Ok(Value::Array(unique(items))),
+            Some(Value::Array(items)) => unique(items).map(Value::Array),
             _ => Err(Error::new("UNIQUE expects array", None)),
         },
         "SORT" => match args.first() {
@@ -98,6 +98,7 @@ pub fn exec_array(name: &str, args: &[Value]) -> Result<Value, Error> {
                 };
                 let mut parts: Vec<String> = Vec::with_capacity(items.len());
                 for it in items {
+                    crate::limits::tick_item(parts.len())?;
                     match it {
                         Value::String(s) => parts.push(s.clone()),
                         Value::Number(n) => parts.push(n.to_string()),
@@ -159,7 +160,7 @@ fn count_where(args: &[Value], keep: &dyn Fn(&Value) -> bool) -> usize {
 /// Excel `UNIQUE`: every distinct value, in first-seen order, with Skillet's `==` (ADR-0023:
 /// same type and value, text case-sensitive). Scalars are found by hash; arrays and JSON objects
 /// are compared with the values kept so far.
-fn unique(items: &[Value]) -> Vec<Value> {
+fn unique(items: &[Value]) -> Result<Vec<Value>, Error> {
     #[derive(PartialEq, Eq, Hash)]
     enum Key<'a> {
         Number(u64),
@@ -173,7 +174,8 @@ fn unique(items: &[Value]) -> Vec<Value> {
     let bits = |n: f64| (n + 0.0).to_bits();
     let mut seen = HashSet::new();
     let mut out: Vec<Value> = Vec::new();
-    for it in items {
+    for (i, it) in items.iter().enumerate() {
+        crate::limits::tick_item(i)?;
         let key = match it {
             Value::Number(n) if !n.is_nan() => Some(Key::Number(bits(*n))),
             Value::Currency(n) if !n.is_nan() => Some(Key::Currency(bits(*n))),
@@ -195,7 +197,7 @@ fn unique(items: &[Value]) -> Vec<Value> {
             out.push(it.clone());
         }
     }
-    out
+    Ok(out)
 }
 
 /// Excel `SORT(array, [order])` on one column: numbers (and currency) < text < booleans; text
@@ -223,6 +225,7 @@ fn sort(items: &[Value], order: Option<&Value>) -> Result<Value, Error> {
     }
     let mut keyed = Vec::with_capacity(items.len());
     for it in items {
+        crate::limits::tick_item(keyed.len())?;
         let key = match it {
             Value::Number(n) | Value::Currency(n) if n.is_nan() => {
                 return Err(Error::new("Cannot sort NaN values", None))
