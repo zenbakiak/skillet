@@ -280,7 +280,9 @@ The 46 MB string fits the 256 MiB budget, but its escaped JSON (276 MB) does not
 
 `sk_http_server` caches results in an LRU cache. An entry is stored only when its key, result and
 returned variables together cost at most 64 KiB (same cost model as the budget), so the cache stays
-small however big the results are. Errors, including budget and timeout errors, are never cached.
+small however big the results are. Errors, including budget and timeout errors, are never cached,
+and neither are results of expressions that read the clock (`NOW()`, `TODAY()`, BL-085). Details:
+[servers](servers.md#result-cache-sk_http_server).
 
 ### Parse cache
 
