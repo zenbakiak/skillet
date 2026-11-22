@@ -35,7 +35,8 @@ cargo run --bin sk -- "=2 + 3 * 4"   # try an expression
 ```
 
 Toolchain: develop and CI on Rust `1.89.0`; minimum supported version (MSRV) `1.85` (`rust-version` in
-`Cargo.toml`, [ADR-0012](docs/adr/0012-msrv-1-85.md)); edition 2021. Plugins feature is default;
+`Cargo.toml`, [ADR-0012](docs/adr/0012-msrv-1-85.md)); edition 2024, rustfmt style 2021
+([ADR-0032](docs/adr/0032-edition-2024.md)). Plugins feature is default;
 `--no-default-features` builds without QuickJS.
 
 ## 4. Codebase map (verified 2026-11)

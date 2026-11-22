@@ -42,6 +42,8 @@ Agents prepare steps 1–3; **only a human publishes, tags, or pushes to `main`.
 - Toolchain (ADR-0012): MSRV 1.85 (`rust-version`, checked by the `msrv` job). The CI gate
   (`rust.yml`) and `release.yml` pin Rust 1.89.0 via `RUST_TOOLCHAIN`; bump both together.
   `.tool-versions` is gitignored, local only.
+- Edition 2024 for the crate and `fuzz/` (ADR-0032). `rustfmt.toml` keeps `style_edition = "2021"`;
+  the switch to style 2024 is its own fmt-only commit.
 - CI (`rust.yml`) runs `./harness/check.sh`, `cargo audit` and the MSRV build on pushes and PRs to
   `main` and `develop`, all `--locked`. A fourth job, `docker image` (BL-062), builds `Dockerfile`
   with buildx (GitHub Actions cache, loaded locally, never pushed) and runs
