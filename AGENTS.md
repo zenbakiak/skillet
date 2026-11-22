@@ -26,12 +26,14 @@ See [`docs/prd/PRD-003-modernization.md`](docs/prd/PRD-003-modernization.md). In
 
 ```bash
 cargo build --all-targets            # build lib + bins + tests
-cargo test                           # full suite (~300 tests; sk_concurrency/sk_performance are slow)
+cargo test                           # full suite (about 890 tests, doctests included)
 cargo test --lib                     # fast loop
 cargo test --test <file_stem>        # one integration file, e.g. --test arrays
 cargo clippy --all-targets           # lint
 cargo run --bin sk -- "=2 + 3 * 4"   # try an expression
 ./harness/check.sh                   # THE gate. Must pass before any handoff.
+./harness/check.sh --fast            # skips sk_concurrency/sk_performance, the 4 tests that wait
+                                     # out a fixed 2-10 s limit, and the no-plugins test run
 ```
 
 Toolchain: develop and CI on Rust `1.89.0`; minimum supported version (MSRV) `1.85` (`rust-version` in
@@ -46,13 +48,13 @@ Toolchain: develop and CI on Rust `1.89.0`; minimum supported version (MSRV) `1.
 | `src/lib.rs` | Public API (`parse`, `evaluate*`, registry fns) | Calls `runtime::evaluator` |
 | `src/lexer.rs`, `src/parser.rs`, `src/ast.rs` | Front end | Recursive descent, `Rc<Expr>` AST |
 | `src/types.rs`, `src/error.rs` | `Value` enum, `Error {message, position}` | |
-| `src/runtime/evaluator.rs` | The single evaluator (public API, methods, lambdas) | 812 lines; split into modules later |
+| `src/runtime/evaluator.rs` | The single evaluator (public API, methods, lambdas) | ~1100 lines; split into modules later |
 | `src/runtime/function_dispatch.rs`, `builtin_functions.rs` | `UPPERCASE()` builtins by category | |
 | `src/runtime/method_calls/` | `.method()` dispatch | |
 | `src/runtime/{arithmetic,string,array,datetime,financial,statistical,logical,json,jsonpath}.rs` | Builtin implementations | |
 | `src/custom.rs`, `src/js_plugin.rs` | `CustomFunction` trait, JS plugins | |
 | `src/bin/http_server/` | HTTP server modules | std::net + threadpool, no async |
-| `tests/*.rs` | Integration tests, one file per feature area | `prd_*.rs` = PRD-001 acceptance; `evaluator_parity.rs` = BL-001 |
+| `tests/*.rs` | Integration tests, one file per feature area | `prd_*.rs` = PRD-001 acceptance; `evaluator_parity.rs` = BL-001, pins every result in `tests/golden/` (BL-087) |
 
 ## 5. Roles
 
