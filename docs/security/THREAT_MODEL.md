@@ -271,12 +271,16 @@ Endpoints: `POST /upload-js`, `PUT /update-js`, `DELETE /delete-js`, `GET /list-
   binaries ship with `.sha256` files generated in the same job; `lru` updated past
   RUSTSEC-2026-0253 (BL-043, #57); `scalar-doc` and its dependencies removed (BL-042, #81);
   branch protection on `main`, `develop` and `release/*` with required checks (BL-022); every
-  GitHub Action in every workflow is pinned by commit SHA (BL-065, #95, #101).
+  GitHub Action in every workflow is pinned by commit SHA (BL-065, #95, #101). Publishing
+  (BL-083): only the repository admin can create `v*` tags (tag ruleset); the `crates-io` job
+  runs in a protected environment that needs the maintainer's approval, accepts only `v*` tags
+  and holds the only `CRATES_IO_TOKEN`; the release PR into `main` is a dry run in which no job
+  has a secret or `contents: write`.
 - **Gaps:**
   - Checksums come from the same pipeline, so they detect corruption, not tampering (no
     signatures or build provenance).
-  - Publishing to crates.io is gated only by pushing a `v*` tag; a protected environment with a
-    required reviewer and a tag ruleset are planned (BL-083).
+  - The `github-release` job (`contents: write`) has no environment approval; it runs for any
+    `v*` tag, which only the admin can push.
 
 ## 3. Top risks (2026-11-22)
 
@@ -285,7 +289,7 @@ Endpoints: `POST /upload-js`, `PUT /update-js`, `DELETE /delete-js`, `GET /list-
 | 1 | Development mode: without a token, both servers accept evaluation, and `sk_http_server` accepts JS management, from any non-browser client that reaches the port. The default bind is `127.0.0.1` and the Docker image refuses to start without tokens, so this needs an operator to bind elsewhere without tokens | Medium | accepted risk (maintainer, 2026-11-21); ADR-0019; `sk_http_server` warns at start-up, `sk_server` only reports when auth is on |
 | 2 | Worker-pool exhaustion: the per-IP limit is off by default, so one client can hold every worker until the 30 s read deadline; many addresses are not stopped at all | Medium | ADR-0025 (opt-in limit); proxy or firewall in front |
 | 3 | No deadline in the library and `sk` by default; on the servers, work on one item inside a builtin can overrun the deadline by that one step | Medium (embedders) | ADR-0011 (`with_limits`), BL-035, BL-036 |
-| 4 | Release integrity: any `v*` tag publishes to crates.io, and there are no signatures or provenance (Actions are pinned by SHA, the Docker image is built and smoke-tested in CI) | Low | BL-083 (protected environment, tag ruleset); signing not tracked yet |
+| 4 | Release integrity: no signatures or provenance (Actions are pinned by SHA, the Docker image is built and smoke-tested in CI; crates.io publishing needs an admin-only `v*` tag and the maintainer's approval, BL-083) | Low | signing not tracked yet |
 
 Next in line (all Low): development-mode hygiene (no `Host` check, the Alpine `runtime-test`
 image, the Compose proxy; 2.3 and 2.8, BL-094), the relative `hooks` default (2.6), Rust API
