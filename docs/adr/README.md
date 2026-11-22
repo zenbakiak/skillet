@@ -23,7 +23,7 @@ ADRs 0001–0008 are **retroactive**: they record decisions already embodied in 
 | [0015](0015-percentile-nan.md) | NaN and infinity in statistical builtins | Accepted |
 | [0016](0016-custom-function-visibility.md) | Custom functions are visible in every sub-expression | Accepted |
 | [0017](0017-quickjs-resource-limits.md) | Resource limits for JavaScript plugins (QuickJS) | Accepted |
-| [0018](0018-excel-compatibility.md) | Excel compatibility: Excel is the contract for builtins and operators | Accepted, amended by 0023 |
+| [0018](0018-excel-compatibility.md) | Excel compatibility: Excel is the contract for builtins and operators | Accepted, amended by 0023 and 0034, and a dated `.round()` note in the file (BL-088) |
 | [0019](0019-server-cors-and-development-mode.md) | Server CORS and development mode | Accepted |
 | [0020](0020-drop-corefoundation.md) | Drop CoreFoundation from the macOS binaries | Accepted |
 | [0021](0021-parsed-expression-api-and-server-cache.md) | Evaluate a parsed expression; servers cache parsed expressions per worker thread | Accepted |
@@ -34,10 +34,11 @@ ADRs 0001–0008 are **retroactive**: they record decisions already embodied in 
 | [0027](0027-date-and-currency-arithmetic.md) | Date and currency arithmetic | Accepted, amended (amendment 1 in the file, BL-082) and by 0031; Currency parts superseded by 0033 |
 | [0028](0028-fuzzing.md) | Fuzz the parser and evaluator with cargo-fuzz on a schedule | Accepted |
 | [0029](0029-logic-operators.md) | Logical operators and the Excel logical functions | Accepted, amended (amendment 1 in the file, BL-089) |
-| [0030](0030-structured-and-shared-values.md) | Structured and shared values: `Value::Object`, and `Arc`-shared strings, arrays and objects | Accepted |
-| [0031](0031-date-text-and-currency-aggregates.md) | Dates as ISO 8601 text; Currency in the aggregates | Accepted, amended (amendment 1 in the file, BL-078); Currency parts superseded by 0033 |
+| [0030](0030-structured-and-shared-values.md) | Structured and shared values: `Value::Object`, and `Arc`-shared strings, arrays and objects | Accepted, amended by 0034 |
+| [0031](0031-date-text-and-currency-aggregates.md) | Dates as ISO 8601 text; Currency in the aggregates | Accepted, amended (amendments 1–2 in the file, BL-078, BL-090) and by 0034; Currency parts superseded by 0033 |
 | [0032](0032-edition-2024.md) | Edition 2024, MSRV unchanged, std `LazyLock`, rustfmt style 2021 for now | Accepted |
-| [0033](0033-one-numeric-type.md) | One numeric type; `::Currency` is a conversion | Accepted |
+| [0033](0033-one-numeric-type.md) | One numeric type; `::Currency` is a conversion | Accepted, amended by 0034 |
+| [0034](0034-text-form-of-values.md) | Text form of values | Accepted |
 
 Number 0026 is unused: no ADR was filed under it.
 
