@@ -1299,12 +1299,18 @@ Migration-guide row (some large requests now fail with the budget error).
 - PERF-2: `AND`/`OR`/`XOR` allocate a `Vec<bool>` per call (+18-24% in filters).
 - PERF-4: date to text is 2x slower (chrono re-parses the pattern; `.to_s()`/`CONCAT` format twice).
 
-### BL-089 · One truth rule for conditions · P2 · `todo` (maintainer decision pending) · language-designer (ADR) → rust-engineer
+### BL-089 · One truth rule for conditions · P2 · `ready` · language-designer (ADR-0029 amendment) → rust-engineer
 LANG-2, LANG-3, QA-9. A NULL flag (e.g. from `&.`) gets different answers by form: `AND()` TRUE
 (NULL skipped), the `AND`/`&&` operators an error, `IF` FALSE, `? :` an error, `NOT` TRUE but `!`
 an error; `FALSE AND NULL` is false but `NULL AND FALSE` errors. `? :` rejects numbers that `IF`
 accepts. `filter`/`find`/`FILTER` treat anything but TRUE as false silently, while `COUNTIF` errors
 on the same lambda. `IF` ignores extra arguments.
+Decision (maintainer, 2026-11-22, option A + keep): every condition uses IF's rule: TRUE/FALSE as
+is, 0 false, other numbers true, NULL false, text `#VALUE!`. It applies to `IF`, `? :`, the
+`AND`/`OR`/`NOT`/`!`/`&&`/`||` operators, `filter`/`find`/`FILTER` and lambda criteria. The
+`AND()`/`OR()` builtins keep skipping NULL like an empty Excel cell; the docs warn that
+`AND(:flag, …)` passes when the flag is missing and point to `IF` or the operators. `IF` with more
+than 3 arguments is an error.
 
 ### BL-090 · Dates in aggregates, sort and criteria · P2 · `ready` · language-designer → rust-engineer
 LANG-5, LANG-6. `MAX`/`MIN`/`SUM` of dates return 0 silently; no sort accepts dates; ISO date text is
