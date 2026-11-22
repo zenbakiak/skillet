@@ -221,12 +221,7 @@ pub(crate) static BUILTINS: &[Builtin] = &[
 
 /// Call names the parser produces for operators and constants; the evaluator runs them before
 /// any custom function lookup.
-const INTERNAL_NAMES: [&str; 4] = [
-    "__TERNARY__",
-    crate::parser::CONCAT_OP,
-    "__CONST_TRUE__",
-    "__CONST_FALSE__",
-];
+const INTERNAL_NAMES: [&str; 3] = ["__TERNARY__", "__CONST_TRUE__", "__CONST_FALSE__"];
 
 /// True when `name` (any case) is a builtin name or alias, including the ones the evaluator
 /// runs itself (`IF`, `FILTER`, `JQ`, ...), or an internal operator name. JS hooks may not use

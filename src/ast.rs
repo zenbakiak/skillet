@@ -89,4 +89,6 @@ pub enum BinaryOp {
     Ne,
     And,
     Or,
+    /// `a & b`: both operands' text joined, as `CONCAT(a, b)` (ADR-0034 §6).
+    Concat,
 }

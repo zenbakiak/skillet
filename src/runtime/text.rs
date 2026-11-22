@@ -273,6 +273,18 @@ pub(crate) fn concat<'a>(args: impl Iterator<Item = &'a Value> + Clone) -> Resul
     Ok(out)
 }
 
+/// `a & b`: `CONCAT(a, b)`. Two scalars are formatted once, onto the stack.
+pub(crate) fn concat_pair(a: &Value, b: &Value) -> Result<String, Error> {
+    let (Some(ta), Some(tb)) = (scalar_text(a), scalar_text(b)) else {
+        return concat([a, b].into_iter());
+    };
+    limits::charge_string(ta.len().saturating_add(tb.len()))?;
+    let mut out = String::with_capacity(ta.len() + tb.len());
+    out.push_str(&ta);
+    out.push_str(&tb);
+    Ok(out)
+}
+
 fn write_flat(w: &mut impl Write, v: &Value) {
     match v {
         Value::Array(items) => items.iter().for_each(|it| write_flat(w, it)),
