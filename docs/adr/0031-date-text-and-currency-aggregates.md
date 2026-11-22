@@ -1,5 +1,101 @@
 # 0031. Dates as ISO 8601 text; Currency in the aggregates
 
+> **Amendment 1 (maintainer, 2026-11-21, BL-078):** five follow-ups, all accepted as recommended.
+> Status stays Accepted. Results below are what the BL-078 implementation must give; error
+> positions count bytes from the start of the caller's input, including a leading `=` and any
+> spaces before it (BL-069).
+>
+> **A1. Casts chain, left to right.** A cast may follow a cast: `x::A::B` is `(x::A)::B`. The
+> postfix rule becomes `atom link* cast*`, where a link is `.name`, `.name(…)`, `&.name`, `[i]` or
+> `[a:b]` and a cast is `:: TypeName`. Everything else about precedence stays as it is today:
+> - the casts apply to the whole link chain before them: `:u&.name::String::Integer` is
+>   `((:u&.name)::String)::Integer`;
+> - a link after a cast is still an error; use parentheses. `1::String.length()` and
+>   `1::String::Integer[0]` stay `Unexpected token after end of expression` (position of the
+>   `.` or `[`); `(1::String).length()` is `1`;
+> - prefix `-`, `+` and `!` apply to the whole cast chain: `-"2"::String::Integer` is
+>   `-(("2"::String)::Integer)`; so does `NOT`, and a `^` operand is one such chain;
+> - the percent suffix still cannot follow a cast (`10%::String` stays an error);
+> - every cast counts one level against `MAX_NESTING_DEPTH` (128), like a link.
+>
+> | Expression | Result |
+> |---|---|
+> | `DATE(2026,1,1)::String::DateTime` | `DateTime(1767225600)` |
+> | `DATE(2026,1,1)::String::DateTime == DATE(2026,1,1)` | `true` |
+> | `1::String::Integer + 1` | `2` |
+> | `"2"::Integer::String` | `"2"` |
+> | `1.5::Currency::String` | `"1.5000"` (as `(1.5::Currency)::String` today) |
+> | `NULL::String::Integer` | `0` (`""::Integer` is `0` today) |
+> | `1::String::Integer::Float` | `1` |
+> | `-"2"::String::Integer` | `-2` |
+> | `2^"3"::String::Integer` | `8` |
+> | `NOT 1::String::Boolean` | `false` (as `NOT ("1"::Boolean)`) |
+> | `:u&.name::String::Integer` with `{"u": null}` | `0` |
+> | `=1::String::Foo` | `Error: Unknown cast type at position 12` |
+> | `  =1::String::Foo` | `Error: Unknown cast type at position 14` |
+> | `=1::Foo` | `Error: Unknown cast type at position 4` (today: no position) |
+> | `=1::String::5` | `Error: Expected type name after '::' at position 12` |
+> | `=1::String::` | `Error: Expected type name after '::' at position 10` (end of input: the parser's usual end-of-input position, the start of the last token, as `=1 +` gives 3) |
+> | `=1::String.length()` | `Error: Unexpected token after end of expression at position 10` (unchanged) |
+> | `1` followed by 128 `::String` / by 129 | `"1"` / `Error: Expression nested too deeply (max 128) at position …` (as 128 / 129 `.upper()` links on `"a"` today) |
+>
+> Both cast errors get the position of the token after `::` (the type name, or what stands where
+> it should be), for the first cast and every later one. The messages do not change.
+>
+> **A2. `.to_json()` on a date stays the ISO text.** No change: `DATE(2026,1,1).to_json()` is
+> `Json("\"2026-01-01T00:00:00Z\"")`, and the `::Json` cast stays a number,
+> `DATE(2026,1,1)::Json` is `Json("1767225600")`. The two differ on purpose: `.to_json()` writes
+> the value's text, `::Json` its data (decision 1).
+>
+> **A3. `.join()` accepts Currency and `NULL`, as `JOIN` does.** A Currency item is written with
+> 4 decimals and `NULL` as nothing, exactly as `JOIN` writes them today. Only those two change.
+> The other items keep the method's Ruby text (ADR-0027: methods keep Ruby semantics): booleans
+> stay `true`/`false` (`JOIN` writes `TRUE`/`FALSE`), and arrays and JSON items stay errors.
+>
+> | Expression | Before | After |
+> |---|---|---|
+> | `[2.5::Currency].join("-")` | `Error: join method cannot convert value to string` | `"2.5000"` |
+> | `[1::Currency, -2.25::Currency].join("; ")` | `Error` | `"1.0000; -2.2500"` |
+> | `[1, 2.5::Currency, NULL].join(",")` | `Error` | `"1,2.5000,"` (= `JOIN([1, 2.5::Currency, NULL], ",")`) |
+> | `[1, NULL, 2].join("-")`, `[NULL].join()` | `Error` | `"1--2"`, `""` |
+> | `[TRUE, 1].join()` | `"true,1"` | unchanged (`JOIN` gives `"TRUE,1"`) |
+> | `[[1,2],3].join()` | `Error: join method cannot convert value to string` | unchanged |
+> | `[].join()`, `[1.5, "a"].join()`, `[DATE(2026,1,1)].join()` | `""`, `"1.5,a"`, `"2026-01-01T00:00:00Z"` | unchanged |
+>
+> **A4. `LEN` and `FIND` on a date stay errors.** No change: `LEN(DATE(2026,1,1))` is
+> `Error: LEN expects text`; `FIND("2", DATE(2026,1,1))` is
+> `Error: FIND expects within_text as text`. Convert first: `LEN(DATE(2026,1,1)::String)` is `20`.
+>
+> **A5. `SUMIF` and `AVERAGEIF` keep Currency.** The rule of decision 3, applied to the values
+> they actually sum or average: the matched items' values (from the sum/average range when given,
+> otherwise the item), counting only Numbers and Currency. If any of those is Currency, the result
+> is Currency; otherwise a Number. A Currency that is not summed (not matched, or in the criteria
+> range while a sum range is given) does not count. The lambda criterion works the same way. No
+> summed value keeps the old result: `SUMIF` gives `Number(0)`, `AVERAGEIF` the `#DIV/0!` error.
+> `COUNTIF` is unchanged (always a Number). Results are not rounded.
+>
+> | Expression | Before | After |
+> |---|---|---|
+> | `SUMIF([1,2::Currency,3], ">1")` | `Number(5)` | `Currency(5)` |
+> | `SUMIF([1::Currency,2::Currency], ">0")` | `Number(3)` | `Currency(3)` |
+> | `SUMIF([1::Currency,2,3], ">1")` (the Currency is not matched) | `Number(5)` | unchanged |
+> | `SUMIF([1,2,3], ">1")` | `Number(5)` | unchanged |
+> | `SUMIF([1,2,3], ">1", [10, 20::Currency, 30])` | `Number(50)` | `Currency(50)` |
+> | `SUMIF([1,2,3], ">1", [10::Currency, 20, 30])` (10 is not summed) | `Number(50)` | unchanged |
+> | `SUMIF([1::Currency,2,3], ">0", [10, 20, 30])` (Currency only in the criteria range) | `Number(60)` | unchanged |
+> | `SUMIF([1, 2], :x > 1, [10, 20::Currency])` (lambda criterion) | `Number(20)` | `Currency(20)` |
+> | `SUMIF([1::Currency, "a", 2], ">0")` | `Number(3)` | `Currency(3)` (text ignored) |
+> | `SUMIF([1::Currency], ">5")`, `SUMIF([], ">0")` | `Number(0)` | unchanged |
+> | `AVERAGEIF([1,2::Currency,3], ">1")` | `Number(2.5)` | `Currency(2.5)` |
+> | `AVERAGEIF([1::Currency,2::Currency], ">0")` | `Number(1.5)` | `Currency(1.5)` |
+> | `AVERAGEIF([1::Currency,2,3], ">1")` | `Number(2.5)` | unchanged |
+> | `AVERAGEIF([1,2,3], ">1", [10::Currency, 20, 30])`, `[10, 20::Currency, 30]` | `Number(25)` | unchanged, `Currency(25)` |
+> | `AVERAGEIF([1,2,3], ">5", [1::Currency,2,3])` | `Error: AVERAGEIF: no matching numbers (#DIV/0!)` | unchanged |
+> | `COUNTIF([1::Currency,2::Currency], ">1")` | `Number(1)` | unchanged |
+>
+> This replaces "`SUMIF`/`AVERAGEIF` … are not part of this decision" in decision 3; the
+> statistical builtins (`MEDIAN`, `STDEV.*`, …) and the methods are still not part of it.
+
 - Status: Accepted
 - Date: 2026-11-21
 - Deciders: Maintainer
