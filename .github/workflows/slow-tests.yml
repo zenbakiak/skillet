@@ -1,0 +1,50 @@
+name: Slow tests
+
+# BL-087 (QA-2): the `#[ignore]` tests that wait for real deadlines (the 30 s request read
+# deadline and its 408, the 10 s response write deadline, the server eval timeout). Too slow
+# for the gate (~100 s of waiting), so they run weekly and on demand.
+# Not a required check: it never runs on push or pull_request.
+# GitHub fires `schedule` only from the default branch (main), so a change to this file takes
+# effect on the schedule after it reaches main; use workflow_dispatch to run it on any branch.
+on:
+  schedule:
+    - cron: "41 4 * * 1" # Mondays 04:41 UTC (after the fuzz run)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: slow-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Same toolchain as the gate (rust.yml).
+  RUST_TOOLCHAIN: "1.89.0"
+
+jobs:
+  ignored:
+    name: ignored tests (deadlines)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Install Rust ${{ env.RUST_TOOLCHAIN }}
+        uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master (2026-11-15)
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: slow-tests
+
+      - name: Fetch dependencies (locked)
+        run: cargo fetch --locked
+
+      # Every #[ignore] test in every test binary, so a new one is picked up without editing
+      # this file. The accept-floor test is skipped: it measures sub-millisecond latency and is
+      # meant for a quiet machine, not a shared runner (tests/http_server_accept.rs).
+      - name: Run ignored tests
+        run: cargo test --locked -- --ignored --skip sequential_requests_have_no_polling_floor
