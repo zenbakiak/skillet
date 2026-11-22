@@ -101,3 +101,29 @@ fn every_cast_counts_against_the_nesting_limit() {
     assert_eq!(eval(&links(128)), s("A"));
     assert_eq!(err(&links(129)).message, e.message);
 }
+
+// ---- A2. `.to_json()` on a date --------------------------------------------------------------
+
+#[test]
+fn to_json_on_a_date_is_iso_text_and_json_cast_a_number() {
+    assert_eq!(
+        eval("DATE(2026,1,1).to_json()"),
+        Value::Json("\"2026-01-01T00:00:00Z\"".to_string())
+    );
+    assert_eq!(
+        eval("DATE(2026,1,1)::Json"),
+        Value::Json("1767225600".to_string())
+    );
+}
+
+// ---- A4. `LEN` and `FIND` on a date ----------------------------------------------------------
+
+#[test]
+fn len_and_find_on_a_date_stay_errors() {
+    assert_eq!(err("LEN(DATE(2026,1,1))").message, "LEN expects text");
+    assert_eq!(
+        err("FIND(\"2\", DATE(2026,1,1))").message,
+        "FIND expects within_text as text"
+    );
+    assert_eq!(eval("LEN(DATE(2026,1,1)::String)"), Value::Number(20.0));
+}
