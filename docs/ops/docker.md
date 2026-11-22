@@ -109,6 +109,24 @@ Without both tokens the container exits immediately with status 64 and one line 
 skillet: refusing to start: SKILLET_AUTH_TOKEN and SKILLET_ADMIN_TOKEN must be set to a non-empty value. ...
 ```
 
+### Smoke-test an image
+
+`scripts/docker_smoke.sh` runs the checks the CI `docker image` job runs on every push and PR
+(BL-062). It needs `docker` and `curl` on the host.
+
+```bash
+scripts/docker_smoke.sh --build        # build skillet-http:smoke from ./Dockerfile, then test it
+scripts/docker_smoke.sh skillet-http   # test an image you already built
+```
+
+It checks that the image exits with 64 when no tokens are set and when only the old
+`AUTH_TOKEN`/`ADMIN_TOKEN` are set (with the rename hint); that with both `SKILLET_*` tokens it
+becomes healthy, answers `/eval` without a token with 401 and `=2+3` with 5; and that the
+container log contains neither token. The tokens are random per run and reach `docker` and `curl`
+by environment and stdin, not on the command line. The container is published on
+`127.0.0.1:18080` (`SMOKE_PORT` changes it), the wait for health is 60 s (`SMOKE_TIMEOUT`), and
+the containers are removed on exit, pass or fail.
+
 ## Upgrading from images before BL-051
 
 Older images read `AUTH_TOKEN` and `ADMIN_TOKEN`, treated empty values as "authentication off",
