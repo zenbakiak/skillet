@@ -1,4 +1,6 @@
 //! BL-088: per-item cost of `ROUND`/`.round()` and `AND`/`OR`/`XOR` on 100k numbers.
+//! BL-107: the aggregates over the same array (`SUM(:nums)`, … as array items) and spread into
+//! direct arguments (`SUM(...:nums)`).
 //!
 //! Run: `cargo bench --bench per_item` (release profile, library layer, no process start).
 //! Optional: `RUNS=9 cargo bench --bench per_item`; `CASE=ROUND cargo bench --bench per_item`
@@ -59,6 +61,16 @@ const CASES: &[&str] = &[
     ":nums.filter(AND(:x > 0, :x < 1000)).length()",
     ":nums.filter(OR(:x < 0, :x > 1000)).length()",
     ":nums.filter(XOR(:x < 0, :x > 1000)).length()",
+    "SUM(:nums)",
+    "AVERAGE(:nums)",
+    "MIN(:nums)",
+    "MAX(:nums)",
+    "PRODUCT(:nums)",
+    "COUNT(:nums)",
+    "STDEV_P(:nums)",
+    "MEDIAN(:nums)",
+    "SUM(...:nums)",
+    "MAX(...:nums)",
 ];
 
 fn main() {
