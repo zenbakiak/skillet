@@ -2,7 +2,7 @@ use crate::ast::TypeName;
 use crate::error::Error;
 use crate::runtime::arithmetic::round_currency;
 use crate::runtime::datetime::parse_datetime_text;
-use crate::runtime::text::to_text;
+use crate::runtime::text::{string_chars, to_text};
 use crate::types::Value;
 
 /// `v::ty`. Every number cast returns a `Number`; `::Currency` rounds to 4 decimals (ADR-0033).
@@ -55,8 +55,10 @@ pub fn cast_value(v: Value, ty: &TypeName) -> Result<Value, Error> {
             Value::DateTime(ts) => Value::Boolean(ts != 0),
             Value::Json(s) => Value::Boolean(!s.trim().is_empty()),
         },
+        // A string splits into characters, as `.to_a()` (BL-105); NULL stays `[NULL]`.
         TypeName::Array => match v {
             Value::Array(items) => Value::Array(items),
+            Value::String(s) => Value::Array(string_chars(&s)?),
             other => Value::Array(vec![other]),
         },
         TypeName::Currency => match v {
