@@ -207,6 +207,9 @@ BREAKING changes first, newest first; then the other changes, newest first.
 - **BREAKING** (`skillet::runtime::method_calls`, public but not documented API): the
   `exec_filter`/`exec_map`/`exec_find`/`exec_reduce`, `exec_string_method` and
   `exec_array_method` handlers take `&dyn EvaluationContext` (#45).
+- `release.yml` runs as a dry run on pull requests into `main` (every binary target, `cargo
+  package`, `cargo publish --dry-run`); publishing to crates.io waits for approval in the
+  protected `crates-io` environment (ADR-0022 amendment, BL-083).
 - Date to text is 3.5–11x faster (written directly instead of through chrono) (BL-091, #129).
 - `ROUND` is about 3x faster on large arrays with bit-identical results, and `AND()`/`OR()`/`XOR()`
   no longer allocate per call (11–14% faster in row filters); `.round()` is 6–7% slower because it

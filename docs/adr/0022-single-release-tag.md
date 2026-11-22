@@ -44,7 +44,7 @@ build of cross always pulls the `:main` image tags, so the images are pinned by 
 `--locked` makes `cargo install` use cross's own `Cargo.lock`.
 
 ## Amendment (BL-083, 2026-11-22): PR dry run and protected crates.io environment
-Status: Proposed. Settings decided by the maintainer in BL-083.
+Status: Accepted (maintainer, 2026-11-22; settings applied and verified in BL-083).
 - `release.yml` also runs on `pull_request` into `main`, so the release PR (`release/X.Y.Z` or
   `hotfix/X.Y.Z`) is a full dry run: `verify` against the `Cargo.toml` version, every binary
   target with its archive and checksum, and `crate-check`, which now also runs
