@@ -139,6 +139,11 @@ paths:
                   entries: 150
                   evictions: 12
                   total_saved_time_ms: 1248.67
+                parse_cache:
+                  hits: 640
+                  misses: 46
+                  hit_rate: 0.933
+                  entries: 38
         '429':
           $ref: '#/components/responses/TooManyConnections'
 
@@ -672,8 +677,12 @@ paths:
       tags: [cache]
       summary: Clear expression cache
       description: |
-        Clear the expression evaluation cache to force re-evaluation of all expressions.
-        Useful for development and testing scenarios.
+        Clear the expression evaluation cache to force re-evaluation of all expressions,
+        and the parse cache: the parsed trees of every worker thread, and its `/health`
+        counters. The worker that answers drops its trees at once; each other worker drops
+        its own before its next request (a parsed tree cannot be shared between threads, see
+        ADR-0021), so `parse_cache.entries` can stay above 0 until every worker has served a
+        request. Useful for development and testing scenarios.
       security:
         - adminToken: []
       responses:
@@ -829,11 +838,14 @@ components:
           description: Average execution time across all requests
         cache_stats:
           $ref: '#/components/schemas/CacheStatsResponse'
+        parse_cache:
+          $ref: '#/components/schemas/ParseCacheStatsResponse'
       required:
         - status
         - version
         - requests_processed
         - avg_execution_time_ms
+        - parse_cache
 
     CacheStatsResponse:
       type: object
@@ -859,6 +871,32 @@ components:
         total_saved_time_ms:
           type: number
           description: Total time saved by caching
+
+    ParseCacheStatsResponse:
+      type: object
+      description: |
+        The cache of parsed expressions, summed over the worker threads. Each worker keeps
+        its own (at most 256 expressions, 128 KiB of text). A lookup is a hit when the exact
+        expression text was parsed before by that worker; a request answered from the result
+        cache does not reach the parse cache. Reset by `DELETE /cache`.
+      properties:
+        hits:
+          type: integer
+          description: Lookups that reused a parsed tree
+        misses:
+          type: integer
+          description: Lookups that parsed the expression (parse errors included)
+        hit_rate:
+          type: number
+          description: hits / (hits + misses), 0.0 when there were none
+        entries:
+          type: integer
+          description: Parsed trees stored, summed over the worker threads
+      required:
+        - hits
+        - misses
+        - hit_rate
+        - entries
 
     UploadJSRequest:
       type: object

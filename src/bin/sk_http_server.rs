@@ -350,11 +350,11 @@ fn print_usage() {
     eprintln!("  sk_http_server 5074 -d --host 0.0.0.0 --token secret123 --admin-token admin456");
     eprintln!();
     eprintln!("Endpoints:");
-    eprintln!("  GET  /health          - Health check with cache stats");
+    eprintln!("  GET  /health          - Health check with result and parse cache stats");
     eprintln!("  GET  /                - API documentation");
     eprintln!("  POST /eval            - Evaluate expressions (JSON)");
     eprintln!("  GET  /eval?expr=...   - Evaluate expressions (query params)");
-    eprintln!("  DELETE /cache         - Clear expression cache (admin token required)");
+    eprintln!("  DELETE /cache         - Clear result and parse caches (admin token required)");
 }
 
 struct ServerArgs {

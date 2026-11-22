@@ -74,7 +74,9 @@ use request_limits::{close_after_reject, DeadlineReader, DeadlineWriter, MAX_REQ
 mod token_eq;
 use token_eq::tokens_match;
 
+// Stats and clearing are only used by sk_http_server's /health and DELETE /cache.
 #[path = "http_server/parse_cache.rs"]
+#[allow(dead_code)]
 mod parse_cache;
 use parse_cache::parsed;
 

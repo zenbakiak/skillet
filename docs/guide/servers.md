@@ -635,9 +635,21 @@ on every repeated request: for a 1.8 KB formula over HTTP, one connection at a t
 | Memory, worst case | ~10 MiB (a parsed expression is 31-76 times its text), ~4 MiB typical |
 
 The key is the exact text, so `=1+2` and `= 1 + 2` are two entries. Parse errors are not cached.
-The cache has no setting and no statistics; `DELETE /cache` clears only the result cache of
-`sk_http_server`, which is unchanged and separate. A server with N worker threads holds up to N
-copies. Decision: [ADR-0021](../adr/0021-parsed-expression-api-and-server-cache.md).
+The cache has no setting. A server with N worker threads holds up to N copies.
+
+On `sk_http_server`, `GET /health` reports it as `parse_cache`, summed over the workers
+(BL-067):
+
+```json
+"parse_cache": {"hits": 2, "misses": 2, "hit_rate": 0.5, "entries": 1}
+```
+
+A request answered from the result cache does not reach the parse cache, so it counts neither
+a hit nor a miss; a parse error counts as a miss. `DELETE /cache` clears the result cache and
+the parse cache, and resets these counters. The worker that answers drops its trees at once;
+the other workers cannot be reached from that thread (the trees use `Rc`, ADR-0021), so each
+drops its own before its next request, and `entries` falls as they do. `sk_server` has no
+statistics or clear endpoint. Decision: [ADR-0021](../adr/0021-parsed-expression-api-and-server-cache.md).
 
 ## Performance Monitoring
 
