@@ -184,6 +184,15 @@ Tightest first, as in Excel. Operators on the same row are left-associative.
 `-(2^2)` gives `-4`. Before BL-054, `^` was right-associative (`2^3^2` was `512`) and
 unary minus bound looser than `^` (`-2^2` was `-4`).
 
+A minus right after `^` negates the exponent only, as in Excel (BL-060):
+
+```bash
+2^-2           # 0.25
+-2^-2          # 0.25   ((-2)^(-2))
+2^-1^2         # 0.25   ((2^-1)^2)
+0^-1           # Error: Division by zero (#DIV/0!)
+```
+
 `AND` and `OR` (any case) between two operands are the `&&` and `||` operators; followed by `(`
 in operand position they are the `AND(...)` and `OR(...)` builtins: `AND(TRUE, FALSE) OR TRUE`
 is `TRUE`.
