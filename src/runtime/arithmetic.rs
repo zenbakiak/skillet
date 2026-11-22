@@ -116,12 +116,30 @@ pub(crate) fn round_currency(n: f64) -> f64 {
     if !n.is_finite() || n.abs() >= UNCHANGED_FROM {
         return n;
     }
-    let r = round_half_away(n, 4);
+    let r = round4(n);
     if r == 0.0 {
         0.0
     } else {
         r
     }
+}
+
+/// `round_half_away(n, 4)` without its text formatting when that cannot change the result.
+/// `round_half_away` rounds the 15-significant-digit decimal form of `n`, which is within
+/// `5e-15 * |n|` of `n`; `|n| * 10^4` is within half an ulp of the exact product. So when the
+/// fraction of `|n| * 10^4` is further than `1e-14` of itself (plus a margin) from one half,
+/// both round to the same integer `m`, and both return `m / 10^4`. Below `1e9` the decimal form
+/// keeps more than 4 decimals, so `round_half_away` does round there.
+fn round4(n: f64) -> f64 {
+    let a = n.abs();
+    if a < 1e9 {
+        let x = a * 1e4;
+        let frac = x - x.floor();
+        if (frac - 0.5).abs() > x * 1e-14 + 1e-9 {
+            return n.signum() * (x.round() / 1e4);
+        }
+    }
+    round_half_away(n, 4)
 }
 
 pub(crate) fn round_half_away(n: f64, digits: i32) -> f64 {
@@ -277,5 +295,66 @@ pub(crate) fn checked_binary(op: BinaryOp, a: f64, b: f64) -> Result<f64, Error>
         Ok(r)
     } else {
         Err(Error::new("Result is not a finite number (#NUM!)", None))
+    }
+}
+
+#[cfg(test)]
+mod currency_rounding_tests {
+    use super::{round_currency, round_half_away};
+
+    fn reference(n: f64) -> f64 {
+        let r = round_half_away(n, 4);
+        if r == 0.0 {
+            0.0
+        } else {
+            r
+        }
+    }
+
+    fn check(n: f64) {
+        let got = round_currency(n);
+        let want = reference(n);
+        assert_eq!(got.to_bits(), want.to_bits(), "{n:?}: {got:?} != {want:?}");
+    }
+
+    /// The fast path of `round4` gives exactly `ROUND(n, 4)`: halves at every scale, their
+    /// neighbouring floats, and a pseudo-random spread of magnitudes.
+    #[test]
+    fn fast_path_matches_round_half_away() {
+        for k in 0..40_000u64 {
+            for scale in [1.0, 1e3, 1e6, 1e8] {
+                let half = (k as f64 * 7.0 + 0.5) / 1e4 * scale;
+                for x in [
+                    half,
+                    f64::from_bits(half.to_bits() + 1),
+                    f64::from_bits(half.to_bits().saturating_sub(1)),
+                ] {
+                    check(x);
+                    check(-x);
+                }
+            }
+        }
+        let mut state = 0x9E37_79B9_7F4A_7C15u64;
+        for _ in 0..400_000 {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            let mantissa = (state >> 11) as f64 / (1u64 << 53) as f64;
+            let exp = (state % 32) as i32 - 12;
+            check(mantissa * 10f64.powi(exp));
+            check(-mantissa * 10f64.powi(exp));
+        }
+        for n in [
+            1.00005,
+            -1.00005,
+            0.00005,
+            2.675,
+            1.005,
+            0.1 + 0.2,
+            1e9 - 0.00005,
+            9.999e8,
+        ] {
+            check(n);
+        }
     }
 }
