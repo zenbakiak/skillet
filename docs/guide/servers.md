@@ -293,6 +293,24 @@ Connection: close
 
 (`curl -d` sends `application/x-www-form-urlencoded`; add `-H "Content-Type: application/json"`.)
 
+### The reserved `:arguments` variable (`sk_http_server`)
+
+`sk_http_server` turns each key of `arguments` (or each query parameter of `GET /eval`) into a
+variable, and also passes the whole object as `:arguments`, for `JQ`. `:arguments` is reserved: a
+key named `arguments` does not replace it (BL-077). That key's value is still in the object, as
+`:arguments.arguments` or `JQ(:arguments, "$.arguments")`:
+
+```console
+POST /eval {"expression": "=:arguments", "arguments": {"x": 1, "arguments": {"a": 2}}}
+200 {"success":true,"result":{"arguments":{"a":2},"x":1},…}
+
+POST /eval {"expression": "=:arguments.arguments", "arguments": {"x": 1, "arguments": {"a": 2}}}
+200 {"success":true,"result":{"a":2},…}
+```
+
+`sk_server` does not build `:arguments`; there a variable named `arguments` is an ordinary
+variable.
+
 ### JavaScript hook files (`sk_http_server`)
 
 `sk_http_server` loads JavaScript functions from the hooks directory (`SKILLET_HOOKS_DIR`, default
@@ -331,6 +349,28 @@ DELETE /delete-js {"filename": "math/double_it.js"}
 
 (Release build of `develop` at 21a37cc, started with `--admin-token`; the request schema is in
 [`openapi.yml`](../../openapi.yml).)
+
+Uploading, updating or deleting a file does not change the loaded functions; `/reload-hooks`
+does. After a reload the server has exactly the hooks that load from disk: a function whose file
+was deleted, or no longer loads, is removed (BL-077), and the result cache is cleared, so no
+cached result of an old version is served. If the hooks directory cannot be read, the reload
+answers HTTP **500** and the loaded functions stay as they were:
+
+```console
+POST /eval {"expression": "=DOUBLE_IT(21)"}
+200 {"success":true,"result":42.0,…}
+
+DELETE /delete-js {"filename": "double_it.js"}
+200 {"success":true,"message":"JavaScript function file 'double_it.js' deleted successfully","error":null}
+
+POST /reload-hooks {}
+200 {"success":true,"message":"Successfully reloaded 0 JavaScript function(s)","functions_loaded":0,"error":null}
+
+POST /eval {"expression": "=DOUBLE_IT(21)"}
+400 {"success":false,"result":null,"error":"Unknown function: DOUBLE_IT",…}
+```
+
+(Debug build of `bugfix/bl-077-arguments-reload-hooks` at 5be1caa.)
 
 Uploading or updating a hook runs its `@example` once to validate it, under the same limits as any
 plugin call (64 MiB, 10 s per call; see [Limits](limits.md#javascript-plugins-64-mib-10-s-256-kib)).
