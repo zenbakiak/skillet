@@ -24,51 +24,7 @@ pub fn exec_financial(name: &str, args: &[Value]) -> Result<Value, Error> {
 
             Ok(Value::Number(pmt(rate, nper, pv, fv, payment_type != 0.0)))
         }
-        "DB" => {
-            if args.len() < 4 || args.len() > 5 {
-                return Err(Error::new(
-                    "DB expects 4-5 arguments: cost, salvage, life, period, [month]",
-                    None,
-                ));
-            }
-
-            let cost = required(args, 0, "DB", "cost")?;
-            let salvage = required(args, 1, "DB", "salvage")?;
-            let life = required(args, 2, "DB", "life")?;
-            let period = required(args, 3, "DB", "period")?;
-            let month = optional_number_arg("DB", args, 4, "month", 12.0)?;
-
-            if cost < 0.0 || salvage < 0.0 || life <= 0.0 || period < 0.0 {
-                return Err(Error::new(
-                    "DB arguments must be non-negative (life must be positive)",
-                    None,
-                ));
-            }
-            if period > life {
-                return Ok(Value::Number(0.0));
-            }
-
-            let rate = 1.0 - (salvage / cost).powf(1.0 / life);
-
-            if period == 1.0 {
-                let depreciation = cost * rate * month / 12.0;
-                Ok(Value::Number(depreciation))
-            } else {
-                let mut book_value = cost;
-                book_value -= cost * rate * month / 12.0;
-                for _p in 2..=(period as i32 - 1) {
-                    book_value -= book_value * rate;
-                }
-
-                let current_depreciation = if period as i32 == life as i32 && month < 12.0 {
-                    book_value * rate * (12.0 - month) / 12.0
-                } else {
-                    book_value * rate
-                };
-
-                Ok(Value::Number(current_depreciation.max(0.0)))
-            }
-        }
+        "DB" => exec_db(args),
         "FV" => {
             if args.len() < 3 || args.len() > 5 {
                 return Err(Error::new(
@@ -202,6 +158,57 @@ fn exec_ppmt(args: &[Value]) -> Result<Value, Error> {
     }
     let payment = pmt(rate, nper, pv, fv_, begin);
     finite("PPMT", payment - ipmt(rate, per, nper, pv, fv_, begin))
+}
+
+/// Excel `DB(cost, salvage, life, period, [month])`: fixed-declining-balance depreciation.
+/// The rate `1 - (salvage / cost)^(1 / life)` is rounded to 3 decimals. The first period covers
+/// `month` months, each later one a full year of the remaining value, and when `month` < 12
+/// period `life + 1` covers the last `12 - month` months. Out-of-range arguments are `#NUM!`.
+fn exec_db(args: &[Value]) -> Result<Value, Error> {
+    if args.len() < 4 || args.len() > 5 {
+        return Err(Error::new(
+            "DB expects 4-5 arguments: cost, salvage, life, period, [month]",
+            None,
+        ));
+    }
+    let cost = required(args, 0, "DB", "cost")?;
+    let salvage = required(args, 1, "DB", "salvage")?;
+    let life = required(args, 2, "DB", "life")?;
+    let period = required(args, 3, "DB", "period")?.trunc();
+    let month = optional(args, 4, 12.0, "DB", "month")?;
+    // NaN fails every comparison, so it is rejected too.
+    if !(cost > 0.0 && salvage >= 0.0 && life > 0.0) {
+        return Err(Error::new(
+            "DB needs cost > 0, salvage >= 0 and life > 0 (#NUM!)",
+            None,
+        ));
+    }
+    if !(1.0..=12.0).contains(&month) {
+        return Err(Error::new(
+            "DB month must be between 1 and 12 (#NUM!)",
+            None,
+        ));
+    }
+    let last = if month < 12.0 { life + 1.0 } else { life };
+    if !(period >= 1.0 && period <= last) {
+        return Err(Error::new(
+            "DB period must be between 1 and life (life + 1 when month < 12) (#NUM!)",
+            None,
+        ));
+    }
+    let rate = ((1.0 - (salvage / cost).powf(1.0 / life)) * 1000.0).round() / 1000.0;
+    let mut depreciation = cost * rate * month / 12.0;
+    let mut total = depreciation;
+    let mut p = 2.0;
+    while p <= period {
+        depreciation = (cost - total) * rate;
+        if p > life {
+            depreciation = depreciation * (12.0 - month) / 12.0;
+        }
+        total += depreciation;
+        p += 1.0;
+    }
+    finite("DB", depreciation)
 }
 
 /// Excel `PV(rate, nper, pmt, [fv], [type])`: the present value of a series of payments.

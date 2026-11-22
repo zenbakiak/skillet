@@ -1,0 +1,1 @@
+:table := [{id: 1, name: 'Alice', score: 95}, {id: 2, name: 'Bob', score: 87}]; :table

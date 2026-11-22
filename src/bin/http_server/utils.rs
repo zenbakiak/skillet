@@ -25,11 +25,28 @@ pub fn sanitize_json_key(key: &str) -> String {
         .collect()
 }
 
-/// Read one HTTP request of at most `MAX_REQUEST_SIZE` bytes. The whole request must arrive
-/// within `REQUEST_READ_DEADLINE` (BL-037); a slow client cannot extend it read by read.
-pub fn read_complete_http_request(stream: &mut TcpStream) -> Result<String, std::io::Error> {
-    let mut reader = DeadlineReader::new(stream);
+/// A request over `MAX_REQUEST_SIZE`; `ErrorKind::FileTooLarge` marks it so the caller can
+/// answer 413 without matching on the message.
+fn too_large(message: &str) -> std::io::Error {
+    std::io::Error::new(std::io::ErrorKind::FileTooLarge, message)
+}
 
+/// The status and error message for a failed request read: 413 over the size limit, 408 past
+/// the read deadline (BL-049), 400 for a request that is not UTF-8.
+pub fn read_error_status(e: &std::io::Error) -> (u16, String) {
+    match e.kind() {
+        std::io::ErrorKind::FileTooLarge => (413, e.to_string()),
+        std::io::ErrorKind::TimedOut => (408, e.to_string()),
+        std::io::ErrorKind::InvalidData => (400, e.to_string()),
+        _ => (500, "Internal Server Error".to_string()),
+    }
+}
+
+/// Read one HTTP request of at most `MAX_REQUEST_SIZE` bytes from `reader`. The whole request
+/// must arrive within its deadline (BL-037); a slow client cannot extend it read by read.
+pub fn read_complete_http_request(
+    reader: &mut DeadlineReader<'_>,
+) -> Result<String, std::io::Error> {
     let mut buffer = get_pooled_buffer();
     let mut temp_buffer = [0; 4096]; // Increased buffer size for better performance
     let mut headers_complete = false;
@@ -47,10 +64,7 @@ pub fn read_complete_http_request(stream: &mut TcpStream) -> Result<String, std:
 
         // Check request size limit
         if buffer.len() > MAX_REQUEST_SIZE {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "Request too large (max 1MB)",
-            ));
+            return Err(too_large("Request too large (max 1MB)"));
         }
 
         // Check if we have complete headers (ending with \r\n\r\n)
@@ -64,10 +78,7 @@ pub fn read_complete_http_request(stream: &mut TcpStream) -> Result<String, std:
 
             // Validate content length
             if content_length > MAX_REQUEST_SIZE {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "Request body too large (max 1MB)",
-                ));
+                return Err(too_large("Request body too large (max 1MB)"));
             }
         }
     }
@@ -95,10 +106,7 @@ pub fn read_complete_http_request(stream: &mut TcpStream) -> Result<String, std:
 
             // Additional safety check
             if buffer.len() > MAX_REQUEST_SIZE {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "Request exceeded size limit during body read",
-                ));
+                return Err(too_large("Request exceeded size limit during body read"));
             }
         }
     }
@@ -131,7 +139,7 @@ fn parse_content_length(headers: &str) -> usize {
     0
 }
 
-pub fn send_http_response(stream: &mut TcpStream, status: u16, content_type: &str, body: &str) {
+pub fn send_http_response(stream: &TcpStream, status: u16, content_type: &str, body: &str) {
     let status_text = match status {
         200 => "OK",
         400 => "Bad Request",
@@ -192,7 +200,7 @@ pub fn to_json_exact<T: serde::Serialize>(value: &T) -> String {
     }
 }
 
-pub fn send_http_error(stream: &mut TcpStream, status: u16, message: &str) {
+pub fn send_http_error(stream: &TcpStream, status: u16, message: &str) {
     let error_json = serde_json::json!({
         "success": false,
         "error": message
@@ -225,4 +233,30 @@ pub fn parse_json_body<T: DeserializeOwned>(request: &str) -> Result<T, String> 
 /// working directory (BL-045).
 pub fn load_html_file() -> &'static str {
     include_str!("documentation.html")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Error, ErrorKind};
+
+    #[test]
+    fn read_errors_map_to_their_status_codes() {
+        let cases = [
+            (too_large("Request too large (max 1MB)"), 413),
+            (
+                Error::new(ErrorKind::TimedOut, "Request read timed out (max 30 s)"),
+                408,
+            ),
+            (Error::new(ErrorKind::InvalidData, "Invalid UTF-8"), 400),
+            (Error::new(ErrorKind::ConnectionReset, "reset"), 500),
+        ];
+        for (e, status) in cases {
+            let (got, message) = read_error_status(&e);
+            assert_eq!(got, status, "{e}");
+            if status != 500 {
+                assert_eq!(message, e.to_string());
+            }
+        }
+    }
 }

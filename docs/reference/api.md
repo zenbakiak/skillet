@@ -19,7 +19,7 @@ documented in [limits](../guide/limits.md).
 Server request limits: both `sk_server` and `sk_http_server` reject a request over 1 MB, give a
 client 30 s in total to send one request, and give themselves 10 s in total to write one response
 (a client that reads more slowly gets a truncated response). `sk_http_server` answers the first two
-with HTTP 400 and `"error": "413 Payload Too Large"` or `"error": "408 Request Timeout"`. Both
+with HTTP 413 and HTTP 408 (400 before 0.7.0), then reads the rest of the request before closing. Both
 servers refuse to start with an empty token. `/upload-js`, `/update-js` and `/delete-js` accept
 only plain file names matching `[A-Za-z0-9_-]+.js` (HTTP 400 otherwise). In a build without the
 `plugins` feature, the JavaScript endpoints (`/upload-js`, `/update-js`, `/delete-js`, `/list-js`,
@@ -79,8 +79,8 @@ TRUE + 1       # 2
 "a" + "b"      # Error: Cannot convert "a" to a number (#VALUE!)   (use & to join text)
 ```
 
-`+` never joins text; `&` does. A DateTime operand keeps the date rules below and is not coerced
-(`DATE(2026, 1, 1) + "1"` and `DATE(2026, 1, 1) + NULL` are errors).
+`+` never joins text; `&` does. With a DateTime or Currency operand, the other operand converts
+the same way (ADR-0027); the date and currency rules are below.
 
 The scalar math builtins convert numeric text and booleans the same way: `ABS`, `SQRT`, `INT`,
 `MOD`, `POWER`, `ROUND`, `CEILING`, `FLOOR`, the arguments of the financial functions (`PMT`,
@@ -100,9 +100,39 @@ DATE(2026, 3, 1) - 1                   # DateTime for 2026-02-28
 DATE(2026, 1, 1) + 0.5                 # DateTime for 2026-01-01 12:00 (rounded to the second)
 DATE(2026, 1, 1) + TIME(12, 0, 0)      # DateTime for 2026-01-01 12:00 (TIME is a day fraction)
 DATE(2026, 3, 1) - DATE(2026, 2, 1)    # 28 (days; fractional when times differ)
+DATE(2026, 1, 1) + NULL                # DateTime for 2026-01-01 (NULL is 0 days)
+DATE(2026, 1, 1) + "1"                 # DateTime for 2026-01-02 (numeric text and booleans convert)
+DATE(2026, 1, 1) + "x"                 # Error: Cannot convert "x" to a number (#VALUE!)
 ```
 
-Other operators on a DateTime (`*`, `/`, `DateTime + DateTime`, `Number - DateTime`) are an error.
+Other operators on a DateTime (`*`, `/`, `%`, `^`, `DateTime + DateTime`, `x - DateTime`) are an
+error, and so is a Currency operand (`DATE(2026, 1, 1) + 1::Currency`): money is not a number of
+days.
+
+Currency works in the arithmetic operators (ADR-0027). The other operand converts as for a
+number (numeric text, booleans, `NULL` as 0):
+
+| Operation | Result |
+|---|---|
+| `+`, `-`, `*` with a Currency operand | Currency |
+| `/` with one Currency operand | Currency |
+| `Currency / Currency` | Number (a ratio) |
+| `^` or `%` (modulo) with a Currency operand | Number |
+| unary `-` or `+` on Currency, percent suffix on Currency | Currency |
+
+```bash
+10::Currency + 2               # Currency(12)
+3 * 10::Currency               # Currency(30)
+10::Currency / 4::Currency     # 2.5
+2::Currency ^ 2                # 4
+-(5::Currency)                 # Currency(-5)
++(5::Currency)                 # Currency(5)
+10::Currency + "2"             # Currency(12)
+1::Currency / 3                # Currency(0.333…): not rounded; use ROUND(x, 2)
+```
+
+Currency is a tagged `f64` (ADR-0003): the operators do not round to cents. Comparisons do not
+change: `1 == 1::Currency` is `FALSE`.
 
 The arithmetic operators never produce NaN or infinity (BL-054, ADR-0018). Division or `%` by 0
 and `0 ^` a negative number are `Error: Division by zero (#DIV/0!)`; `0 ^ 0` and any result that
@@ -515,10 +545,15 @@ FIND("x", "abc")                   # Error: FIND: find_text not found in within_
 ```
 
 #### `CONCAT(...)`
-Concatenate strings.
+Join every value as text, as Excel does. Numbers and currency are written as numbers
+(`1.5::Currency` is `"1.5"`), booleans as `TRUE`/`FALSE`, and a DateTime as its `::String` text,
+the Unix seconds (Excel writes a date's serial number the same way). Arrays are flattened. `NULL`
+and JSON objects add nothing. The `&` operator uses the same rules.
 ```bash
-CONCAT("Hello", " ", "World") # "Hello World"
-CONCAT("Value: ", 42)         # "Value: 42"
+CONCAT("Hello", " ", "World")          # "Hello World"
+CONCAT("Value: ", 42)                  # "Value: 42"
+CONCAT("Total: ", 9.5::Currency)       # "Total: 9.5"
+CONCAT("On ", DATE(2026, 1, 1))        # "On 1767225600"
 ```
 
 #### `SUBSTRING(text, start, length)`
@@ -529,29 +564,40 @@ SUBSTRING("Hello", 1, 3)        # "ell"
 ```
 
 #### `LEFT(text, [num_chars])`, `RIGHT(text, [num_chars])`
-Extract from left/right side.
+Extract from left/right side, as in Excel. `num_chars` defaults to 1 and is truncated; more than the
+text has returns the whole text; a negative `num_chars` is an error (Excel `#VALUE!`).
 ```bash
 LEFT("Hello", 2)             # "He"
 RIGHT("Hello", 3)            # "llo"
 LEFT("Hello")                # "H" (default: 1 char)
+LEFT("Hello", 10)            # "Hello"
+LEFT("Hello", -1)            # Error: LEFT num_chars must not be negative (#VALUE!)
 ```
 
 #### `MID(text, start, [num_chars])`
-Extract substring (1-based indexing, Excel-style).
+Extract substring (1-based indexing, Excel-style). A `start` past the end gives `""`, and a
+`num_chars` past the end stops at the end. A `start` below 1 or a negative `num_chars` is an error
+(Excel `#VALUE!`). Leaving out `num_chars` (rest of the text) is a Skillet extension.
 ```bash
 MID("Hello", 2, 3)           # "ell" (1-based start)
 MID("Hello", 3)              # "llo" (rest of string)
+MID("Hello", 10, 2)          # ""
+MID("Hello", 0, 2)           # Error: MID start_num must be at least 1 (#VALUE!)
+MID("Hello", 2, -1)          # Error: MID num_chars must not be negative (#VALUE!)
 ```
 
 #### `SUBSTITUTE(text, old_text, new_text, [instance_num])`, `SUBSTITUTEM(text, substr, replacement)`
 Replace every occurrence of `old_text` with `new_text`, or, with `instance_num`, only that
 occurrence (1-based, as in Excel). An empty `old_text` returns the text unchanged. Matching is
 case-sensitive. `SUBSTITUTEM` replaces every occurrence and takes no `instance_num`.
+
+`SUBSTITUTEM` is **deprecated since 0.7.0** and will be removed in a later minor release: use
+`SUBSTITUTE`, which gives the same result for three arguments. It still works and gives no warning.
 ```bash
 SUBSTITUTE("foo bar foo", "foo", "baz")   # "baz bar baz"
 SUBSTITUTE("a-a-a", "-", "_")             # "a_a_a"
 SUBSTITUTE("a-b-c", "-", "+", 2)          # "a-b+c"
-SUBSTITUTEM("a-a-a", "-", "_")            # "a_a_a"
+SUBSTITUTEM("a-a-a", "-", "_")            # "a_a_a" (deprecated)
 ```
 
 #### `TRIM(text)`
@@ -564,11 +610,15 @@ TRIM("  a   b  ")            # "a b"
 ```
 
 #### `REPLACE(old_text, start_num, num_chars, new_text)`
-Excel-style positional replace using 1-based `start_num` and character counts.
+Excel-style positional replace using 1-based `start_num` and character counts. A `start_num` past
+the end appends `new_text`; a `num_chars` past the end stops at the end. A `start_num` below 1 or a
+negative `num_chars` is an error (Excel `#VALUE!`).
 ```bash
 REPLACE("abcdef", 3, 2, "XY")             # "abXYef"
 REPLACE("abc", 1, 0, "X")                 # "Xabc" (insert)
 REPLACE("hello", 4, 10, "X")              # "helX" (clamped)
+REPLACE("abc", 10, 1, "X")                # "abcX" (appended)
+REPLACE("abc", 0, 1, "X")                 # Error: REPLACE start_num must be at least 1 (#VALUE!)
 ```
 
 #### `ISNUMBER(value)`, `ISTEXT(value)`
@@ -729,9 +779,31 @@ FLATTEN([1,[2,[3]],4])       # [1, 2, 3, 4]
 ```
 
 #### `UNIQUE(array)`
-Remove duplicates.
+Remove duplicates, keeping values of every type in first-seen order. Two values are duplicates when
+`==` says so: same type and value, text case-sensitive (ADR-0023).
 ```bash
 UNIQUE([1,2,2,3,3,3])        # [1, 2, 3]
+UNIQUE(["a", "a", 1])        # ["a", 1]
+UNIQUE(["a", "A"])           # ["a", "A"]
+```
+
+#### `SORT(array, [order])`
+Sort ascending, or descending with `order` `-1` (Excel) or `"DESC"` (Skillet). As in Excel, numbers
+come before text and text before booleans; text ignores case, and `FALSE` comes before `TRUE`.
+Equal items keep their order. Currency sorts with the numbers. `NULL`, DateTime, arrays, JSON
+objects and NaN are an error.
+```bash
+SORT([3, 1, 2])                    # [1, 2, 3]
+SORT([3, 1, 2], -1)                # [3, 2, 1]
+SORT(["banana", "Apple", "cherry"])  # ["Apple", "banana", "cherry"]
+SORT([TRUE, "b", 2, "A", 1])       # [1, 2, "A", "b", TRUE]
+```
+
+#### `REVERSE(array_or_text)`
+Items of an array, or characters of a string, in reverse order.
+```bash
+REVERSE([1, 2, 3])           # [3, 2, 1]
+REVERSE("abc")               # "cba"
 ```
 
 #### `COMPACT(array)`
@@ -786,6 +858,19 @@ Arrays are flattened, and only numbers count. No numbers is an error.
 ```bash
 NPV(0.1, -10000, 3000, 4200, 6800)                  # 1188.44
 NPV(0.08, [8000, 9200, 10000, 12000, 14500]) - 40000  # 1922.06
+```
+
+#### `DB(cost, salvage, life, period, [month])`
+Fixed-declining-balance depreciation for one period, Excel's `DB`. The rate is
+`1 - (salvage / cost)^(1 / life)`, rounded to 3 decimals. `month` (1-12, default 12) is the number
+of months in the first year; when it is less than 12 there is a last period `life + 1` for the
+remaining months. A cost of 0 or less, a negative salvage, a life of 0 or less, a `month` outside
+1-12, or a `period` outside 1..`life` (1..`life + 1` when `month` < 12) is an error (Excel `#NUM!`).
+```bash
+DB(1000000, 100000, 6, 1, 7)   # 186083.33
+DB(1000000, 100000, 6, 6, 7)   # 55841.76
+DB(1000000, 100000, 6, 7, 7)   # 15845.10
+DB(0, 0, 5, 1)                 # Error: DB needs cost > 0, salvage >= 0 and life > 0 (#NUM!)
 ```
 
 Optional arguments of `PPMT`, `PV` and `NPV` must be numbers (or NULL); other types are an error.

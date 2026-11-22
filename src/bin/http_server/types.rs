@@ -140,6 +140,16 @@ pub struct HealthResponse {
     pub requests_processed: u64,
     pub avg_execution_time_ms: f64,
     pub cache_stats: Option<CacheStatsResponse>,
+    pub parse_cache: ParseCacheStatsResponse,
+}
+
+/// Parse-cache counters, summed over the worker threads (BL-067).
+#[derive(Debug, Serialize)]
+pub struct ParseCacheStatsResponse {
+    pub hits: u64,
+    pub misses: u64,
+    pub hit_rate: f64,
+    pub entries: usize,
 }
 
 #[derive(Debug, Serialize)]
