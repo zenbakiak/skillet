@@ -145,7 +145,7 @@ fn bl012_sk_server_repeated_expressions_use_each_requests_variables() {
 
 /// One raw HTTP request; returns the JSON body.
 fn http(server: &Server, head: &str) -> serde_json::Value {
-    let mut s = server.connect();
+    let mut s = server.0.connect();
     s.write_all(format!("{head}\r\nHost: localhost\r\nConnection: close\r\n\r\n").as_bytes())
         .unwrap();
     let mut resp = String::new();
