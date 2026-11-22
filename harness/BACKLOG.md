@@ -1389,10 +1389,12 @@ floating Traefik tag and the Docker socket; no Host check in dev mode.
 ### BL-095 · Organise tests by feature area · P3 · `todo` · qa-engineer
 QA-5. Test files are named by PR; the same facts are pinned in 3-4 files.
 
-### BL-096 · Small leftovers from BL-077 · P3 · `todo` · maintainer decision → rust-engineer
+### BL-096 · Small leftovers from BL-077 · P3 · `in-progress` · rust-engineer
 `sk --json` exits 2 on the library path and 1 on the `:=` path for the same JSON errors; `sk_server`
 keeps JSON keys as written, so a key like `first-name` can't be read. Decide: unify the exit code,
 and whether `sk_server` sanitizes keys like the other surfaces.
+Decision (maintainer, 2026-11-22): `sk --json` exits 1 for JSON errors on both paths; `sk_server`
+sanitizes keys and rejects colliding keys like the library, `sk --json` and `sk_http_server`.
 
 ### BL-097 · One numeric type: `::Currency` becomes a conversion · P1 · `done` (PR #119, ADR-0033 Accepted) · language-designer (ADR-0033) → rust-engineer
 `Value::Currency(f64)` is a label on the same float as `Number`: no exact money math
