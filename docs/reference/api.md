@@ -231,8 +231,8 @@ criteria of `COUNTIF`/`SUMIF`/`AVERAGEIF`.
 | text (also `""`), a date, an array, a JSON object | error: `<name> condition must be TRUE, FALSE or a number, got string (#VALUE!)` |
 
 The `AND()`, `OR()` and `XOR()` functions are the exception: they skip a `NULL` argument, as
-Excel skips an empty cell (see [Logical Functions](#logical-functions)), and they count NaN as
-`TRUE`.
+Excel skips an empty cell (see [Logical Functions](#logical-functions)). A NaN is the `#NUM!`
+error in them too (`AND condition is not a number (#NUM!)`).
 
 ### Unary Operators
 - `+` - Positive (unary plus)

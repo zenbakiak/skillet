@@ -229,10 +229,12 @@ that is `NULL` does not count as `FALSE`. The reference warns that `AND(:flag, �
 `:flag` is missing, and points to `IF`, the operators or an explicit comparison:
 `:u&.is_admin AND :on` is `FALSE`, `AND(:u&.is_admin == TRUE, :on)` is `FALSE`.
 
-NaN: the builtins read numbers through their own path (`logical_values`,
-`src/runtime/logical.rs:37` and `:47`, `*n != 0.0`), not through `logical::condition`. So the NaN
-decision does not reach them, and `AND(:n)`, `OR(:n, FALSE)` and `XOR(:n)` stay `TRUE` for a NaN
-`:n`. Making them `#NUM!` too would be a separate decision.
+NaN (maintainer, 2026-11-22): the builtins read numbers through their own path
+(`logical_values`, `src/runtime/logical.rs:37` for array items and `:47` for arguments,
+`*n != 0.0`), and that path now checks `is_nan()` first. A NaN Number or Currency, passed directly
+or inside an array, is `<NAME> condition is not a number (#NUM!)` with `<NAME>` = `AND`, `OR` or
+`XOR`: `AND(:n)`, `OR(:n, FALSE)`, `XOR([:n])` are errors. Everything else in A4 stays: `NULL` is
+skipped like an empty cell (`AND(TRUE, NULL)` is `TRUE`), and text inside an array is skipped.
 
 #### A5. Precedence and positions do not change
 - The grammar does not change. `!` stays a tight unary and `NOT` stays the loose keyword (§3), so
@@ -310,7 +312,7 @@ NaN column. `sk` cannot make NaN, so this was run through the library (`evaluate
 | `FALSE AND :n`, `TRUE OR :n` | F, T (right side not evaluated) |
 | `[:n].filter(:x)`, `FILTER([:n], :x)`, `[:n].find(:x)`, `FIND([:n], :x)` | **F → #N** |
 | `COUNTIF([:n], :x)`, `SUMIF([:n], :x, [10])`, `AVERAGEIF([:n], :x, [10])` | **E → #N** |
-| `AND(:n, TRUE)`, `OR(:n, FALSE)`, `XOR(:n)` (builtins, A4) | T (unchanged) |
+| `AND(:n, TRUE)`, `OR(:n, FALSE)`, `XOR(:n)`, `AND([:n])` (builtins, A4) | **T → #N** (`AND`/`OR`/`XOR condition is not a number (#NUM!)`) |
 
 Other changed results:
 
