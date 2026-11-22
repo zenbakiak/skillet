@@ -98,6 +98,13 @@ or always fails, on any machine and under any load.
 
 What is charged:
 
+- **variables given as JSON** (ADR-0011 amendment 5): `evaluate_with_json`,
+  `evaluate_with_json_custom`, `sk --json`, the `variables` of `sk_server`, and the `arguments`
+  and query variables of `sk_http_server`. Each value is charged once, before the formula runs,
+  in the same budget, and so is the `:arguments` JSON text (48 plus its length). Variables that
+  alone are over the budget fail with the budget error. A `HashMap` passed to `evaluate_with` and
+  the other map entry points is not charged; a host can charge it with
+  `skillet::charge_variables` inside `with_limits`;
 - results of array and object literals, function calls, method and safe-method calls, casts,
   property and safe-property access, index and slice;
 - every assignment (`:a := v` stores a copy);
@@ -292,15 +299,21 @@ nesting-depth error, are never cached. Details: [servers](servers.md#parse-cache
 
 ### Sizing a server
 
-Every worker thread can run one evaluation at the full budget at the same time, so the values the
-budget counts can reach `threads × max-eval-bytes`: **8 threads × 256 MiB = 2 GiB** with the
-default budget. Live memory per evaluation is at most about twice the budget (the budget plus the
-value that crossed it), so the heap can peak near `threads × 2 × max-eval-bytes`. Size the host for
-that, or lower `--threads` or `--max-eval-bytes`. The Docker image runs 4 threads by default
-(`SK_THREADS`): 4 × 256 MiB = 1 GiB counted, about 2 GiB live.
+Every worker thread can run one evaluation at the full budget at the same time. The request's
+variables are part of that budget. Per worker, the memory can reach:
 
-A JavaScript plugin adds at most 64 MiB per call on top of that (see the next section), so the
-worst case is about `threads × (2 × max-eval-bytes + 64 MB)`.
+| Part | Size | Charged to the budget |
+|---|---|---|
+| The evaluation, including the request's variables | up to about 2 × `max-eval-bytes` live (the budget plus the value that crossed it) | yes |
+| Reading and parsing one request (the text plus `serde_json`'s tree of it) | up to 160 × the 1 MiB request cap = 160 MiB (measured: up to 138 bytes per request byte for an array of one-key objects, about 25 for an array of numbers) | no |
+| A JavaScript plugin call (next section) | 64 MiB | no (only its result) |
+| The parse cache | about 10 MiB | no |
+
+`sk_http_server` also holds its result cache once per process: 1000 entries of at most 64 KiB,
+about 63 MiB. So the worst case is about `threads × (2 × max-eval-bytes + 234 MiB)`, plus 63 MiB
+for `sk_http_server`: **about 5.9 GiB for 8 threads** with the default budget, and about 3 GiB
+for the Docker image's 4 threads (`SK_THREADS`). Both servers print this figure, and its parts, at
+start-up. Size the host for it, or lower `--threads` or `--max-eval-bytes`.
 
 ## JavaScript plugins (64 MiB, 10 s, 256 KiB)
 

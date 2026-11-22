@@ -230,21 +230,26 @@ $ SKILLET_EVAL_TIMEOUT= sk_http_server 5795
 Error: SKILLET_EVAL_TIMEOUT must not be empty; give a number of seconds greater than 0 or unset it
 ```
 
-The banner shows both values and the worst case they allow (captured from a debug build):
+The banner shows both values and the worst case they allow:
 
 ```console
 $ sk_server 5792 8 --eval-timeout 120 --max-eval-bytes 512M
 🚀 Skillet Server started on 127.0.0.1:5792
 📊 Worker threads: 8
 ⏱️  Eval timeout: 120 s (--eval-timeout or SKILLET_EVAL_TIMEOUT)
-💾 Eval budget: 512 MiB per evaluation, up to about 4 GiB with 8 threads (--max-eval-bytes or SKILLET_MAX_EVAL_BYTES)
+💾 Eval budget: 512 MiB per evaluation, request variables included (--max-eval-bytes or SKILLET_MAX_EVAL_BYTES)
+🧮 Worst-case memory: about 9.8 GiB with 8 threads (per thread: 2 x 512 MiB evaluation, 160 MiB to read a 1 MiB request, 64 MiB JS heap, 10 MiB parsed expressions)
 🔧 Ready for high-throughput expression evaluation
 ```
 
-**Size the machine for it.** Each worker thread can run one evaluation at the full budget, so
-the budget alone can take `threads × max-eval-bytes` of memory: 8 threads × 256 MiB = 2 GiB with
-the defaults (the Docker image's 4 threads: 1 GiB counted, about 2 GiB live). Live memory per
-evaluation can reach about twice the budget (see [limits](limits.md#sizing-a-server)). Lower `--threads` or `--max-eval-bytes` if the host has less.
+The request's variables count towards the budget (ADR-0011 amendment 5), so a request whose
+variables alone are over `--max-eval-bytes` gets the budget error.
+
+**Size the machine for it.** Each worker thread can hold one evaluation at the full budget (live
+memory up to about twice the budget), one request being read and parsed, a JavaScript call and its
+parse cache. With the defaults that is about 5.9 GiB for 8 threads, and about 3 GiB for the
+Docker image's 4 threads; `sk_http_server` adds its result cache (63 MiB) once. Details:
+[limits](limits.md#sizing-a-server). Lower `--threads` or `--max-eval-bytes` if the host has less.
 
 The other time limits do not change with the deadline: a request must still arrive within 30 s,
 a response must be written within 10 s, and a JavaScript plugin call stops after 10 s or at the
