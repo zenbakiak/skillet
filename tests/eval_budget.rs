@@ -1137,3 +1137,35 @@ fn bl035_long_builtins_meet_the_deadline() {
         );
     }
 }
+
+/// The deadline is honoured in criteria matching (BL-080): COUNTIF/SUMIF/AVERAGEIF with an
+/// Excel criterion tick per row, and the wildcard matcher ticks while it scans one long text.
+/// Before, the criteria loop never read the clock, so these returned `Ok` past the deadline.
+#[test]
+fn bl080_deadline_is_honoured_in_criteria_matching() {
+    let mut vars = HashMap::new();
+    let words = (0..300_000)
+        .map(|i| Value::String(format!("w{}x{}", i % 97, i % 13)))
+        .collect();
+    vars.insert("words".to_string(), Value::Array(words));
+    vars.insert("text".to_string(), Value::String("a".repeat(1_000_000)));
+    let exprs = [
+        "COUNTIF(:words, \"*7?3\")",
+        "COUNTIF(:words, \"<>w1*\")",
+        "SUMIF(:words, \">w5\")",
+        "COUNTIF(:text, \"*b*\")",
+        "COUNTIF(:text, \"*a?b*\")",
+    ];
+    for e in exprs {
+        assert!(evaluate_with_custom(e, &vars).is_ok(), "{e}");
+        let r = with_limits(timeout_limits(1), || {
+            std::thread::sleep(Duration::from_millis(2));
+            evaluate_with_custom(e, &vars)
+        });
+        assert_eq!(
+            r.map_err(|e| e.message),
+            Err("Evaluation timed out (max 1 ms)".to_string()),
+            "{e}"
+        );
+    }
+}
