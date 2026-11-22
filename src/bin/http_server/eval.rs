@@ -228,9 +228,8 @@ fn process_eval_request(
             // Pre-allocate HashMap with known size + 1 for "arguments"
             let mut result = HashMap::with_capacity(json_vars.len() + 1);
 
-            // Add the original JSON data for JQ function (serialize once)
+            // The original JSON data for the JQ function (serialize once)
             let json_str = serde_json::to_string(&json_vars).unwrap_or_default();
-            result.insert("arguments".to_string(), Value::Json(json_str));
 
             for (key, value) in json_vars {
                 match skillet::json_to_value(value) {
@@ -251,6 +250,8 @@ fn process_eval_request(
                     }
                 }
             }
+            // Inserted last so a request key named `arguments` cannot replace it (BL-077).
+            result.insert("arguments".to_string(), Value::Json(json_str));
             result
         }
         None => HashMap::new(),
