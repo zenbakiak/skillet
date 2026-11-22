@@ -668,7 +668,8 @@ mod heap {
         if ptr.is_null() {
             0
         } else if cfg!(target_vendor = "apple") || cfg!(target_os = "linux") {
-            system_usable(ptr)
+            // SAFETY: the caller passes a live, non-null block from the system allocator.
+            unsafe { system_usable(ptr) }
         } else {
             requested
         }
@@ -676,12 +677,14 @@ mod heap {
 
     #[cfg(target_vendor = "apple")]
     unsafe fn system_usable(ptr: *mut u8) -> usize {
-        libc::malloc_size(ptr as *const libc::c_void)
+        // SAFETY: `ptr` is a live block from the system allocator (caller contract).
+        unsafe { libc::malloc_size(ptr as *const libc::c_void) }
     }
 
     #[cfg(target_os = "linux")]
     unsafe fn system_usable(ptr: *mut u8) -> usize {
-        libc::malloc_usable_size(ptr as *mut libc::c_void)
+        // SAFETY: `ptr` is a live block from the system allocator (caller contract).
+        unsafe { libc::malloc_usable_size(ptr as *mut libc::c_void) }
     }
 
     #[cfg(not(any(target_vendor = "apple", target_os = "linux")))]
@@ -696,24 +699,33 @@ mod heap {
     unsafe impl GlobalAlloc for Counting {
         unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
             add(layout.size());
-            let ptr = System.alloc(layout);
-            real(usable(ptr, layout.size()), 0);
-            ptr
+            // SAFETY: forwards the `GlobalAlloc` contract to `System`; `ptr` is its result.
+            unsafe {
+                let ptr = System.alloc(layout);
+                real(usable(ptr, layout.size()), 0);
+                ptr
+            }
         }
         unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
             sub(layout.size());
-            real(0, usable(ptr, layout.size()));
-            System.dealloc(ptr, layout)
+            // SAFETY: forwards the `GlobalAlloc` contract: `ptr` is live and from `System`.
+            unsafe {
+                real(0, usable(ptr, layout.size()));
+                System.dealloc(ptr, layout)
+            }
         }
         unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
             add(new_size);
             sub(layout.size());
-            let old = usable(ptr, layout.size());
-            let new = System.realloc(ptr, layout, new_size);
-            if !new.is_null() {
-                real(usable(new, new_size), old);
+            // SAFETY: forwards the `GlobalAlloc` contract: `ptr` is live and from `System`.
+            unsafe {
+                let old = usable(ptr, layout.size());
+                let new = System.realloc(ptr, layout, new_size);
+                if !new.is_null() {
+                    real(usable(new, new_size), old);
+                }
+                new
             }
-            new
         }
     }
 
@@ -1111,6 +1123,38 @@ fn bl035_long_builtins_meet_the_deadline() {
         "JOIN(:nums, \",\").length()",
         ":nums.join(\",\").length()",
         "TEXTJOIN(\",\", TRUE, :nums).length()",
+    ];
+    for e in exprs {
+        assert!(evaluate_with_custom(e, &vars).is_ok(), "{e}");
+        let r = with_limits(timeout_limits(1), || {
+            std::thread::sleep(Duration::from_millis(2));
+            evaluate_with_custom(e, &vars)
+        });
+        assert_eq!(
+            r.map_err(|e| e.message),
+            Err("Evaluation timed out (max 1 ms)".to_string()),
+            "{e}"
+        );
+    }
+}
+
+/// The deadline is honoured in criteria matching (BL-080): COUNTIF/SUMIF/AVERAGEIF with an
+/// Excel criterion tick per row, and the wildcard matcher ticks while it scans one long text.
+/// Before, the criteria loop never read the clock, so these returned `Ok` past the deadline.
+#[test]
+fn bl080_deadline_is_honoured_in_criteria_matching() {
+    let mut vars = HashMap::new();
+    let words = (0..300_000)
+        .map(|i| Value::String(format!("w{}x{}", i % 97, i % 13)))
+        .collect();
+    vars.insert("words".to_string(), Value::Array(words));
+    vars.insert("text".to_string(), Value::String("a".repeat(1_000_000)));
+    let exprs = [
+        "COUNTIF(:words, \"*7?3\")",
+        "COUNTIF(:words, \"<>w1*\")",
+        "SUMIF(:words, \">w5\")",
+        "COUNTIF(:text, \"*b*\")",
+        "COUNTIF(:text, \"*a?b*\")",
     ];
     for e in exprs {
         assert!(evaluate_with_custom(e, &vars).is_ok(), "{e}");

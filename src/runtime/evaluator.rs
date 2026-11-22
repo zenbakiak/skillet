@@ -3,7 +3,7 @@ use crate::custom::{execute_checked, FunctionRegistry};
 use crate::error::Error;
 use crate::limits::{self, charge_value, check_value};
 use crate::runtime::{
-    criteria::{aggregate, range_items, Aggregate, Criterion},
+    criteria::{aggregate, range_items, reads_item, Aggregate, Criterion},
     function_dispatch::exec_builtin_fast,
     logical,
     method_calls::exec_method_in,
@@ -118,6 +118,20 @@ impl<'a> Scope<'a> {
         match self.locals.iter_mut().find(|(n, _)| n == name) {
             Some(slot) => slot.1 = value,
             None => self.locals.push((name.to_string(), value)),
+        }
+    }
+
+    /// Bind `name` to `NULL` and return its slot, for loops that swap items in and out with
+    /// [`Scope::swap`] instead of cloning them.
+    pub(crate) fn slot(&mut self, name: &str) -> usize {
+        self.set(name, Value::Null);
+        self.locals.iter().position(|(n, _)| n == name).unwrap_or(0)
+    }
+
+    /// Swap `value` with the value in `slot` (from [`Scope::slot`]).
+    pub(crate) fn swap(&mut self, slot: usize, value: &mut Value) {
+        if let Some((_, v)) = self.locals.get_mut(slot) {
+            std::mem::swap(v, value);
         }
     }
 }
@@ -862,8 +876,10 @@ impl Evaluator {
     }
 
     /// `COUNTIF`, `SUMIF`, `AVERAGEIF` (alias `AVGIF`): `(range, criteria, [values])`.
-    /// A string or number criterion uses Excel's rules (`runtime::criteria`); anything else is a
-    /// lambda over `:x` that must return a boolean (`NULL` counts as FALSE).
+    /// A criterion that reads `:x` is a lambda over each item that must return a boolean (`NULL`
+    /// counts as FALSE), even when the caller also defines `:x` (BL-081). Otherwise it is
+    /// evaluated once: a string or number uses Excel's rules (`runtime::criteria`), and any other
+    /// value is evaluated per item like a lambda.
     fn eval_conditional<C: EvaluationContext>(
         kind: Aggregate,
         args: &[Expr],
@@ -885,31 +901,58 @@ impl Evaluator {
             None => None,
         };
         let criteria_expr = &args[1];
-        let criterion = Self::eval(criteria_expr, context)
-            .ok()
-            .and_then(|v| Criterion::from_value(&v));
-        if let Some(criterion) = criterion {
-            return aggregate(kind, &range, values.as_deref(), |item| {
-                Ok(criterion.matches(item))
+        if !reads_item(criteria_expr) {
+            let criterion = Self::eval(criteria_expr, context)
+                .ok()
+                .and_then(|v| Criterion::from_value(&v));
+            if let Some(criterion) = criterion {
+                let mut row = 0usize;
+                return aggregate(kind, &range, values.as_deref(), |item| {
+                    limits::tick_item(row)?;
+                    row += 1;
+                    criterion.matches(item)
+                });
+            }
+        }
+        let mut range = range;
+        let mut flags = Self::lambda_flags(name, criteria_expr, &mut range, context)?.into_iter();
+        aggregate(kind, &range, values.as_deref(), |_| {
+            Ok(flags.next().unwrap_or(false))
+        })
+    }
+
+    /// A lambda criterion's result for each item, in order. Each item is moved into `:x` and
+    /// back, not cloned (PERF-3).
+    fn lambda_flags<C: EvaluationContext>(
+        name: &str,
+        lambda: &Expr,
+        items: &mut [Value],
+        context: &C,
+    ) -> Result<Vec<bool>, Error> {
+        let mut scope = Scope::new(context);
+        let x = scope.slot("x");
+        let mut flags = Vec::with_capacity(items.len());
+        for item in items.iter_mut() {
+            charge_value(item)?;
+            scope.swap(x, item);
+            let result = Self::eval(lambda, &scope)?;
+            scope.swap(x, item);
+            flags.push(match result {
+                Value::Boolean(b) => b,
+                Value::Null => false,
+                other => {
+                    return Err(Error::new(
+                        format!(
+                            "{} criteria expression must return TRUE or FALSE, got {}",
+                            name,
+                            type_name(&other)
+                        ),
+                        None,
+                    ))
+                }
             });
         }
-        let mut scope = Scope::new(context);
-        aggregate(kind, &range, values.as_deref(), |item| {
-            charge_value(item)?;
-            scope.set("x", item.clone());
-            match Self::eval(criteria_expr, &scope)? {
-                Value::Boolean(b) => Ok(b),
-                Value::Null => Ok(false),
-                other => Err(Error::new(
-                    format!(
-                        "{} criteria expression must return TRUE or FALSE, got {}",
-                        name,
-                        type_name(&other)
-                    ),
-                    None,
-                )),
-            }
-        })
+        Ok(flags)
     }
 
     /// Helper to convert Value to JSON
