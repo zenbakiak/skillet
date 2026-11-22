@@ -111,10 +111,10 @@ const fn n(max: usize) -> Option<usize> {
 #[rustfmt::skip]
 pub(crate) static BUILTINS: &[Builtin] = &[
     // Arithmetic
-    f("SUM", Arithmetic, 0, ANY, "values…", "Sum of numbers and currency; arrays are flattened, other values ignored.", "SUM(1, 2, [3, 4])"),
-    f("AVG", Arithmetic, 0, ANY, "values…", "Mean of numbers and currency (arrays flattened); error when there are none (Excel `#DIV/0!`).", "AVG(2, 4, 6)").aliases(&["AVERAGE"]),
-    f("MIN", Arithmetic, 0, ANY, "values…", "Smallest number (arrays flattened); 0 when there are none.", "MIN(3, 1, 2)"),
-    f("MAX", Arithmetic, 0, ANY, "values…", "Largest number (arrays flattened); 0 when there are none.", "MAX([3, 9, 2])"),
+    f("SUM", Arithmetic, 0, ANY, "values…", "Sum of numbers and currency; arrays are flattened, other values ignored. Currency when any value is Currency.", "SUM(1, 2, [3, 4])"),
+    f("AVG", Arithmetic, 0, ANY, "values…", "Mean of numbers and currency (arrays flattened); Currency when any value is Currency; error when there are none (Excel `#DIV/0!`).", "AVG(2, 4, 6)").aliases(&["AVERAGE"]),
+    f("MIN", Arithmetic, 0, ANY, "values…", "Smallest number or currency (arrays flattened); Currency when any value is Currency; 0 when there are none.", "MIN(3, 1, 2)"),
+    f("MAX", Arithmetic, 0, ANY, "values…", "Largest number or currency (arrays flattened); Currency when any value is Currency; 0 when there are none.", "MAX([3, 9, 2])"),
     f("ROUND", Arithmetic, 1, n(2), "number, [digits]", "Round half away from zero to `digits` decimals (default 0); negative `digits` round left of the point.", "ROUND(1234.567, -2)"),
     f("CEILING", Arithmetic, 1, n(2), "number, [significance]", "Round up to a multiple of `significance` (default 1), Excel rules for negatives.", "CEILING(2.1, 0.5)").aliases(&["CEIL"]),
     f("FLOOR", Arithmetic, 1, n(2), "number, [significance]", "Round down to a multiple of `significance` (default 1), Excel rules for negatives.", "FLOOR(7, 5)"),
@@ -123,7 +123,7 @@ pub(crate) static BUILTINS: &[Builtin] = &[
     f("POW", Arithmetic, 2, n(2), "base, exponent", "`base` raised to `exponent`; error for `0^0`, `0` to a negative power, or a non-real result.", "POW(2, 10)").aliases(&["POWER"]),
     f("MOD", Arithmetic, 2, n(2), "number, divisor", "Remainder of `number / divisor`; the sign follows the divisor (Excel). Error for 0.", "MOD(-10, 3)"),
     f("INT", Arithmetic, 1, n(1), "number", "Round down to an integer: `INT(-3.9)` is -4.", "INT(5.9)"),
-    f("PRODUCT", Arithmetic, 0, ANY, "values…", "Product of numbers and currency (arrays flattened); 1 when there are none.", "PRODUCT(2, 3, 4)").aliases(&["MULTIPLY"]),
+    f("PRODUCT", Arithmetic, 0, ANY, "values…", "Product of numbers and currency (arrays flattened); Currency when any value is Currency; 1 when there are none.", "PRODUCT(2, 3, 4)").aliases(&["MULTIPLY"]),
     f("SUMIF", Arithmetic, 2, n(3), "range, criteria, [sum_range]", "Sum of items meeting an Excel criteria (`\">2\"`, `5`, `\"a*\"`) or a lambda over `:x`.", "SUMIF([1, -2, 3], \">0\")").evaluator(),
     // Logical
     f("AND", Logical, 1, ANY, "logical…", "Excel `AND`: TRUE when every logical value is TRUE (numbers: non-zero). Text and NULL inside arrays are ignored; direct text, or no logical value at all, is an error. Every argument is evaluated.", "AND(TRUE, 1)"),
@@ -136,8 +136,8 @@ pub(crate) static BUILTINS: &[Builtin] = &[
     // String
     f("LENGTH", Category::String, 1, n(1), "text_or_array", "Characters in a string or items in an array; 0 for NULL.", "LENGTH('héllo')"),
     f("LEN", Category::String, 1, n(1), "text", "Excel `LEN`: characters in the text; numbers and booleans count as their text, NULL as 0.", "LEN('héllo')"),
-    f("TEXTJOIN", Category::String, 3, ANY, "delimiter, ignore_empty, text…", "Excel `TEXTJOIN`: join texts (arrays flattened) with `delimiter`; skip empty ones when `ignore_empty` is TRUE.", "TEXTJOIN(', ', TRUE, 'a', '', ['b', 'c'])"),
-    f("CONCAT", Category::String, 0, ANY, "values…", "Join values as text: numbers and currency as numbers, booleans as TRUE/FALSE, a DateTime as Unix seconds, arrays flattened; NULL and JSON add nothing.", "CONCAT('a', 1, TRUE)"),
+    f("TEXTJOIN", Category::String, 3, ANY, "delimiter, ignore_empty, text…", "Excel `TEXTJOIN`: join texts, numbers, booleans and dates (arrays flattened) with `delimiter`; skip empty ones when `ignore_empty` is TRUE.", "TEXTJOIN(', ', TRUE, 'a', '', ['b', 'c'])"),
+    f("CONCAT", Category::String, 0, ANY, "values…", "Join values as text: numbers and currency as numbers, booleans as TRUE/FALSE, a DateTime as ISO 8601 UTC text, arrays flattened; NULL and JSON add nothing.", "CONCAT('a', 1, TRUE)"),
     f("UPPER", Category::String, 1, n(1), "text", "Upper-case.", "UPPER('abc')"),
     f("LOWER", Category::String, 1, n(1), "text", "Lower-case.", "LOWER('ABC')"),
     f("TRIM", Category::String, 1, n(1), "text", "Remove leading and trailing spaces and collapse inner runs of spaces (Excel). `.trim()` keeps inner spaces.", "TRIM('  a   b  ')"),
@@ -165,7 +165,7 @@ pub(crate) static BUILTINS: &[Builtin] = &[
     f("UNIQUE", Array, 1, n(1), "array", "Distinct values in first-seen order (`==` equality: same type and value, text case-sensitive).", "UNIQUE([1, 'a', 1, 'a'])"),
     f("SORT", Array, 1, n(2), "array, [order]", "Sorted ascending (Excel: numbers < text < booleans, text ignores case), or descending with order `-1` or `'DESC'`; other values are an error.", "SORT(['b', 2, 'A', 1])"),
     f("REVERSE", Array, 1, n(1), "array or text", "Items of an array, or characters of a string, in reverse order.", "REVERSE([1, 2, 3])"),
-    f("JOIN", Array, 1, n(2), "array, [separator]", "Items joined into a string with `separator` (default `,`); nested arrays are an error.", "JOIN([1, 'a', TRUE], '-')"),
+    f("JOIN", Array, 1, n(2), "array, [separator]", "Items joined into a string with `separator` (default `,`); a DateTime is ISO 8601 UTC text; nested arrays are an error.", "JOIN([1, 'a', TRUE], '-')"),
     f("MERGE", Array, 0, ANY, "values…", "Arrays concatenated; scalar arguments are appended as items.", "MERGE([1, 2], 3, [4])"),
     f("FILTER", Array, 2, n(3), "array, expr, [param]", "Items for which `expr` is TRUE; the item is `:x` (or `:param`).", "FILTER([1, 2, 3, 4], :x % 2 == 0)").evaluator(),
     f("FIND", Array, 2, n(3), "array, expr, [param]", "First item for which `expr` is TRUE, else NULL. With text first, Excel `FIND(find_text, within_text, [start_num])`: 1-based, case-sensitive position; error when not found.", "FIND([1, 5, 10], :x > 3)").evaluator(),

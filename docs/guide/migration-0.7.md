@@ -15,6 +15,10 @@ Check these first. They change results without an error:
 7. **`AND`/`OR` with `NULL` or an array holding text**: `AND(TRUE, NULL)` is now `true`.
 8. **`DATEADD`/`DATEDIFF` units `"m"`, `"y"`, `"w"`** now follow Excel (B-15): `"m"` is months
    (was minutes), `"y"` is days (was years), `"w"` adds days (was weeks). Search for them.
+9. **A date as text** is now ISO 8601 UTC (ADR-0031): `DATE(2026, 1, 1)::String`,
+   `CONCAT`, `&`, `JOIN` and `.to_s()` give `"2026-01-01T00:00:00Z"` (was `"1767225600"`).
+10. **`SUM`, `PRODUCT`, `AVERAGE`, `MIN`, `MAX` with a Currency value** now return Currency
+   (was Number), for example `SUM(10::Currency, 5)`.
 
 ## Expressions
 
@@ -150,6 +154,23 @@ tight precedence (`!:a == :b` is `(!:a) == :b`). To keep a 0.6 `NOT (x) == y`, r
 | `DATE(2026, 1, 1) + "x"` | `Error: Arithmetic op on non-number` | `Error: Cannot convert "x" to a number (#VALUE!)` |
 | `"2026-02-30"::DateTime` | `Error` | `Error` (casts never roll over) |
 
+### Dates as text (ADR-0031)
+Every path that turns a DateTime into text writes ISO 8601 in UTC, with whole seconds.
+`::DateTime` reads that form back, so `(DATE(2026, 1, 1)::String)::DateTime` is
+`DATE(2026, 1, 1)`. Integer text still casts as Unix seconds. To keep the old text, use
+`DATEDIFF(DATE(1970, 1, 1), :d, "seconds")`, or `(:d - DATE(1970, 1, 1)) * 86400`, then turn
+the number into text.
+
+| Expression | 0.6 | 0.7 |
+|---|---|---|
+| `DATE(2026, 1, 1)::String`, `DATE(2026, 1, 1).to_s()` | `"1767225600"` | `"2026-01-01T00:00:00Z"` |
+| `CONCAT("on ", DATE(2026, 1, 1))`, `"on " & DATE(2026, 1, 1)` | `"on 1767225600"` | `"on 2026-01-01T00:00:00Z"` |
+| `JOIN([DATE(2026, 1, 1)])`, `[DATE(2026, 1, 1)].to_s()` | `"1767225600"`, `"[1767225600]"` | `"2026-01-01T00:00:00Z"`, `"[2026-01-01T00:00:00Z]"` |
+| `DATE(2026, 1, 1).to_json()` | `Json("\"1767225600\"")` | `Json("\"2026-01-01T00:00:00Z\"")` |
+| `[DATE(2026, 1, 1)].join()`, `TEXTJOIN(",", TRUE, DATE(2026, 1, 1))` | `Error` | `"2026-01-01T00:00:00Z"` |
+| `"2026-01-01T10:30:00Z"::DateTime` | `Error` | 2026-01-01 10:30 UTC |
+| `DATE(2026, 1, 1)::Json`, server responses, `"1767225600"::DateTime` | Unix seconds | unchanged |
+
 ### Date units follow Excel (B-15)
 `DATEADD` and `DATEDIFF` read the unit codes of VBA's `DateAdd`/`DateDiff`, case-insensitively.
 The long words (`"months"`, `"minutes"`, …) are unchanged. Use them, or the new codes, to keep the
@@ -182,6 +203,18 @@ for a number (numeric text, booleans, `NULL` as 0). Results are not rounded (Cur
 | `10::Currency + "2"`, `10::Currency + NULL` | `Error` | `Currency(12)`, `Currency(10)` |
 | `1::Currency / 0` | `Error` | `Error: Division by zero (#DIV/0!)` |
 | `DATE(2026, 1, 1) + 1::Currency`, `1 == 1::Currency` | `Error`, `false` | unchanged |
+
+### Currency in the aggregates (ADR-0031, B-13)
+`SUM`, `PRODUCT` (`MULTIPLY`), `AVERAGE` (`AVG`), `MIN` and `MAX` return Currency when any value
+they count is Currency, following `Currency + Number` (ADR-0027). Use `::Float` on the result to
+keep a Number. The methods (`.sum()`, `.avg()`, `.min()`, `.max()`) are unchanged.
+
+| Expression | 0.6 | 0.7 |
+|---|---|---|
+| `SUM(10::Currency, 5)` | `15` (Number) | `Currency(15)` |
+| `PRODUCT(2::Currency, 3)`, `AVERAGE(10::Currency, 20)` | `6`, `15` (Number) | `Currency(6)`, `Currency(15)` |
+| `MIN(1, 3::Currency)`, `MAX([3::Currency, 9::Currency])` | `1`, `9` (Number) | `Currency(1)`, `Currency(9)` |
+| `SUM(1, 2)`, `[1::Currency].sum()` | Number | unchanged |
 
 ### New names (additive)
 These used to fail with `Unknown function` or a parse error: `STDEV.P`, `STDEV.S`, `STDEV`,

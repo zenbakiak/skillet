@@ -1,5 +1,6 @@
 use crate::error::Error;
 use crate::limits;
+use crate::runtime::datetime::{datetime_text, write_datetime};
 use crate::runtime::utils::is_blank;
 use crate::types::Value;
 use std::borrow::Cow;
@@ -21,14 +22,13 @@ fn char_count(s: &str) -> usize {
 
 /// Write the `CONCAT` (and `&`) of `args` to `w`. Excel turns every value into text: strings as
 /// is, numbers and currency in Skillet's number format (`1.5::Currency` → `1.5`), booleans as
-/// `TRUE`/`FALSE`, a DateTime as its `::String` text (Unix seconds, the way Excel writes a date's
-/// serial number), arrays flattened. NULL (a blank cell) and JSON objects add nothing.
+/// `TRUE`/`FALSE`, a DateTime as its `::String` text (ISO 8601 UTC, ADR-0031), arrays flattened. NULL (a blank cell) and JSON objects add nothing.
 fn concat_into(w: &mut impl std::fmt::Write, args: &[Value]) {
     for v in args {
         let _ = match v {
             Value::String(st) => w.write_str(st),
             Value::Number(n) | Value::Currency(n) => write!(w, "{}", n),
-            Value::DateTime(ts) => write!(w, "{}", ts),
+            Value::DateTime(ts) => write_datetime(w, *ts),
             Value::Array(arr) => {
                 concat_into(w, arr);
                 Ok(())
@@ -52,13 +52,20 @@ fn excel_text(v: &Value) -> Option<Cow<'_, str>> {
     }
 }
 
-/// Flatten `v` into `out` as text, for `TEXTJOIN`.
+/// Flatten `v` into `out` as text, for `TEXTJOIN`. A DateTime is its ISO 8601 text (ADR-0031).
 fn textjoin_parts<'v>(v: &'v Value, out: &mut Vec<Cow<'v, str>>) -> Result<(), Error> {
     match v {
         Value::Array(items) => items.iter().try_for_each(|it| textjoin_parts(it, out)),
         _ => {
-            let text = excel_text(v).ok_or_else(|| {
-                Error::new("TEXTJOIN expects text, numbers, booleans or arrays", None)
+            let text = match v {
+                Value::DateTime(ts) => Some(Cow::Owned(datetime_text(*ts))),
+                _ => excel_text(v),
+            };
+            let text = text.ok_or_else(|| {
+                Error::new(
+                    "TEXTJOIN expects text, numbers, booleans, dates or arrays",
+                    None,
+                )
             })?;
             limits::tick_item(out.len())?;
             out.push(text);

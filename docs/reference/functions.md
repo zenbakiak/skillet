@@ -15,10 +15,10 @@ Methods (`:arr.sum()`), operators and the rest of the language: [api.md](api.md)
 
 | Function | Signature | Arity | Summary | Example | Result |
 |---|---|---|---|---|---|
-| `SUM` | `SUM(values…)` | 0+ | Sum of numbers and currency; arrays are flattened, other values ignored. | `SUM(1, 2, [3, 4])` | `10` |
-| `AVG`<br>alias `AVERAGE` | `AVG(values…)` | 0+ | Mean of numbers and currency (arrays flattened); error when there are none (Excel `#DIV/0!`). | `AVG(2, 4, 6)` | `4` |
-| `MIN` | `MIN(values…)` | 0+ | Smallest number (arrays flattened); 0 when there are none. | `MIN(3, 1, 2)` | `1` |
-| `MAX` | `MAX(values…)` | 0+ | Largest number (arrays flattened); 0 when there are none. | `MAX([3, 9, 2])` | `9` |
+| `SUM` | `SUM(values…)` | 0+ | Sum of numbers and currency; arrays are flattened, other values ignored. Currency when any value is Currency. | `SUM(1, 2, [3, 4])` | `10` |
+| `AVG`<br>alias `AVERAGE` | `AVG(values…)` | 0+ | Mean of numbers and currency (arrays flattened); Currency when any value is Currency; error when there are none (Excel `#DIV/0!`). | `AVG(2, 4, 6)` | `4` |
+| `MIN` | `MIN(values…)` | 0+ | Smallest number or currency (arrays flattened); Currency when any value is Currency; 0 when there are none. | `MIN(3, 1, 2)` | `1` |
+| `MAX` | `MAX(values…)` | 0+ | Largest number or currency (arrays flattened); Currency when any value is Currency; 0 when there are none. | `MAX([3, 9, 2])` | `9` |
 | `ROUND` | `ROUND(number, [digits])` | 1-2 | Round half away from zero to `digits` decimals (default 0); negative `digits` round left of the point. | `ROUND(1234.567, -2)` | `1200` |
 | `CEILING`<br>alias `CEIL` | `CEILING(number, [significance])` | 1-2 | Round up to a multiple of `significance` (default 1), Excel rules for negatives. | `CEILING(2.1, 0.5)` | `2.5` |
 | `FLOOR` | `FLOOR(number, [significance])` | 1-2 | Round down to a multiple of `significance` (default 1), Excel rules for negatives. | `FLOOR(7, 5)` | `5` |
@@ -27,7 +27,7 @@ Methods (`:arr.sum()`), operators and the rest of the language: [api.md](api.md)
 | `POW`<br>alias `POWER` | `POW(base, exponent)` | 2 | `base` raised to `exponent`; error for `0^0`, `0` to a negative power, or a non-real result. | `POW(2, 10)` | `1024` |
 | `MOD` | `MOD(number, divisor)` | 2 | Remainder of `number / divisor`; the sign follows the divisor (Excel). Error for 0. | `MOD(-10, 3)` | `2` |
 | `INT` | `INT(number)` | 1 | Round down to an integer: `INT(-3.9)` is -4. | `INT(5.9)` | `5` |
-| `PRODUCT`<br>alias `MULTIPLY` | `PRODUCT(values…)` | 0+ | Product of numbers and currency (arrays flattened); 1 when there are none. | `PRODUCT(2, 3, 4)` | `24` |
+| `PRODUCT`<br>alias `MULTIPLY` | `PRODUCT(values…)` | 0+ | Product of numbers and currency (arrays flattened); Currency when any value is Currency; 1 when there are none. | `PRODUCT(2, 3, 4)` | `24` |
 | `SUMIF` † | `SUMIF(range, criteria, [sum_range])` | 2-3 | Sum of items meeting an Excel criteria (`">2"`, `5`, `"a*"`) or a lambda over `:x`. | `SUMIF([1, -2, 3], ">0")` | `4` |
 
 ## Logical
@@ -48,8 +48,8 @@ Methods (`:arr.sum()`), operators and the rest of the language: [api.md](api.md)
 |---|---|---|---|---|---|
 | `LENGTH` | `LENGTH(text_or_array)` | 1 | Characters in a string or items in an array; 0 for NULL. | `LENGTH('héllo')` | `5` |
 | `LEN` | `LEN(text)` | 1 | Excel `LEN`: characters in the text; numbers and booleans count as their text, NULL as 0. | `LEN('héllo')` | `5` |
-| `TEXTJOIN` | `TEXTJOIN(delimiter, ignore_empty, text…)` | 3+ | Excel `TEXTJOIN`: join texts (arrays flattened) with `delimiter`; skip empty ones when `ignore_empty` is TRUE. | `TEXTJOIN(', ', TRUE, 'a', '', ['b', 'c'])` | `"a, b, c"` |
-| `CONCAT` | `CONCAT(values…)` | 0+ | Join values as text: numbers and currency as numbers, booleans as TRUE/FALSE, a DateTime as Unix seconds, arrays flattened; NULL and JSON add nothing. | `CONCAT('a', 1, TRUE)` | `"a1TRUE"` |
+| `TEXTJOIN` | `TEXTJOIN(delimiter, ignore_empty, text…)` | 3+ | Excel `TEXTJOIN`: join texts, numbers, booleans and dates (arrays flattened) with `delimiter`; skip empty ones when `ignore_empty` is TRUE. | `TEXTJOIN(', ', TRUE, 'a', '', ['b', 'c'])` | `"a, b, c"` |
+| `CONCAT` | `CONCAT(values…)` | 0+ | Join values as text: numbers and currency as numbers, booleans as TRUE/FALSE, a DateTime as ISO 8601 UTC text, arrays flattened; NULL and JSON add nothing. | `CONCAT('a', 1, TRUE)` | `"a1TRUE"` |
 | `UPPER` | `UPPER(text)` | 1 | Upper-case. | `UPPER('abc')` | `"ABC"` |
 | `LOWER` | `LOWER(text)` | 1 | Lower-case. | `LOWER('ABC')` | `"abc"` |
 | `TRIM` | `TRIM(text)` | 1 | Remove leading and trailing spaces and collapse inner runs of spaces (Excel). `.trim()` keeps inner spaces. | `TRIM('  a   b  ')` | `"a b"` |
@@ -81,7 +81,7 @@ Methods (`:arr.sum()`), operators and the rest of the language: [api.md](api.md)
 | `UNIQUE` | `UNIQUE(array)` | 1 | Distinct values in first-seen order (`==` equality: same type and value, text case-sensitive). | `UNIQUE([1, 'a', 1, 'a'])` | `[1, "a"]` |
 | `SORT` | `SORT(array, [order])` | 1-2 | Sorted ascending (Excel: numbers < text < booleans, text ignores case), or descending with order `-1` or `'DESC'`; other values are an error. | `SORT(['b', 2, 'A', 1])` | `[1, 2, "A", "b"]` |
 | `REVERSE` | `REVERSE(array or text)` | 1 | Items of an array, or characters of a string, in reverse order. | `REVERSE([1, 2, 3])` | `[3, 2, 1]` |
-| `JOIN` | `JOIN(array, [separator])` | 1-2 | Items joined into a string with `separator` (default `,`); nested arrays are an error. | `JOIN([1, 'a', TRUE], '-')` | `"1-a-TRUE"` |
+| `JOIN` | `JOIN(array, [separator])` | 1-2 | Items joined into a string with `separator` (default `,`); a DateTime is ISO 8601 UTC text; nested arrays are an error. | `JOIN([1, 'a', TRUE], '-')` | `"1-a-TRUE"` |
 | `MERGE` | `MERGE(values…)` | 0+ | Arrays concatenated; scalar arguments are appended as items. | `MERGE([1, 2], 3, [4])` | `[1, 2, 3, 4]` |
 | `FILTER` † | `FILTER(array, expr, [param])` | 2-3 | Items for which `expr` is TRUE; the item is `:x` (or `:param`). | `FILTER([1, 2, 3, 4], :x % 2 == 0)` | `[2, 4]` |
 | `FIND` † | `FIND(array, expr, [param])` | 2-3 | First item for which `expr` is TRUE, else NULL. With text first, Excel `FIND(find_text, within_text, [start_num])`: 1-based, case-sensitive position; error when not found. | `FIND([1, 5, 10], :x > 3)` | `5` |

@@ -284,6 +284,7 @@ Sum of all arguments.
 SUM(1, 2, 3, 4, 5)           # 15
 SUM([1, 2, 3], [4, 5])       # 15 (arrays are flattened)
 SUM(...[1, 2, 3])            # 6 (spread operator)
+SUM(10::Currency, 5)         # Currency(15)
 ```
 
 #### `PRODUCT(...)`, `MULTIPLY(...)`
@@ -292,7 +293,12 @@ Product of all arguments.
 PRODUCT(1, 2, 3, 4)          # 24
 MULTIPLY(2, 3, 4)            # 24 (alias)
 PRODUCT([2, 3, 4])           # 24 (works with arrays)
+PRODUCT(2::Currency, 3)      # Currency(6)
 ```
+
+`SUM`, `PRODUCT`, `AVERAGE`, `MIN` and `MAX` return Currency when any value they count is
+Currency, as `Currency + Number` is Currency (ADR-0027, ADR-0031); otherwise a Number. The
+methods (`.sum()`, `.avg()`, `.min()`, `.max()`) still return a Number.
 
 UPPERCASE builtins follow Excel's documented behaviour (BL-054). Where Excel returns `#DIV/0!`,
 `#NUM!`, `#VALUE!` or `#N/A`, Skillet returns an error, and the message names the Excel error.
@@ -305,6 +311,7 @@ Average of the numbers in the arguments. No numbers is an error (Excel `#DIV/0!`
 AVERAGE(1, 2, 3, 4, 5)       # 3.0
 AVG(10, 20, 30)              # 20.0 (alias)
 AVERAGE([1, "x", TRUE])      # 1 (text and booleans in arrays are ignored)
+AVERAGE(10::Currency, 20)    # Currency(15)
 AVERAGE([])                  # Error: AVERAGE of no numbers (#DIV/0!)
 ```
 
@@ -313,6 +320,7 @@ Maximum/minimum value from arguments. As in Excel, no numbers gives 0.
 ```bash
 MAX(1, 5, 3, 9, 2)           # 9
 MIN([1, 5, 3, 9, 2])         # 1 (works with arrays too)
+MIN(1, 3::Currency)          # Currency(1)
 MAX()                        # 0
 ```
 
@@ -538,8 +546,9 @@ LENGTH([1, 2, 3])            # 3
 
 #### `TEXTJOIN(delimiter, ignore_empty, text1, ...)`
 Excel's `TEXTJOIN`: joins the texts (arrays are flattened) with `delimiter`. With `ignore_empty`
-TRUE, empty strings and NULLs are skipped. Numbers and booleans become text. An array delimiter is
-used in turn between items. At least one text is required.
+TRUE, empty strings and NULLs are skipped. Numbers and booleans become text, and a DateTime its
+ISO 8601 text (`2026-01-01T00:00:00Z`). An array delimiter is used in turn between items. At
+least one text is required.
 ```bash
 TEXTJOIN(", ", TRUE, "a", "", ["b", "c"])     # "a, b, c"
 TEXTJOIN(",", FALSE, "a", "", "b")            # "a,,b"
@@ -561,13 +570,13 @@ FIND("x", "abc")                   # Error: FIND: find_text not found in within_
 #### `CONCAT(...)`
 Join every value as text, as Excel does. Numbers and currency are written as numbers
 (`1.5::Currency` is `"1.5"`), booleans as `TRUE`/`FALSE`, and a DateTime as its `::String` text,
-the Unix seconds (Excel writes a date's serial number the same way). Arrays are flattened. `NULL`
-and JSON objects add nothing. The `&` operator uses the same rules.
+ISO 8601 UTC (ADR-0031). Arrays are flattened. `NULL` and JSON objects add nothing. The `&`
+operator uses the same rules.
 ```bash
 CONCAT("Hello", " ", "World")          # "Hello World"
 CONCAT("Value: ", 42)                  # "Value: 42"
 CONCAT("Total: ", 9.5::Currency)       # "Total: 9.5"
-CONCAT("On ", DATE(2026, 1, 1))        # "On 1767225600"
+CONCAT("On ", DATE(2026, 1, 1))        # "On 2026-01-01T00:00:00Z"
 ```
 
 #### `SUBSTRING(text, start, length)`
@@ -668,7 +677,8 @@ DATE(2024, 2 + 1, 0)         # 2024-02-29 (end of month)
 TODAY()                      # today, midnight
 ```
 
-String casts stay strict: `"2026-02-30"::DateTime` is an error.
+String casts stay strict: `"2026-02-30"::DateTime` is an error. See
+[Dates as text](#dates-as-text) for the text a DateTime becomes and the text `::DateTime` reads.
 
 #### `TIME()`, `TIME(hour, minute, second)`
 The time as a fraction of a day, as in Excel (ADR-0018): `TIME(12, 0, 0)` is 0.5. Each part is
@@ -1013,10 +1023,12 @@ Numeric operations.
 ```
 
 #### `.join([separator])`
-Join to string.
+Join to string. Strings, numbers, booleans and DateTimes (as ISO 8601 text) join; other values
+are an error.
 ```bash
 [1,2,3].join("-")            # "1-2-3"
 ["a","b","c"].join()         # "a,b,c" (default: comma)
+[DATE(2026,1,1)].join()      # "2026-01-01T00:00:00Z"
 ```
 
 #### `.contains(value)`, `.includes(value)`
@@ -1326,6 +1338,22 @@ value :: type_name
 0 :: Boolean                 # false
 "hello" :: Array             # ["h", "e", "l", "l", "o"]
 ```
+
+### Dates as text
+A DateTime becomes ISO 8601 text in UTC with whole seconds (ADR-0031):
+`DATE(2026, 1, 1)::String` is `"2026-01-01T00:00:00Z"`. `::String`, `.to_s()`, `CONCAT`, `&`,
+`JOIN`, `.join()`, `TEXTJOIN` and the string inside `.to_json()` all write this text. A year
+outside 0000-9999 gets a sign (`"+10000-01-01T00:00:00Z"`).
+
+`::DateTime` reads that exact form back, and integer text as Unix seconds:
+```bash
+(DATE(2026, 1, 1)::String)::DateTime == DATE(2026, 1, 1)   # true
+"2026-01-01T10:30:00Z"::DateTime                           # DateTime for 2026-01-01 10:30 UTC
+"1767225600"::DateTime                                     # DateTime for 2026-01-01
+"2026-01-01"::DateTime                                     # Error: Cannot cast String to DateTime
+```
+Other forms (a date alone, an offset, fractional seconds, a space instead of `T`) are errors.
+The `::Json` cast and the server responses still write a DateTime as its Unix seconds.
 
 ---
 

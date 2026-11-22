@@ -1,4 +1,5 @@
 use crate::error::Error;
+use crate::runtime::datetime::datetime_text;
 use crate::runtime::utils::values_equal;
 use crate::types::Value;
 use std::cmp::Ordering;
@@ -107,7 +108,7 @@ pub fn exec_array(name: &str, args: &[Value]) -> Result<Value, Error> {
                         }
                         Value::Null => parts.push(String::new()),
                         Value::Currency(n) => parts.push(format!("{:.4}", n)),
-                        Value::DateTime(ts) => parts.push(ts.to_string()),
+                        Value::DateTime(ts) => parts.push(datetime_text(*ts)),
                         Value::Json(s) => parts.push(s.clone()),
                         Value::Array(_) => {
                             return Err(Error::new("JOIN does not flatten nested arrays", None))

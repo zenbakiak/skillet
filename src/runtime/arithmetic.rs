@@ -9,11 +9,11 @@ use crate::types::Value;
 
 pub fn exec_arithmetic(name: &str, args: &[Value]) -> Result<Value, Error> {
     match name {
-        "SUM" => Ok(Value::Number(fold_numbers(args, 0.0, |acc, n| acc + n))),
-        "PRODUCT" | "MULTIPLY" => Ok(Value::Number(fold_numbers(args, 1.0, |acc, n| acc * n))),
+        "SUM" => Ok(fold_numbers(args, 0.0, |acc, n| acc + n)),
+        "PRODUCT" | "MULTIPLY" => Ok(fold_numbers(args, 1.0, |acc, n| acc * n)),
         "AVG" | "AVERAGE" => average(args),
-        "MIN" => Ok(Value::Number(extreme(args, f64::min))),
-        "MAX" => Ok(Value::Number(extreme(args, f64::max))),
+        "MIN" => Ok(extreme(args, f64::min)),
+        "MAX" => Ok(extreme(args, f64::max)),
         "ROUND" => round(args),
         "CEIL" | "CEILING" => ceiling(name, args),
         "FLOOR" => floor(args),
@@ -36,40 +36,57 @@ pub fn exec_arithmetic(name: &str, args: &[Value]) -> Result<Value, Error> {
 }
 
 /// Visit every number and currency in the arguments, flattening arrays. Other values are
-/// ignored, as Excel ignores text and logical values in a range (excel-compat X-3).
-fn for_each_number(args: &[Value], f: &mut impl FnMut(f64)) {
+/// ignored, as Excel ignores text and logical values in a range (excel-compat X-3). Returns
+/// whether a Currency was visited.
+fn for_each_number(args: &[Value], f: &mut impl FnMut(f64)) -> bool {
+    let mut currency = false;
     for a in args {
         match a {
-            Value::Number(n) | Value::Currency(n) => f(*n),
-            Value::Array(items) => for_each_number(items, f),
+            Value::Number(n) => f(*n),
+            Value::Currency(n) => {
+                currency = true;
+                f(*n)
+            }
+            Value::Array(items) => currency |= for_each_number(items, f),
             _ => {}
         }
     }
+    currency
 }
 
-fn fold_numbers(args: &[Value], init: f64, op: impl Fn(f64, f64) -> f64) -> f64 {
+/// An aggregate's result: Currency when a counted value was Currency, as `Currency op Number`
+/// is Currency (ADR-0027, ADR-0031); otherwise a Number.
+fn tagged(n: f64, currency: bool) -> Value {
+    if currency {
+        Value::Currency(n)
+    } else {
+        Value::Number(n)
+    }
+}
+
+fn fold_numbers(args: &[Value], init: f64, op: impl Fn(f64, f64) -> f64) -> Value {
     let mut acc = init;
-    for_each_number(args, &mut |n| acc = op(acc, n));
-    acc
+    let currency = for_each_number(args, &mut |n| acc = op(acc, n));
+    tagged(acc, currency)
 }
 
 fn average(args: &[Value]) -> Result<Value, Error> {
     let (mut sum, mut count) = (0.0, 0usize);
-    for_each_number(args, &mut |n| {
+    let currency = for_each_number(args, &mut |n| {
         sum += n;
         count += 1;
     });
     if count == 0 {
         return Err(Error::new("AVERAGE of no numbers (#DIV/0!)", None));
     }
-    Ok(Value::Number(sum / count as f64))
+    Ok(tagged(sum / count as f64, currency))
 }
 
 /// `MIN`/`MAX`: Excel returns 0 when the arguments contain no numbers.
-fn extreme(args: &[Value], pick: fn(f64, f64) -> f64) -> f64 {
+fn extreme(args: &[Value], pick: fn(f64, f64) -> f64) -> Value {
     let mut cur: Option<f64> = None;
-    for_each_number(args, &mut |n| cur = Some(cur.map_or(n, |c| pick(c, n))));
-    cur.unwrap_or(0.0)
+    let currency = for_each_number(args, &mut |n| cur = Some(cur.map_or(n, |c| pick(c, n))));
+    tagged(cur.unwrap_or(0.0), currency)
 }
 
 fn arity(name: &str, args: &[Value], min: usize, max: usize, sig: &str) -> Result<(), Error> {

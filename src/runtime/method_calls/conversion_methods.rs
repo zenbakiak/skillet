@@ -1,5 +1,6 @@
 use crate::error::Error;
 use crate::limits;
+use crate::runtime::datetime::{datetime_text, write_datetime};
 use crate::types::Value;
 use std::fmt::Write;
 
@@ -43,7 +44,7 @@ fn to_string(value: &Value) -> Result<Value, Error> {
         Value::Boolean(b) => b.to_string(),
         Value::Currency(c) => format!("{:.2}", c),
         Value::Json(s) => s.clone(),
-        Value::DateTime(dt) => dt.to_string(),
+        Value::DateTime(dt) => datetime_text(*dt),
         Value::Array(_) => unreachable!("arrays are handled above"),
     };
     Ok(Value::String(result))
@@ -58,7 +59,7 @@ fn write_s(w: &mut impl Write, value: &Value) {
         Value::Number(n) => write!(w, "{}", n),
         Value::Boolean(b) => write!(w, "{}", b),
         Value::Currency(c) => write!(w, "{:.2}", c),
-        Value::DateTime(dt) => write!(w, "{}", dt),
+        Value::DateTime(dt) => write_datetime(w, *dt),
         Value::Array(arr) => {
             let _ = w.write_char('[');
             for (i, v) in arr.iter().enumerate() {
@@ -172,7 +173,7 @@ fn to_json(value: &Value) -> Result<Value, Error> {
                 .map_err(|e| Error::new(format!("Failed to convert to JSON: {}", e), None))?
         }
         Value::DateTime(dt) => {
-            let json_val = serde_json::Value::String(dt.to_string());
+            let json_val = serde_json::Value::String(datetime_text(*dt));
             serde_json::to_string(&json_val)
                 .map_err(|e| Error::new(format!("Failed to convert to JSON: {}", e), None))?
         }
@@ -216,6 +217,6 @@ fn value_to_json_value(value: &Value) -> Result<serde_json::Value, Error> {
             crate::limits::charge_json_parse(s)?;
             serde_json::from_str(s).map_err(|e| Error::new(format!("Invalid JSON: {}", e), None))
         }
-        Value::DateTime(dt) => Ok(serde_json::Value::String(dt.to_string())),
+        Value::DateTime(dt) => Ok(serde_json::Value::String(datetime_text(*dt))),
     }
 }

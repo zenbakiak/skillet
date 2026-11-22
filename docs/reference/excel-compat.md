@@ -61,7 +61,7 @@ These patterns repeat across many rows. They are listed once here, and the table
 
 | Function | Skillet (expr → output) | Excel | Match? | Status |
 |---|---|---|---|---|
-| `SUM` | `SUM(1,2,3)` → `6`; `SUM([1,2],3)` → `6`; `SUM()` → `0`; `SUM([1,"2",TRUE,NULL])` → `1`; `SUM(10::Currency, 5)` → `Number(15)` | `SUM(number1, ...)`. Text and logical values in arrays are ignored | yes | X-3 deliberate. Open: the result loses the `Currency` type (B-13) |
+| `SUM` | `SUM(1,2,3)` → `6`; `SUM([1,2],3)` → `6`; `SUM()` → `0`; `SUM([1,"2",TRUE,NULL])` → `1`; `SUM(10::Currency, 5)` → `Currency(15)` | `SUM(number1, ...)`. Text and logical values in arrays are ignored | yes | X-3 deliberate. B-13 fixed (ADR-0031): Currency when any value is Currency; the same for `PRODUCT`, `AVERAGE`, `MIN`, `MAX` |
 | `AVERAGE` (`AVG`) | `AVERAGE(1,2,3,4)` → `2.5`; `AVERAGE()` → `Error: AVERAGE of no numbers (#DIV/0!)`; `AVERAGE([1,"x",TRUE])` → `1`; `AVERAGE([1,NULL,3])` → `2` | No numbers → `#DIV/0!` | yes | implemented (#84) |
 | `MIN` / `MAX` | `MIN(3,1,2)` → `1`; `MIN()` → `0`; `MIN(["a"])` → `0`; `MAX(-1,"5")` → `-1`. Method `[].max()` → `Null`; `["a",1].max()` → error | "If the arguments contain no numbers, MAX returns 0" | yes | X-3 deliberate. The method keeps its own rule (ADR-0018: methods are not bound to the builtin) |
 | `ROUND` | `ROUND(2.5)` → `3`; `ROUND(-2.5)` → `-3`; `ROUND(2.345,2)` → `2.35`; `ROUND(1.005,2)` → `1.01`; `ROUND(1234.567,-2)` → `1200`; `ROUND(15,-1)` → `20`; `ROUND(2.567,"x")` → error (X-5); `ROUND()` → `Error: ROUND expects (number, [num_digits])`; `ROUND("2.5")` → `3`; `ROUND(10::Currency,1)` → `Currency(10)` | `ROUND(number, num_digits)`. Halves away from zero; negative digits round left of the point; `ROUND(1.005,2)` = 1.01 | yes | implemented (#84, "Also decided"; `"2.5"` converts since #89). Leaving out `num_digits` (default 0) is a Skillet extension |
@@ -90,7 +90,7 @@ These patterns repeat across many rows. They are listed once here, and the table
 
 | Function | Skillet (expr → output) | Excel | Match? | Status |
 |---|---|---|---|---|
-| `CONCAT` | `CONCAT("a",1,TRUE,NULL)` → `"a1TRUE"`; `CONCAT("a",[1,2])` → `"a12"`; `CONCAT(1.5,2)` → `"1.52"`; `CONCAT()` → `""`; `CONCAT("a", 1::Currency, DATE(2026,1,1))` → `"a"` | Accepts ranges. Booleans become `TRUE`/`FALSE`. Numbers use 15 significant digits (X-7) | edges | open: `Currency` and `DateTime` values are dropped silently; they should be an error or a defined format. X-7 deliberate |
+| `CONCAT` | `CONCAT("a",1,TRUE,NULL)` → `"a1TRUE"`; `CONCAT("a",[1,2])` → `"a12"`; `CONCAT(1.5,2)` → `"1.52"`; `CONCAT()` → `""`; `CONCAT("a", 1::Currency, DATE(2026,1,1))` → `"a12026-01-01T00:00:00Z"` | Accepts ranges. Booleans become `TRUE`/`FALSE`. Numbers use 15 significant digits (X-7). A date is its serial number | edges | **deliberate** (ADR-0031): Currency is its number, a DateTime its ISO 8601 UTC text (the `::String` text), not a serial number. X-7 deliberate |
 | `UPPER` / `LOWER` | `UPPER("abc")` → `"ABC"`; `UPPER(1)` → `Error: UPPER expects string` | `UPPER(1)` = "1" | yes | X-9 deliberate |
 | `TRIM` | `TRIM("  a   b  ")` → `"a b"`; `TRIM(1)` → `Error: TRIM expects string` | Removes leading and trailing spaces and collapses inner runs to one | yes | implemented D-7 (#84). `.trim()` keeps Ruby `strip`: `"  a   b  ".trim()` → `"a   b"`. `TRIM(1)` is X-9 |
 | `LEFT` / `RIGHT` | `LEFT("hello")` → `"h"`; `LEFT("hello",-1)` → `""`; `LEFT("hello",10)` → `"hello"`; `LEFT("hello",2.9)` → `"he"`; `LEFT(12345,2)` → `Error: LEFT expects string as first argument`; `RIGHT("héllo",4)` → `"éllo"` | `num_chars` defaults to 1 and is truncated. Negative → `#VALUE!` | edges | open: negative length should be an error. `LEFT(12345,2)` is X-9 |
@@ -217,7 +217,7 @@ result as the builtin of the same name. The pairs that differ:
 | B-10 | Low | `BETWEEN(1, 10, 5)` | `true` | fixed (#68) |
 | B-11 | Low | `REVERSE("abc")` | `Error: REVERSE expects array` | **open**; expected `"cba"` |
 | B-12 | Low | `SORT([3,1,2], -1)` | `[3,2,1]` | fixed (#84) |
-| B-13 | Low | `ROUND(10::Currency, 1)`; `SUM(10::Currency, 5)` | `Currency(10)`; `Number(15)` | `ROUND` fixed (#84); `SUM` **open** (should stay `Currency`, ADR-0003) |
+| B-13 | Low | `ROUND(10::Currency, 1)`; `SUM(10::Currency, 5)` | `Currency(10)`; `Currency(15)` | fixed: `ROUND` (#84); `SUM`, `PRODUCT`, `AVERAGE`, `MIN`, `MAX` keep Currency (ADR-0031, 2026-11-21) |
 | B-14 | Low | `(-3.7).int()` vs `INT(-3.7)` | `-3` vs `-4` | closed: deliberate (ADR-0018) |
 | B-15 | Low | `DATEADD(DATE(2026,1,1), 1, "m")` | +1 minute | fixed (2026-11-21): units follow Excel, `"m"` is months, `"n"` minutes; `DATEDIF` added |
 | B-16 | Low | `SUBSTITUTE("abc", "", "x")` | `"abc"` | fixed (#84) |
@@ -286,8 +286,10 @@ proposal must say that docs show the function form wherever Excel semantics are 
 
 ## Proposal: string to DateTime cast formats
 
-Not a decision and not implemented. Today `"2026-01-01"::DateTime` →
-`Error: Cannot cast String to DateTime`, and only numeric strings work
+Not a decision and not implemented, except one row: ADR-0031 made a DateTime's text ISO 8601 UTC
+(`DATE(2026,1,1)::String` → `"2026-01-01T00:00:00Z"`) and made the cast read that exact form
+(`"2026-01-01T10:30:00Z"::DateTime` below). Today `"2026-01-01"::DateTime` →
+`Error: Cannot cast String to DateTime`, and otherwise only numeric strings work
 (`"1767225600"::DateTime` → `DateTime(1767225600)`). ADR-0018 D-5 decided that casts stay strict
 (no rollover, no format guessing) and left the accepted formats to this proposal.
 
@@ -296,7 +298,7 @@ Not a decision and not implemented. Today `"2026-01-01"::DateTime` →
 | Input | Result | Notes |
 |---|---|---|
 | `"2026-01-01"::DateTime` | `DateTime(1767225600)` | Date only → 00:00:00 UTC. The same as `DATE(2026,1,1)` |
-| `"2026-01-01T10:30:00Z"::DateTime` | `DateTime(1767263400)` | RFC 3339, UTC |
+| `"2026-01-01T10:30:00Z"::DateTime` | `DateTime(1767263400)` | RFC 3339, UTC. **Implemented** (ADR-0031) |
 | `"2026-01-01T10:30:00+02:00"::DateTime` | `DateTime(1767256200)` | The offset is applied and stored as UTC |
 | `"2026-01-01T10:30:00"::DateTime` | `DateTime(1767263400)` | No offset → UTC (consistent with `DATE`). Never the server's local zone |
 | `"2026-01-01 10:30:00"::DateTime` | `DateTime(1767263400)` | Space separator, for SQL and CSV exports |
@@ -307,7 +309,6 @@ Not a decision and not implemented. Today `"2026-01-01"::DateTime` →
 | `"2026-1-5"::DateTime` | `Error` | Zero-padded fields only; keeps the parser strict and predictable |
 
 Compatibility: this only turns current errors into values. No expression that currently returns
-a value changes. Follow-ups that are **not** part of this proposal: `DateTime::String`
-(currently `"1767225600"`) could produce ISO 8601, but that would be a breaking change and
-needs its own ADR. An Excel-named `DATEVALUE(text)` could be a thin wrapper around the cast,
+a value changes. `DateTime::String` producing ISO 8601 was a follow-up here; ADR-0031 decided it
+(a breaking change in 0.7). An Excel-named `DATEVALUE(text)` could be a thin wrapper around the cast,
 and `YEAR`/`MONTH`/`DAY` could accept strings by applying the same cast.

@@ -147,19 +147,22 @@ fn concat_writes_currency_as_its_number() {
 
 #[test]
 fn concat_writes_datetime_as_its_string_cast() {
-    // The same text as `::String`: Unix seconds, like Excel's date serial number.
+    // The same text as `::String`: ISO 8601 UTC (ADR-0031).
     assert_eq!(
         string(r#"CONCAT("a", 1::Currency, DATE(2026, 1, 1))"#),
-        "a11767225600"
+        "a12026-01-01T00:00:00Z"
     );
     assert_eq!(
         string(r#"CONCAT(DATE(2026, 1, 1))"#),
         string("DATE(2026, 1, 1)::String")
     );
-    assert_eq!(string(r#""on " & DATE(2026, 1, 1)"#), "on 1767225600");
+    assert_eq!(
+        string(r#""on " & DATE(2026, 1, 1)"#),
+        "on 2026-01-01T00:00:00Z"
+    );
     assert_eq!(
         string(r#"CONCAT([1::Currency, DATE(1970, 1, 2)])"#),
-        "186400"
+        "11970-01-02T00:00:00Z"
     );
 }
 

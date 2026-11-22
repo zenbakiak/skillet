@@ -394,3 +394,88 @@ fn rollover_date(year: i32, month0: i64, day: u32) -> Option<NaiveDate> {
     )?;
     first.checked_add_signed(TimeDelta::try_days(i64::from(day) - 1)?)
 }
+
+/// Write a DateTime as text (ADR-0031): ISO 8601 UTC with whole seconds,
+/// `2026-01-01T00:00:00Z`. Years outside 0000–9999 get a sign (`+10000`); a timestamp beyond
+/// chrono's range falls back to its Unix seconds, which `parse_datetime_text` also reads.
+pub(crate) fn write_datetime(w: &mut impl std::fmt::Write, ts: i64) -> std::fmt::Result {
+    match DateTime::from_timestamp(ts, 0) {
+        Some(dt) => write!(w, "{}", dt.format("%Y-%m-%dT%H:%M:%SZ")),
+        None => write!(w, "{}", ts),
+    }
+}
+
+/// `write_datetime` into a new `String`.
+pub(crate) fn datetime_text(ts: i64) -> String {
+    let mut s = String::with_capacity(20);
+    let _ = write_datetime(&mut s, ts);
+    s
+}
+
+/// The DateTime a `::DateTime` cast reads from text: Unix seconds (`"1767225600"`) or the
+/// ISO 8601 UTC form `write_datetime` writes. Strict: no other offsets, no fractions, no
+/// rollover (`"2026-02-30T00:00:00Z"` is `None`).
+pub(crate) fn parse_datetime_text(s: &str) -> Option<i64> {
+    if let Ok(ts) = s.parse::<i64>() {
+        return Some(ts);
+    }
+    // "<year>-MM-DDTHH:MM:SSZ": a fixed 16-byte tail after the year.
+    let split = s.len().checked_sub(16)?;
+    let (year, tail) = (s.get(..split)?, s.get(split..)?.as_bytes());
+    let digits = year.strip_prefix(['+', '-']).unwrap_or(year);
+    let shape = b"-dd-ddTdd:dd:ddZ";
+    let fits = tail.iter().zip(shape).all(|(c, p)| match p {
+        b'd' => c.is_ascii_digit(),
+        _ => c == p,
+    });
+    if digits.len() < 4 || !digits.bytes().all(|b| b.is_ascii_digit()) || !fits {
+        return None;
+    }
+    let field = |i: usize| u32::from(tail[i] - b'0') * 10 + u32::from(tail[i + 1] - b'0');
+    let date = NaiveDate::from_ymd_opt(year.parse().ok()?, field(1), field(4))?;
+    let time = NaiveTime::from_hms_opt(field(7), field(10), field(13))?;
+    Some(date.and_time(time).and_utc().timestamp())
+}
+
+#[cfg(test)]
+mod text_tests {
+    use super::{datetime_text, parse_datetime_text};
+
+    #[test]
+    fn iso_text_round_trips() {
+        for ts in [
+            0,
+            1_767_225_600,
+            -1,
+            253_402_300_799,
+            253_402_300_800,
+            -62_167_219_201,
+            i64::MAX,
+        ] {
+            assert_eq!(parse_datetime_text(&datetime_text(ts)), Some(ts), "{ts}");
+        }
+        assert_eq!(datetime_text(1_767_225_600), "2026-01-01T00:00:00Z");
+    }
+
+    #[test]
+    fn rejects_other_shapes() {
+        for s in [
+            "2026-01-01",
+            "2026-01-01T00:00:00",
+            "2026-01-01 00:00:00Z",
+            "2026-01-01T00:00:00+00:00",
+            "2026-01-01T00:00:00.5Z",
+            "2026-02-30T00:00:00Z",
+            "2026-01-01T24:00:00Z",
+            "2026-01-01T23:59:60Z",
+            "26-01-01T00:00:00Z",
+            "2026-1-01T00:00:00Z",
+            "+-2026-01-01T00:00:00Z",
+            "2026-01-01t00:00:00z",
+            "",
+            "héllo-01-01T00:00:00Z",
+        ] {
+            assert_eq!(parse_datetime_text(s), None, "{s}");
+        }
+    }
+}

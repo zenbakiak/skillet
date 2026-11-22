@@ -256,9 +256,10 @@ fn textjoin_errors() {
         err("=TEXTJOIN(',', 'yes', 'a')"),
         "TEXTJOIN ignore_empty must be TRUE or FALSE"
     );
+    // A date is text since ADR-0031; a JSON object still has no text form.
     assert_eq!(
-        err("=TEXTJOIN(',', TRUE, DATE(2026, 1, 1))"),
-        "TEXTJOIN expects text, numbers, booleans or arrays"
+        err("=TEXTJOIN(',', TRUE, {\"a\": 1})"),
+        "TEXTJOIN expects text, numbers, booleans, dates or arrays"
     );
 }
 
