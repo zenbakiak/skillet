@@ -259,7 +259,7 @@ generated `docs/reference/functions.md`. Removes doc drift and the string-`HashS
 ### BL-011 · `Value::Json(String)` → structured value · P2 · `todo` · language-designer (ADR, supersedes ADR-0004) → rust-engineer
 Nested objects are re-serialized/re-parsed on every access. Measure first (BL-005).
 
-### BL-012 · Cache parsed ASTs in servers · P2 · `review` (PR #80, ADR-0021 Accepted; prototype measured < 2% except on 1.8 KB expressions, +41% req/s there on 1 connection)· performance-engineer → rust-engineer
+### BL-012 · Cache parsed ASTs in servers · P2 · `done` (PR #80, ADR-0021 Accepted; prototype measured < 2% except on 1.8 KB expressions, +41% req/s there on 1 connection)· performance-engineer → rust-engineer
 Servers re-parse identical expressions per request; `Rc<Expr>` blocks sharing across threads
 (ADR-0002). Evaluate `Arc` or per-thread LRU of `Expr`.
 
@@ -394,7 +394,7 @@ Review (orchestrator, 2026-11-20): accepted. Verified in release: 20k parens, 50
   tests/security_limits.rs edited; strict clippy clean (both feature sets). Parser refactor is
   bigger than briefed but covered by parity + full suite. Known gap → BL-029.
 
-### BL-018 · QuickJS resource limits + constant-time token compare · P1 · `review` (tokens PR #51; threat model and ADR-0017 Accepted PR #73; QuickJS limits PR #79)· security-reviewer → rust-engineer
+### BL-018 · QuickJS resource limits + constant-time token compare · P1 · `done` (tokens PR #51; threat model and ADR-0017 Accepted PR #73; QuickJS limits PR #79)· security-reviewer → rust-engineer
 `src/js_plugin.rs` sets no memory limit or interrupt handler (an uploaded `while(true){}` pins a
 worker forever). `src/bin/http_server/auth.rs` compares tokens with `!=`. Write the threat model
 `docs/security/THREAT_MODEL.md` as part of this item.
@@ -415,11 +415,11 @@ Create root `CHANGELOG.md` (Keep a Changelog) back-filled from git tags, and run
 Client-side hooks (ADR-0009) can be bypassed. Require PR review and a passing CI check on
 `main` and `develop`; block force-push. Depends on BL-004 for the CI check.
 
-### BL-023 · `NULL == NULL` evaluates to `false` · P2 · `review` (ADR-0013 Accepted, option A, PR #77; implemented in PR #82)· language-designer → rust-engineer
+### BL-023 · `NULL == NULL` evaluates to `false` · P2 · `done` (ADR-0013 Accepted, option A, PR #77; implemented in PR #82)· language-designer → rust-engineer
 Found by BL-001a parity tests (public API). Decide intended semantics (likely `true`; Excel has no
 null, SQL says unknown) and the rule for `NULL != NULL`; ADR if it changes results.
 
-### BL-024 · `JQ` unwraps single matches to a scalar · P3 · `review` (ADR-0014 Accepted, option B, PR #77; implemented in PR #76)· language-designer
+### BL-024 · `JQ` unwraps single matches to a scalar · P3 · `done` (ADR-0014 Accepted, option B, PR #77; implemented in PR #76)· language-designer
 `JQ({"a":[3]}, "$.a[*]")` returns `3`, but two matches return an array, so
 `.map(JQ(:x, "$.a[*]").sum())` fails on rows with one element. Decide whether wildcard paths
 always return arrays; breaking change needs an ADR.
@@ -429,7 +429,7 @@ always return arrays; breaking change needs an ADR.
 `#[cfg(feature = "plugins")]` (preferred: servers still work without JS) or set
 `required-features = ["plugins"]` per bin. Then extend `harness/check.sh` to build all targets without plugins.
 
-### BL-026 · `PERCENTILE` accepts NaN as the percentile · P3 · `review` (ADR-0015 Accepted, option B, PR #77; implemented in PR #84; NaN crash fixed in PR #59)· language-designer → rust-engineer
+### BL-026 · `PERCENTILE` accepts NaN as the percentile · P3 · `done` (ADR-0015 Accepted, option B, PR #77; implemented in PR #84; NaN crash fixed in PR #59)· language-designer → rust-engineer
 `src/runtime/statistical.rs` range check uses `p < 0.0 || p > 1.0`, which lets NaN through (kept by
 BL-003 with `#[allow(clippy::manual_range_contains)]`). Decide: error on NaN (likely), then use
 `!(0.0..=1.0).contains(&p)` and drop the allow.
@@ -970,7 +970,7 @@ Review (orchestrator, 2026-11-20): accepted. Re-ran `cargo bench --bench lambda_
   handler signatures changed (`&dyn EvaluationContext`), `exec_*_with_custom` removed; lib.rs API
   unchanged. Follow-ups: BL-031, BL-032.
 
-### BL-031 · Custom functions not visible in method args and builtin lambdas · P3 · `review` (ADR-0016 Accepted, option A, PR #77; implemented in PR #82)· language-designer
+### BL-031 · Custom functions not visible in method args and builtin lambdas · P3 · `done` (ADR-0016 Accepted, option A, PR #77; implemented in PR #82)· language-designer
 Found in BL-030 (pre-existing, preserved): custom functions work inside `.map()/.filter()` lambdas but
 not in plain method arguments (`:s.contains(MYFN())`) or in `FILTER()/MAP()`-style builtin lambdas.
 Decide whether that is intended; likely not (one evaluator, one function namespace).
@@ -1033,7 +1033,7 @@ and hooks loading. Profile before changing anything.
 ### BL-041 · `sk_http_bench` "Range operations" case always fails · P3 · `done` (PR #57)· qa-engineer
 Uses `range(1,50).sum()`; there is no RANGE function. Fix or drop the case.
 
-### BL-042 · Remove or feature-gate `scalar-doc` · P2 · `review` (PR #81, ADR-0020 option D: removed, `/docs` is static HTML) · release-engineer (dependency decision)
+### BL-042 · Remove or feature-gate `scalar-doc` · P2 · `done` (PR #81, ADR-0020 option D: removed, `/docs` is static HTML) · release-engineer (dependency decision)
 Most `cargo audit` warnings (anyhow, rand, chrono-tz, the fixed crossbeam-epoch) and the edition-2024
 MSRV pressure come through `scalar-doc` → `tera`, used only for the `/docs` page.
 
@@ -1071,7 +1071,7 @@ document the 404 for JS endpoints in plugin-free builds and the server request l
 ---
 Round 3, 2026-11-20 (orchestrator). Merged #53–#66. Follow-ups:
 
-### BL-051 · Security review follow-ups for the JS plugin path · P1 · `review` (PRs #73, #74, #78, #79; merge #78 before #74, #79 with or after #73) · maintainer decisions → rust-engineer
+### BL-051 · Security review follow-ups for the JS plugin path · P1 · `done` (PRs #73, #74, #78, #79; merge #78 before #74, #79 with or after #73) · maintainer decisions → rust-engineer
 Findings from the threat-model review (lane I, 2026-11-20), now published in
 `docs/security/THREAT_MODEL.md` (§3 top risks). Decision-free parts landed in PR #63 (upload file
 names, hook paths, JS result depth, registry lock, PID file). Maintainer decisions of 2026-11-21:
@@ -1095,17 +1095,17 @@ names, hook paths, JS result depth, registry lock, PID file). Maintainer decisio
 ### BL-053 · Register the documented `BETWEEN` builtin · P2 · `done` (PR #68) · rust-engineer
 Implemented in `logical.rs` and documented in api.md, but missing from the builtin table.
 
-### BL-054 · Language decisions from the Excel audit and lane M · P2 · `review` (decisions: ADR-0018 and ADR-0013 to 0016 Accepted, PR #77; implementation PRs #82, #84, #83, merge in that order; JQ PR #76) · language-designer → maintainer
+### BL-054 · Language decisions from the Excel audit and lane M · P2 · `done` (decisions: ADR-0018 and ADR-0013 to 0016 Accepted, PR #77; implementation PRs #82, #84, #83, merge in that order; JQ PR #76) · language-designer → maintainer
 IPMT sign (existing tests pin the non-Excel sign), COUNTIF with a scalar/string criterion, `TIME`
 Excel normalisation, dotted names (`STDEV.P`) don't parse, `COUNT` semantics, `IF` evaluates both
 branches, ROUND negative digits, CEILING/FLOOR significance, MOD sign, DATE rollover, function vs
 method parity, string → DateTime cast formats. See docs/reference/excel-compat.md D-1…D-10.
 
-### BL-055 · CLI start-up: drop CoreFoundation (~1 ms per call) · P3 · `review` (PR #81, ADR-0020 options B + D; `sk "=1+1"` 4.55 → 3.29 ms; servers still link Foundation, BL-068) · performance-engineer (ADR) → maintainer
+### BL-055 · CLI start-up: drop CoreFoundation (~1 ms per call) · P3 · `done` (PR #81, ADR-0020 options B + D; `sk "=1+1"` 4.55 → 3.29 ms; servers still link Foundation, BL-068) · performance-engineer (ADR) → maintainer
 Linked through chrono → iana-time-zone; needs a dependency/feature decision (TODAY()/TIME() local time).
 Related: release profile LTO/strip (~0.1 ms), plugin-free default build (~0.3 ms).
 
-### BL-056 · Release follow-ups · P3 · `review` (PR #75, ADR-0022: one `vX.Y.Z` tag, `cross` and musl images pinned; actions by SHA and Alpine x86_64 moved to BL-065) · release-engineer (decisions)
+### BL-056 · Release follow-ups · P3 · `done` (PR #75, ADR-0022: one `vX.Y.Z` tag, `cross` and musl images pinned; actions by SHA and Alpine x86_64 moved to BL-065) · release-engineer (decisions)
 Two release tags (`vX.Y.Z` vs `crate-vX.Y.Z`), unpinned `cross`, actions by branch ref, Alpine builder
 aarch64 only.
 
@@ -1121,11 +1121,11 @@ aarch64 only.
 ---
 Round 4, 2026-11-21 (orchestrator). Maintainer decisions produced PRs #73–#84. Follow-ups:
 
-### BL-058 · Lexer parses scientific notation wrong · P1 · `todo` · language-designer → rust-engineer
+### BL-058 · Lexer parses scientific notation wrong · P1 · `done` (PR #89) · language-designer → rust-engineer
 `=1e3` evaluates to 1, silently. Decide whether `1e3`/`1.5E-2` are number literals (Excel accepts
 them) or an error; never a silent wrong value. Regression test either way.
 
-### BL-059 · DateTime comparison is broken · P1 · `todo` · language-designer → rust-engineer
+### BL-059 · DateTime comparison is broken · P1 · `done` (PR #88) · language-designer → rust-engineer
 `DateTime == DateTime` is always false, and `<`/`>` on two dates is an error. Excel compares dates
 as numbers. Fits with the date arithmetic from PR #83.
 
@@ -1152,11 +1152,11 @@ code with `http_server` daemonize, or allow it in the rule.
 Left over from BL-056: actions use branch or tag refs, and `Dockerfile.alpine-builder` builds
 aarch64 only.
 
-### BL-066 · Maintainer decisions still open · P3 · `todo` · maintainer
-- The relative default `hooks` directory, and hooks shadowing builtins (threat model §2.6).
-- A per-IP connection limit with the fixed worker pool.
-- Whether `"a" == "A"` should be case-insensitive, like Excel.
-- Confirm: `10%-3` stays modulo, and numeric text in scalar math stays an error (`ABS("-3")`).
+### BL-066 · Maintainer decisions (2026-11-21) · P3 · `done` (PRs #86, #87, #88, #89; ADR-0023, 0024, 0025) · maintainer
+- Hooks cannot override builtins (ADR-0024, #86); the relative `hooks` default stays.
+- Optional per-IP connection limit, off by default (ADR-0025, #87).
+- `"a" == "A"` stays `false`; `==` stays strict; `===` considered and dropped (ADR-0023, #88).
+- Excel number coercion in arithmetic and scalar math, `10%-3` = -2.9 (ADR-0023, #89).
 
 ### BL-067 · Parse-cache follow-ups · P3 · `todo` · rust-engineer
 Report parse-cache stats in `/health`. `DELETE /cache` does not clear the parse cache (PR #80).
@@ -1164,3 +1164,19 @@ Report parse-cache stats in `/health`. `DELETE /cache` does not clear the parse 
 ### BL-068 · Servers still link Foundation via ctrlc → dispatch2 · P3 · `todo` · performance-engineer
 After PR #81 `sk` no longer links CoreFoundation, but the servers do through `ctrlc`. Start-up
 only, so low priority.
+
+## Round 5 (2026-11-21)
+
+### BL-069 · Parser ignores trailing tokens · P2 · `todo` · language-designer → rust-engineer
+`=1 2` evaluates to `1`: `parse()` stops after one expression and drops the rest. Require end of
+input (error with position), check every entry point, and list any test that relied on it.
+
+### BL-070 · Coercion follow-ups from #89 · P3 · `todo` · maintainer decision → rust-engineer
+- `DATE(...) + NULL` and `DATE(...) + "1"` are errors; Excel returns a date.
+- Currency in the arithmetic operators errors; builtins accept it.
+- Lowercase methods and `DATEADD` intervals stay strict (`[1,"2"].sum()` ignores `"2"`).
+
+### BL-071 · Refresh excel-compat.md after round 5 · P3 · `todo` · docs-engineer
+X-1, X-6, the ABS row and "errors over silent coercion" predate ADR-0023; mark decided items done.
+Threat model §2.6 should mark "hooks shadow builtins" resolved by ADR-0024.
+

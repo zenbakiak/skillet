@@ -18,6 +18,10 @@ Planned as 0.7.0. It contains breaking changes, marked **BREAKING** below; the
 [migration guide](docs/guide/migration-0.7.md) lists each one with the old and the new result.
 
 ### Added
+- `sk_http_server` and `sk_server`: optional limit on concurrent connections per IP address,
+  `--max-connections-per-ip N` or `SKILLET_MAX_CONNECTIONS_PER_IP` (flag wins; no limit when unset).
+  Connections over the limit get HTTP 429 or a JSON error line (ADR-0025, #87).
+- Scientific notation number literals: `1e3`, `2.5e-4`, `1E+2` (BL-058, #89).
 - `benches/baseline.rs` and `benches/BASELINE.md`: a reproducible performance baseline for the
   library, CLI and HTTP layers (#48).
 - `docs/guide/limits.md`: one place for every limit (nesting depth, evaluation budget, server
@@ -57,6 +61,19 @@ Planned as 0.7.0. It contains breaking changes, marked **BREAKING** below; the
 - `sk_http_bench --expr` selects the expression for the sweep (#80).
 
 ### Changed
+- **BREAKING:** like Excel, the arithmetic operators and scalar math builtins convert numeric
+  text and `TRUE`/`FALSE` to numbers (`ABS("-3")` = 3, `"3"+1` = 4, `TRUE+1` = 2), and the operators
+  read `NULL` as 0. Other text is `Cannot convert "abc" to a number (#VALUE!)` (ADR-0023, #89).
+- **BREAKING:** `%` before `+` or `-` is the percent suffix: `10%-3` and `10 % -3` are -2.9. `%` is
+  modulo only when an operand follows it directly (`10 % 3` = 1) (ADR-0023, #89).
+- **BREAKING:** a number run straight into a letter (`1x`, `1_000`) is an `Invalid number literal`
+  error instead of evaluating to the leading number (#89).
+- `==` compares arrays, JSON objects and Currency by value (`[1,2] == [1,2]` is true); booleans and
+  Currency can be ordered (`FALSE < TRUE`). `==` stays strict and case-sensitive; comparisons never
+  convert between types (ADR-0023, #88).
+- **BREAKING:** JS hooks can no longer override builtins. A hook whose `@name` is a builtin name or
+  alias (any case) is skipped with a warning on load; `/upload-js` and `/update-js` answer 400.
+  Rust `CustomFunction`s may still shadow builtins (ADR-0024, #86).
 - The parser uses about 4x less stack per nesting level, so debug builds handle the maximum
   depth on a default 2 MB thread; parsing is 4-35% faster (#48).
 - Documentation moved into `docs/guide/`, `docs/reference/` and `docs/ops/`; the published crate
@@ -169,6 +186,9 @@ Planned as 0.7.0. It contains breaking changes, marked **BREAKING** below; the
 - `crate-release.yml` and the `crate-v*` release trigger (ADR-0022, #75).
 
 ### Fixed
+- `=1e3` evaluated to 1; `1e308*10` now gives the `#NUM!` error (BL-058, #89).
+- `DateTime == DateTime` compares timestamps, and `<`/`>` work between dates (BL-059, #88).
+- A lexer error on the first token is reported instead of `Unexpected token: Eof` (#89).
 - `sk_http_server` reported a request read timeout as "500 Internal Server Error"; it now
   reports "408 Request Timeout" (#51).
 - Deeply nested input (`((((…))))`, `1+1+…`, long `.a.b…` chains, `.reduce([:acc], 0)`) no longer

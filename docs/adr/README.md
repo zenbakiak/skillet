@@ -28,6 +28,9 @@ ADRs 0001–0008 are **retroactive**: they record decisions already embodied in 
 | [0020](0020-drop-corefoundation.md) | Drop CoreFoundation from the macOS binaries | Accepted |
 | [0021](0021-parsed-expression-api-and-server-cache.md) | Evaluate a parsed expression; servers cache parsed expressions per worker thread | Accepted |
 | [0022](0022-single-release-tag.md) | One release tag drives binaries, GitHub release and crates.io | Accepted |
+| [0023](0023-excel-equality-and-coercion.md) | Equality and comparison, and Excel number coercion in arithmetic | Accepted |
+| [0024](0024-hooks-cannot-override-builtins.md) | JS hooks cannot override builtins | Accepted |
+| [0025](0025-per-ip-connection-limit.md) | Optional limit on concurrent connections per IP address | Accepted |
 
 ## Template
 
