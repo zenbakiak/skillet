@@ -889,8 +889,11 @@ impl Evaluator {
             .ok()
             .and_then(|v| Criterion::from_value(&v));
         if let Some(criterion) = criterion {
+            let mut row = 0usize;
             return aggregate(kind, &range, values.as_deref(), |item| {
-                Ok(criterion.matches(item))
+                limits::tick_item(row)?;
+                row += 1;
+                criterion.matches(item)
             });
         }
         let mut scope = Scope::new(context);

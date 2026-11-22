@@ -11,8 +11,10 @@
 //!   text case-insensitively, without wildcards.
 
 use crate::error::Error;
+use crate::limits;
 use crate::types::Value;
 use std::cmp::Ordering;
+use std::collections::HashMap;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Op {
@@ -42,8 +44,10 @@ enum Operand {
     Number(f64),
     Bool(bool),
     Blank,
-    /// Lower-cased text.
+    /// Lower-cased text, compared with `<`, `<=`, `>`, `>=`.
     Text(String),
+    /// Lower-cased wildcard pattern, for `=` and `<>`.
+    Pattern(Pattern),
 }
 
 /// A parsed Excel criterion.
@@ -80,16 +84,20 @@ impl Criterion {
             .iter()
             .find_map(|(p, op)| s.strip_prefix(p).map(|rest| (*op, rest)))
             .unwrap_or((Op::Eq, s));
-        Criterion {
-            op,
-            operand: parse_operand(rest),
-        }
+        let operand = match parse_operand(rest) {
+            Operand::Text(t) if matches!(op, Op::Eq | Op::Ne) => {
+                Operand::Pattern(Pattern::compile(&t))
+            }
+            other => other,
+        };
+        Criterion { op, operand }
     }
 
-    /// Whether `item` meets the criterion.
-    pub(crate) fn matches(&self, item: &Value) -> bool {
+    /// Whether `item` meets the criterion. Errors only when the evaluation deadline passes
+    /// during a long wildcard match.
+    pub(crate) fn matches(&self, item: &Value) -> Result<bool, Error> {
         let op = self.op;
-        match &self.operand {
+        Ok(match &self.operand {
             Operand::Number(t) => match number_of(item, op) {
                 Some(n) => n.partial_cmp(t).is_some_and(|o| op.accepts(o)),
                 None => op == Op::Ne,
@@ -107,15 +115,15 @@ impl Criterion {
                     _ => false,
                 }
             }
-            Operand::Text(pat) => match (op, item) {
-                (Op::Eq, Value::String(s)) => wildcard_match(pat, &s.to_lowercase()),
-                (Op::Eq, _) => false,
-                (Op::Ne, Value::String(s)) => !wildcard_match(pat, &s.to_lowercase()),
-                (Op::Ne, _) => true,
-                (_, Value::String(s)) => op.accepts(s.to_lowercase().as_str().cmp(pat.as_str())),
+            Operand::Pattern(pat) => match item {
+                Value::String(s) => pat.matches(&s.to_lowercase())? == (op == Op::Eq),
+                _ => op == Op::Ne,
+            },
+            Operand::Text(t) => match item {
+                Value::String(s) => op.accepts(s.to_lowercase().as_str().cmp(t.as_str())),
                 _ => false,
             },
-        }
+        })
     }
 }
 
@@ -153,7 +161,8 @@ fn number_of(item: &Value, op: Op) -> Option<f64> {
     }
 }
 
-#[derive(Clone, Copy, PartialEq)]
+/// One token of a wildcard pattern: `*`, `?` or a literal character (`~` already applied).
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum Tok {
     Any,
     One,
@@ -174,38 +183,172 @@ fn tokens(pattern: &str) -> Vec<Tok> {
     out
 }
 
-/// Excel wildcard match over the whole text (both sides already lower-cased). Greedy with one
-/// backtrack point, so it is linear for patterns with a single `*` and O(n·m) at worst.
-fn wildcard_match(pattern: &str, text: &str) -> bool {
-    let pat = tokens(pattern);
-    let txt: Vec<char> = text.chars().collect();
-    let (mut p, mut t) = (0usize, 0usize);
-    let mut star: Option<(usize, usize)> = None;
-    while t < txt.len() {
-        match pat.get(p) {
-            Some(Tok::One) => {
-                p += 1;
-                t += 1;
-            }
-            Some(Tok::Lit(c)) if *c == txt[t] => {
-                p += 1;
-                t += 1;
-            }
-            Some(Tok::Any) => {
-                star = Some((p, t));
-                p += 1;
-            }
-            _ => match star {
-                Some((sp, st)) => {
-                    p = sp + 1;
-                    t = st + 1;
-                    star = Some((sp, st + 1));
-                }
-                None => return false,
-            },
+/// Whether `seg` (no `*`) matches `text` exactly; `text` has the same length as `seg`.
+fn fits(seg: &[Tok], text: &[char]) -> bool {
+    seg.iter().zip(text).all(|(t, c)| match t {
+        Tok::Lit(l) => l == c,
+        _ => true,
+    })
+}
+
+/// A compiled wildcard pattern for `=`/`<>` text criteria (lower-cased, whole-text match).
+///
+/// The pattern is split on `*` into segments: the first must match the start of the text, the
+/// last its end, and the ones in between are found left to right, each at its earliest place
+/// after the previous one. Taking the earliest place is always safe, because a later one only
+/// leaves less room for the rest. So every text character is looked at a bounded number of
+/// times per segment search, and the deadline is checked while scanning (BL-080).
+#[derive(Clone, Debug, PartialEq)]
+struct Pattern {
+    first: Vec<Tok>,
+    /// `None` when the pattern has no `*`: the text must then match `first` exactly.
+    last: Option<Vec<Tok>>,
+    middle: Vec<Finder>,
+}
+
+impl Pattern {
+    fn compile(pattern: &str) -> Pattern {
+        let toks = tokens(pattern);
+        let mut segs: Vec<Vec<Tok>> = toks
+            .split(|t| *t == Tok::Any)
+            .map(<[Tok]>::to_vec)
+            .collect();
+        let first = segs.remove(0); // `split` yields at least one (possibly empty) segment
+        let last = segs.pop();
+        let middle = segs
+            .into_iter()
+            .filter(|s| !s.is_empty())
+            .map(Finder::new)
+            .collect();
+        Pattern {
+            first,
+            last,
+            middle,
         }
     }
-    pat[p..].iter().all(|tok| *tok == Tok::Any)
+
+    fn matches(&self, text: &str) -> Result<bool, Error> {
+        let txt: Vec<char> = text.chars().collect();
+        let Some(last) = &self.last else {
+            return Ok(self.first.len() == txt.len() && fits(&self.first, &txt));
+        };
+        let (head, tail) = (self.first.len(), last.len());
+        if head + tail > txt.len()
+            || !fits(&self.first, &txt[..head])
+            || !fits(last, &txt[txt.len() - tail..])
+        {
+            return Ok(false);
+        }
+        let mut rest = &txt[head..txt.len() - tail];
+        for finder in &self.middle {
+            match finder.find(rest)? {
+                Some(end) => rest = &rest[end..],
+                None => return Ok(false),
+            }
+        }
+        Ok(true)
+    }
+}
+
+/// Finds the earliest occurrence of one non-empty segment between two `*`.
+#[derive(Clone, Debug, PartialEq)]
+enum Finder {
+    /// Literal characters only: Knuth-Morris-Pratt, linear in the text.
+    Literal { needle: Vec<char>, fail: Vec<usize> },
+    /// With `?`: bit-parallel (shift-and) over 64-position words; one word per text character
+    /// for segments of up to 64 characters.
+    Masked {
+        len: usize,
+        any: Vec<u64>,
+        by_char: HashMap<char, Vec<u64>>,
+    },
+}
+
+impl Finder {
+    fn new(seg: Vec<Tok>) -> Finder {
+        if seg.iter().all(|t| matches!(t, Tok::Lit(_))) {
+            let needle: Vec<char> = seg
+                .iter()
+                .filter_map(|t| match t {
+                    Tok::Lit(c) => Some(*c),
+                    _ => None,
+                })
+                .collect();
+            let fail = kmp_table(&needle);
+            return Finder::Literal { needle, fail };
+        }
+        let words = seg.len().div_ceil(64);
+        let mut any = vec![0u64; words];
+        let mut by_char: HashMap<char, Vec<u64>> = HashMap::new();
+        for (i, t) in seg.iter().enumerate() {
+            let (w, bit) = (i / 64, 1u64 << (i % 64));
+            match t {
+                Tok::Lit(c) => by_char.entry(*c).or_insert_with(|| vec![0; words])[w] |= bit,
+                _ => any[w] |= bit,
+            }
+        }
+        Finder::Masked {
+            len: seg.len(),
+            any,
+            by_char,
+        }
+    }
+
+    /// The end index (exclusive) of the earliest match in `text`, if any.
+    fn find(&self, text: &[char]) -> Result<Option<usize>, Error> {
+        match self {
+            Finder::Literal { needle, fail } => {
+                let mut k = 0;
+                for (i, c) in text.iter().enumerate() {
+                    limits::tick_item(i)?;
+                    while k > 0 && needle[k] != *c {
+                        k = fail[k - 1];
+                    }
+                    if needle[k] == *c {
+                        k += 1;
+                    }
+                    if k == needle.len() {
+                        return Ok(Some(i + 1));
+                    }
+                }
+                Ok(None)
+            }
+            Finder::Masked { len, any, by_char } => {
+                let (top_word, top_bit) = ((len - 1) / 64, 1u64 << ((len - 1) % 64));
+                let mut state = vec![0u64; any.len()];
+                for (i, c) in text.iter().enumerate() {
+                    limits::tick_item(i)?;
+                    let mask = by_char.get(c);
+                    let mut carry = 1u64;
+                    for (w, s) in state.iter_mut().enumerate() {
+                        let next_carry = *s >> 63;
+                        *s = ((*s << 1) | carry) & (any[w] | mask.map_or(0, |m| m[w]));
+                        carry = next_carry;
+                    }
+                    if state[top_word] & top_bit != 0 {
+                        return Ok(Some(i + 1));
+                    }
+                }
+                Ok(None)
+            }
+        }
+    }
+}
+
+/// KMP failure table: `fail[i]` is the length of the longest proper border of `needle[..=i]`.
+fn kmp_table(needle: &[char]) -> Vec<usize> {
+    let mut fail = vec![0; needle.len()];
+    let mut k = 0;
+    for i in 1..needle.len() {
+        while k > 0 && needle[i] != needle[k] {
+            k = fail[k - 1];
+        }
+        if needle[i] == needle[k] {
+            k += 1;
+        }
+        fail[i] = k;
+    }
+    fail
 }
 
 /// Which conditional aggregate to compute.
@@ -273,7 +416,33 @@ mod tests {
     use super::*;
 
     fn m(crit: &str, v: Value) -> bool {
-        Criterion::parse(crit).matches(&v)
+        Criterion::parse(crit).matches(&v).unwrap()
+    }
+
+    fn wildcard_match(pattern: &str, text: &str) -> bool {
+        Pattern::compile(pattern).matches(text).unwrap()
+    }
+
+    /// Reference matcher: dynamic programming over (pattern, text) prefixes, as the matcher
+    /// before BL-080 behaved. Same tokens, same whole-text rule.
+    fn reference_match(pattern: &str, text: &str) -> bool {
+        let pat = tokens(pattern);
+        let txt: Vec<char> = text.chars().collect();
+        // ok[j] = pattern prefix (so far) matches txt[..j]
+        let mut ok = vec![false; txt.len() + 1];
+        ok[0] = true;
+        for tok in &pat {
+            let mut next = vec![false; txt.len() + 1];
+            for j in 0..=txt.len() {
+                next[j] = match tok {
+                    Tok::Any => ok[j] || (j > 0 && next[j - 1]),
+                    Tok::One => j > 0 && ok[j - 1],
+                    Tok::Lit(c) => j > 0 && ok[j - 1] && txt[j - 1] == *c,
+                };
+            }
+            ok = next;
+        }
+        ok[txt.len()]
     }
 
     #[test]
@@ -330,5 +499,104 @@ mod tests {
         assert!(!wildcard_match("*a*b", "xxaxxa"));
         assert!(wildcard_match("**", "abc"));
         assert!(!wildcard_match("abc", "ab"));
+    }
+
+    #[test]
+    fn wildcard_matches_the_reference_on_a_table() {
+        let patterns = [
+            "", "*", "**", "***", "?", "??", "a", "ab", "a*", "*a", "*a*", "a*b", "a?b", "*a?b*",
+            "a*b*c", "*ab*ab*", "~*", "~?", "~~", "a~*b", "*~**", "~?*?", "a~", "~", "*?", "?*",
+            "?*?", "*aa*a", "ab*ba", "aba*aba", "*abab*", "a?a?a", "*a?*?b*", "é*ü", "?é",
+            "~*~?~~", "x*", "*x*", "ab?*?ba",
+        ];
+        let texts = [
+            "",
+            "a",
+            "b",
+            "ab",
+            "ba",
+            "abc",
+            "aab",
+            "abab",
+            "ababab",
+            "aaaa",
+            "abba",
+            "abaaba",
+            "*",
+            "?",
+            "~",
+            "a*b",
+            "a?",
+            "**",
+            "x",
+            "axb",
+            "acb",
+            "ab*ba",
+            "éxü",
+            "ée",
+            "~*?~",
+            "aabab",
+            "abcabcabc",
+            "bab",
+        ];
+        for p in patterns {
+            for t in texts {
+                assert_eq!(
+                    wildcard_match(p, t),
+                    reference_match(p, t),
+                    "pattern {p:?} text {t:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn wildcard_matches_the_reference_on_generated_cases() {
+        // Deterministic pseudo-random patterns and texts over a small alphabet, so `*`, `?`,
+        // `~` and repeats mix often. Includes `?` segments longer than 64 characters.
+        let mut seed = 0x2545_f491_4f6c_dd1du64;
+        let mut next = move |n: u64| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % n) as usize
+        };
+        let pat_chars = ['a', 'b', '*', '?', '~'];
+        for round in 0..4000 {
+            let (plen, tlen) = if round % 100 == 0 {
+                (150, 300)
+            } else {
+                (8, 14)
+            };
+            let pattern: String = (0..next(plen) + 1)
+                .map(|_| pat_chars[next(pat_chars.len() as u64)])
+                .collect();
+            let text: String = (0..next(tlen)).map(|_| ['a', 'b', '*'][next(3)]).collect();
+            assert_eq!(
+                wildcard_match(&pattern, &text),
+                reference_match(&pattern, &text),
+                "pattern {pattern:?} text {text:?}"
+            );
+        }
+        // Long `?` segments (more than one 64-bit word) in the middle of a pattern.
+        let long = format!("*{}b*", "?".repeat(70));
+        assert!(wildcard_match(&long, &format!("{}b", "a".repeat(80))));
+        assert!(!wildcard_match(&long, &format!("{}b", "a".repeat(69))));
+        assert_eq!(
+            wildcard_match(&long, &format!("x{}bx", "a".repeat(70))),
+            reference_match(&long, &format!("x{}bx", "a".repeat(70)))
+        );
+    }
+
+    #[test]
+    fn case_rules_are_unchanged() {
+        // Criteria text and item text are both lower-cased; `<`/`>` compare without wildcards.
+        assert!(m("A*Z", Value::String("abcz".into())));
+        assert!(m("*É", Value::String("café".into())));
+        assert!(m("<>A?C", Value::String("abd".into())));
+        assert!(!m("<>A?C", Value::String("ABC".into())));
+        assert!(m(">a*", Value::String("b".into())));
+        assert!(!m(">a*", Value::String("a".into())));
+        assert!(m("<b*", Value::String("b".into())));
     }
 }
