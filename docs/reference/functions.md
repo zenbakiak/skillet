@@ -15,10 +15,10 @@ Methods (`:arr.sum()`), operators and the rest of the language: [api.md](api.md)
 
 | Function | Signature | Arity | Summary | Example | Result |
 |---|---|---|---|---|---|
-| `SUM` | `SUM(values…)` | 0+ | Sum of numbers and currency; arrays are flattened, other values ignored. | `SUM(1, 2, [3, 4])` | `10` |
-| `AVG`<br>alias `AVERAGE` | `AVG(values…)` | 0+ | Mean of numbers and currency (arrays flattened); error when there are none (Excel `#DIV/0!`). | `AVG(2, 4, 6)` | `4` |
-| `MIN` | `MIN(values…)` | 0+ | Smallest number (arrays flattened); 0 when there are none. | `MIN(3, 1, 2)` | `1` |
-| `MAX` | `MAX(values…)` | 0+ | Largest number (arrays flattened); 0 when there are none. | `MAX([3, 9, 2])` | `9` |
+| `SUM` | `SUM(values…)` | 0+ | Sum of numbers and currency; arrays are flattened, other values ignored. Currency when any value is Currency. | `SUM(1, 2, [3, 4])` | `10` |
+| `AVG`<br>alias `AVERAGE` | `AVG(values…)` | 0+ | Mean of numbers and currency (arrays flattened); Currency when any value is Currency; error when there are none (Excel `#DIV/0!`). | `AVG(2, 4, 6)` | `4` |
+| `MIN` | `MIN(values…)` | 0+ | Smallest number or currency (arrays flattened); Currency when any value is Currency; 0 when there are none. | `MIN(3, 1, 2)` | `1` |
+| `MAX` | `MAX(values…)` | 0+ | Largest number or currency (arrays flattened); Currency when any value is Currency; 0 when there are none. | `MAX([3, 9, 2])` | `9` |
 | `ROUND` | `ROUND(number, [digits])` | 1-2 | Round half away from zero to `digits` decimals (default 0); negative `digits` round left of the point. | `ROUND(1234.567, -2)` | `1200` |
 | `CEILING`<br>alias `CEIL` | `CEILING(number, [significance])` | 1-2 | Round up to a multiple of `significance` (default 1), Excel rules for negatives. | `CEILING(2.1, 0.5)` | `2.5` |
 | `FLOOR` | `FLOOR(number, [significance])` | 1-2 | Round down to a multiple of `significance` (default 1), Excel rules for negatives. | `FLOOR(7, 5)` | `5` |
@@ -27,7 +27,7 @@ Methods (`:arr.sum()`), operators and the rest of the language: [api.md](api.md)
 | `POW`<br>alias `POWER` | `POW(base, exponent)` | 2 | `base` raised to `exponent`; error for `0^0`, `0` to a negative power, or a non-real result. | `POW(2, 10)` | `1024` |
 | `MOD` | `MOD(number, divisor)` | 2 | Remainder of `number / divisor`; the sign follows the divisor (Excel). Error for 0. | `MOD(-10, 3)` | `2` |
 | `INT` | `INT(number)` | 1 | Round down to an integer: `INT(-3.9)` is -4. | `INT(5.9)` | `5` |
-| `PRODUCT`<br>alias `MULTIPLY` | `PRODUCT(values…)` | 0+ | Product of numbers and currency (arrays flattened); 1 when there are none. | `PRODUCT(2, 3, 4)` | `24` |
+| `PRODUCT`<br>alias `MULTIPLY` | `PRODUCT(values…)` | 0+ | Product of numbers and currency (arrays flattened); Currency when any value is Currency; 1 when there are none. | `PRODUCT(2, 3, 4)` | `24` |
 | `SUMIF` † | `SUMIF(range, criteria, [sum_range])` | 2-3 | Sum of items meeting an Excel criteria (`">2"`, `5`, `"a*"`) or a lambda over `:x`. | `SUMIF([1, -2, 3], ">0")` | `4` |
 
 ## Logical

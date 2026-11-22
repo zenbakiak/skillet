@@ -111,10 +111,10 @@ const fn n(max: usize) -> Option<usize> {
 #[rustfmt::skip]
 pub(crate) static BUILTINS: &[Builtin] = &[
     // Arithmetic
-    f("SUM", Arithmetic, 0, ANY, "values…", "Sum of numbers and currency; arrays are flattened, other values ignored.", "SUM(1, 2, [3, 4])"),
-    f("AVG", Arithmetic, 0, ANY, "values…", "Mean of numbers and currency (arrays flattened); error when there are none (Excel `#DIV/0!`).", "AVG(2, 4, 6)").aliases(&["AVERAGE"]),
-    f("MIN", Arithmetic, 0, ANY, "values…", "Smallest number (arrays flattened); 0 when there are none.", "MIN(3, 1, 2)"),
-    f("MAX", Arithmetic, 0, ANY, "values…", "Largest number (arrays flattened); 0 when there are none.", "MAX([3, 9, 2])"),
+    f("SUM", Arithmetic, 0, ANY, "values…", "Sum of numbers and currency; arrays are flattened, other values ignored. Currency when any value is Currency.", "SUM(1, 2, [3, 4])"),
+    f("AVG", Arithmetic, 0, ANY, "values…", "Mean of numbers and currency (arrays flattened); Currency when any value is Currency; error when there are none (Excel `#DIV/0!`).", "AVG(2, 4, 6)").aliases(&["AVERAGE"]),
+    f("MIN", Arithmetic, 0, ANY, "values…", "Smallest number or currency (arrays flattened); Currency when any value is Currency; 0 when there are none.", "MIN(3, 1, 2)"),
+    f("MAX", Arithmetic, 0, ANY, "values…", "Largest number or currency (arrays flattened); Currency when any value is Currency; 0 when there are none.", "MAX([3, 9, 2])"),
     f("ROUND", Arithmetic, 1, n(2), "number, [digits]", "Round half away from zero to `digits` decimals (default 0); negative `digits` round left of the point.", "ROUND(1234.567, -2)"),
     f("CEILING", Arithmetic, 1, n(2), "number, [significance]", "Round up to a multiple of `significance` (default 1), Excel rules for negatives.", "CEILING(2.1, 0.5)").aliases(&["CEIL"]),
     f("FLOOR", Arithmetic, 1, n(2), "number, [significance]", "Round down to a multiple of `significance` (default 1), Excel rules for negatives.", "FLOOR(7, 5)"),
@@ -123,7 +123,7 @@ pub(crate) static BUILTINS: &[Builtin] = &[
     f("POW", Arithmetic, 2, n(2), "base, exponent", "`base` raised to `exponent`; error for `0^0`, `0` to a negative power, or a non-real result.", "POW(2, 10)").aliases(&["POWER"]),
     f("MOD", Arithmetic, 2, n(2), "number, divisor", "Remainder of `number / divisor`; the sign follows the divisor (Excel). Error for 0.", "MOD(-10, 3)"),
     f("INT", Arithmetic, 1, n(1), "number", "Round down to an integer: `INT(-3.9)` is -4.", "INT(5.9)"),
-    f("PRODUCT", Arithmetic, 0, ANY, "values…", "Product of numbers and currency (arrays flattened); 1 when there are none.", "PRODUCT(2, 3, 4)").aliases(&["MULTIPLY"]),
+    f("PRODUCT", Arithmetic, 0, ANY, "values…", "Product of numbers and currency (arrays flattened); Currency when any value is Currency; 1 when there are none.", "PRODUCT(2, 3, 4)").aliases(&["MULTIPLY"]),
     f("SUMIF", Arithmetic, 2, n(3), "range, criteria, [sum_range]", "Sum of items meeting an Excel criteria (`\">2\"`, `5`, `\"a*\"`) or a lambda over `:x`.", "SUMIF([1, -2, 3], \">0\")").evaluator(),
     // Logical
     f("AND", Logical, 1, ANY, "logical…", "Excel `AND`: TRUE when every logical value is TRUE (numbers: non-zero). Text and NULL inside arrays are ignored; direct text, or no logical value at all, is an error. Every argument is evaluated.", "AND(TRUE, 1)"),
