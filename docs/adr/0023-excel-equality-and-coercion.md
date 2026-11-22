@@ -1,5 +1,10 @@
 # 0023. Equality and comparison, and Excel number coercion in arithmetic
 
+> **Amended by ADR-0027 Amendment 1 (maintainer, 2026-11-22, BL-082):** Currency and Number
+> compare by amount in `==`, `!=`, `<`, `<=`, `>`, `>=`, in either order (`15 == 15::Currency`
+> is `true`, `1::Currency < 2` is `true`). This replaces the Currency parts of §1, §2 and §4.
+> Every other rule here is unchanged.
+
 - Status: Accepted
 - Date: 2026-11-21
 - Deciders: Maintainer

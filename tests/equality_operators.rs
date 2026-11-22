@@ -1,6 +1,7 @@
 //! ADR-0023 (BL-066, BL-059): `==`/`!=` are strict and case-sensitive, no comparison converts
-//! between types, arrays/JSON/Currency compare by value, DateTimes compare and order by
-//! timestamp, and `===`/`!==` do not exist.
+//! between types (except Currency with Number, by amount: ADR-0027 Amendment 1),
+//! arrays/JSON/Currency compare by value, DateTimes compare and order by timestamp, and
+//! `===`/`!==` do not exist.
 
 use skillet::{evaluate, evaluate_with_json, parse, Value};
 
@@ -41,7 +42,6 @@ fn no_cross_type_conversion() {
         ("FALSE", "0"),
         ("TRUE", r#""TRUE""#),
         ("0", r#""""#),
-        ("1", "1::Currency"),
         ("[1]", "1"),
     ] {
         assert!(!b(&format!("{l} == {r}")), "{l} == {r}");
@@ -60,6 +60,9 @@ fn numbers_booleans_and_currency_compare_within_their_type() {
         ("1::Currency == 1::Currency", true),
         ("1::Currency == 2::Currency", false),
         ("1::Currency != 2::Currency", true),
+        // Currency and Number compare by amount (ADR-0027 Amendment 1, BL-082).
+        ("1 == 1::Currency", true),
+        ("1::Currency != 1", false),
     ]);
 }
 
@@ -154,14 +157,9 @@ fn ordering_needs_two_values_of_the_same_type() {
         ("TRUE > FALSE", true),
         ("TRUE >= TRUE", true),
         ("1::Currency < 2::Currency", true),
+        ("1 < 2::Currency", true), // ADR-0027 Amendment 1
     ]);
-    for src in [
-        r#"1 < "2""#,
-        "TRUE > 0",
-        "1 < 2::Currency",
-        "[1] < [2]",
-        r#""a" > NULL"#,
-    ] {
+    for src in [r#"1 < "2""#, "TRUE > 0", "[1] < [2]", r#""a" > NULL"#] {
         is_error(src);
     }
 }
