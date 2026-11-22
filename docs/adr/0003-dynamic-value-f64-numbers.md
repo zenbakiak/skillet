@@ -4,6 +4,10 @@
 - Date: 2026-11-20
 - Related: PRD-001
 
+> **Amended by [ADR-0033](0033-one-numeric-type.md) (2026-11-22):** `Currency` is no longer a
+> tagged `f64`. `::Currency` rounds to 4 decimals and returns a Number; `Value::Currency` is
+> deprecated in 0.7.0 and removed in 0.8.
+
 ## Context
 Excel users expect one "number" type. The language is dynamically typed with explicit casts
 (`::Integer`, `::Currency`, `::DateTime`, …).

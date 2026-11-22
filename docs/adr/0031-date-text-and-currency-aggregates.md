@@ -7,6 +7,12 @@
   `Currency` a tagged `f64`), ADR-0018 D-5 (strict casts), excel-compat B-13 and the
   "string to DateTime cast formats" proposal
 
+> **Currency parts superseded by [ADR-0033](0033-one-numeric-type.md) (2026-11-22).** Skillet has
+> one number type, so the aggregates return Numbers. Superseded: decision 3 (B-13), the Currency
+> sentence of "Amends ADR-0027", the Currency rows and consequences, and amendment 1 items A3
+> (Currency in `.join()`) and A5 (`SUMIF`/`AVERAGEIF`). Decisions 1 and 2 (dates as ISO 8601
+> text), A1, A2, A4 and the `NULL` part of A3 stand.
+
 ## Context
 - A DateTime turned into text as its Unix seconds: `DATE(2026,1,1)::String` was `"1767225600"`,
   and `CONCAT`, `&`, `JOIN` and `.to_s()` wrote the same digits. That text is unreadable, and
