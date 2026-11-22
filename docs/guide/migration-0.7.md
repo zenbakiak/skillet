@@ -295,6 +295,16 @@ unchanged at 256 MiB, only now configurable. Details: [Limits](limits.md).
 | Minimum Rust version | not stated | 1.85 (ADR-0012) |
 | `runtime::builtin_functions::exec_builtin` | public | deprecated (still works); it reports argument errors as `Unknown function`. Use `runtime::function_dispatch::exec_builtin_fast` or `evaluate` |
 
+## JSON variables (BL-077)
+Where variables come from a JSON object (`evaluate_with_json`, `evaluate_with_json_custom`,
+`sk --json`, `sk_http_server` `arguments` and `GET /eval` parameters), the whole object is the
+reserved `:arguments`, for `JQ`.
+
+| Input | 0.6 | 0.7 |
+|---|---|---|
+| A key named `arguments`, e.g. `{"x": 1, "arguments": {"a": 2}}` | `:arguments` is that key's value (`{"a": 2}`) | `:arguments` is the whole object; the key's value is `:arguments.arguments` |
+| Two keys that give the same variable, e.g. `{"a-b": 1, "a_b": 2}` | one value silently replaces the other | `Error: JSON keys "a-b" and "a_b" both map to variable :a_b` (HTTP 400 on `sk_http_server`); rename one key. `sk_server` does not rename keys and is unchanged |
+
 ## Servers
 | Change | 0.6 | 0.7 |
 |---|---|---|

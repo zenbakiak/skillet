@@ -7,6 +7,8 @@ pub mod eval;
 pub mod eval_limits;
 #[cfg(feature = "plugins")]
 pub mod js_management;
+#[path = "../../json_keys.rs"]
+pub mod json_keys;
 #[cfg(feature = "plugins")]
 pub mod multipart;
 pub mod parse_cache;

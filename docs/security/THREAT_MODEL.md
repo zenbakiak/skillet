@@ -83,12 +83,14 @@ limits return an ordinary `Error`, never abort the process.
 - **Must hold:** no panic; key sanitizing cannot overwrite reserved variables such as `:arguments`.
 - **Holds now:** `serde_json`'s depth limit (128) matches `MAX_NESTING_DEPTH`
   (`deep_json_vars_*` in `tests/security_limits.rs`); JSON parsing is pre-charged to the budget.
+  - **Mitigated (BL-077):** wherever `:arguments` is built (the library `*_json*` entry points,
+    `sk --json`, `sk_http_server`) it is inserted after the keys, so a key named `arguments`
+    cannot replace it; the key's value stays readable as `:arguments.arguments`. Two keys that
+    sanitize to the same name (`a-b`, `a_b`) are an error naming both keys (HTTP 400 on
+    `sk_http_server`), not a silent overwrite; one sanitizer, `src/json_keys.rs`, serves all
+    three (`tests/json_variable_keys.rs`, `tests/server_reserved_arguments.rs`). `sk_server`
+    builds no `:arguments` and does not sanitize keys, so it has neither problem.
 - **Gaps:**
-  - **Low:** a JSON key named `arguments` replaces the reserved `:arguments` variable that
-    `sk_http_server` builds for `JQ` (it is inserted first, then overwritten by the loop in
-    `http_server/eval.rs`). Only the same caller is affected, so the impact is confusion, not
-    escalation; still a broken invariant. Two keys that sanitize to the same name (`a-b`, `a_b`)
-    silently collide. No backlog item yet.
   - Values passed in through the Rust API (`evaluate_with(vars)`) are not depth-checked until
     they are wrapped (BL-017 follow-up; documented on the public API in `src/lib.rs`).
 
@@ -163,9 +165,11 @@ Endpoints: `POST /upload-js`, `PUT /update-js`, `DELETE /delete-js`, `GET /list-
   - The registry lock is released before a custom function runs, so a slow hook no longer
     blocks `/reload-hooks` or other evaluations (#63).
   - JS errors carry the real exception text (#79).
+  - **Mitigated (BL-077):** `/reload-hooks` makes the registry match the hooks that load from
+    disk, so a hook whose file was deleted is removed; a reload that cannot read the directory
+    changes nothing (`reload_hooks_*` in `tests/hook_files.rs`).
 - **Gaps:**
-  - **Low:** `/reload-hooks` adds and replaces functions but never removes ones whose file was
-    deleted from disk. Upload "syntax validation" only parses the comment header and runs the
+  - **Low:** upload "syntax validation" only parses the comment header and runs the
     `@example`. Hooks in subdirectories load but cannot be updated or deleted through the API.
   - Each hook call may use up to its full time and memory limit, so an installed hook whose cost
     depends on its input lets eval clients spend that much per call (bounded by the limits above
@@ -232,8 +236,7 @@ Endpoints: `POST /upload-js`, `PUT /update-js`, `DELETE /delete-js`, `GET /list-
 | 3 | No deadline in the library and `sk` by default, and one builtin runs to completion between deadline checks | Medium (embedders) | ADR-0011 (`with_limits`), BL-035, BL-036 |
 | 4 | Release and image integrity: no signatures or provenance (Actions are pinned by SHA, the Docker image is built and smoke-tested in CI) | Low | BL-062, BL-065 done; signing not tracked yet |
 
-Next in line (all Low): the `arguments` key collision (2.2, no backlog item yet), `/reload-hooks`
-keeps deleted functions (2.5), the relative `hooks` default (2.6, BL-057), real 408/413 codes
+Next in line (all Low): the relative `hooks` default (2.6, BL-057), real 408/413 codes
 (BL-049), Rust API values not depth-checked (2.2).
 
 ## 4. Out of scope
