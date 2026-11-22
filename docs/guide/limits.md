@@ -202,11 +202,12 @@ clock every 256 charges or ticks, so a request stops shortly after 10 s and the 
 free for the next request. There is no flag or environment variable to change it. The library and
 the `sk` CLI have no deadline unless you set one (see [Library API](#library-api-evallimits-and-with_limits)).
 
-The deadline is only checked between operations. One builtin call that is already running (for
-example `SORT` or `UNIQUE` on millions of items) runs to completion before the next check, so a
-request can run past 10 s by the time that one call takes. Measured in BL-027c: `SORT`/`UNIQUE` of
-3M items takes about 0.12 s in a release build, so today the overrun is small. A builtin that is
-slower than O(n log n) would make it larger (tracked in BL-035).
+The deadline is checked between operations, and inside the builtins that loop over many items
+without charging each one: `SORT`, `UNIQUE`, `JOIN`, `TEXTJOIN` and `.sort()`, `.unique()`,
+`.join()` count a tick every 64 items, so they read the clock every 16,384 items (BL-035). With
+3M items and a 1 ms deadline these calls now stop after 1-8 ms instead of finishing (60 ms to
+1.1 s in a release build). The sort step itself (one standard-library sort) still runs to the end;
+it takes about 0.06 s for 3M numbers. A custom function's own code is not interrupted either.
 
 Example (HTTP, one worker; the expression does 1M × 4 comparisons of two 400 KB strings passed as
 `arguments`):

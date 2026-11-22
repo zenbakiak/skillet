@@ -79,7 +79,8 @@ pub fn exec_array(name: &str, args: &[Value]) -> Result<Value, Error> {
             Some(Value::Array(items)) => {
                 let mut set = BTreeSet::new();
                 let mut out = Vec::new();
-                for it in items {
+                for (i, it) in items.iter().enumerate() {
+                    crate::limits::tick_item(i)?;
                     if let Value::Number(n) = it {
                         if set.insert(n.to_bits()) {
                             out.push(Value::Number(*n));
@@ -108,6 +109,7 @@ pub fn exec_array(name: &str, args: &[Value]) -> Result<Value, Error> {
                 };
                 let mut nums: Vec<f64> = Vec::new();
                 for it in items {
+                    crate::limits::tick_item(nums.len())?;
                     if let Value::Number(n) = it {
                         nums.push(*n);
                     } else {
@@ -134,6 +136,7 @@ pub fn exec_array(name: &str, args: &[Value]) -> Result<Value, Error> {
                 };
                 let mut parts: Vec<String> = Vec::with_capacity(items.len());
                 for it in items {
+                    crate::limits::tick_item(parts.len())?;
                     match it {
                         Value::String(s) => parts.push(s.clone()),
                         Value::Number(n) => parts.push(n.to_string()),

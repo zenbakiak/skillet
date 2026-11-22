@@ -1087,3 +1087,32 @@ fn bl035_case_mapping_fails_before_growing() {
         "Evaluation budget exceeded (max 53 bytes)"
     );
 }
+
+/// One long builtin call no longer runs to completion past the deadline: SORT, UNIQUE, the
+/// joins and their method forms tick every 64 items. Before BL-035 each of these returned
+/// `Ok` after the full call (release, 3M items: 60 ms to 1.1 s) despite a 1 ms deadline.
+#[test]
+fn bl035_long_builtins_meet_the_deadline() {
+    let vars = nums_vars(300_000);
+    let exprs = [
+        "SORT(:nums).length()",
+        "UNIQUE(:nums).length()",
+        ":nums.sort().length()",
+        ":nums.unique().length()",
+        "JOIN(:nums, \",\").length()",
+        ":nums.join(\",\").length()",
+        "TEXTJOIN(\",\", TRUE, :nums).length()",
+    ];
+    for e in exprs {
+        assert!(evaluate_with_custom(e, &vars).is_ok(), "{e}");
+        let r = with_limits(timeout_limits(1), || {
+            std::thread::sleep(Duration::from_millis(2));
+            evaluate_with_custom(e, &vars)
+        });
+        assert_eq!(
+            r.map_err(|e| e.message),
+            Err("Evaluation timed out (max 1 ms)".to_string()),
+            "{e}"
+        );
+    }
+}

@@ -57,6 +57,7 @@ fn textjoin_parts<'v>(v: &'v Value, out: &mut Vec<Cow<'v, str>>) -> Result<(), E
             let text = excel_text(v).ok_or_else(|| {
                 Error::new("TEXTJOIN expects text, numbers, booleans or arrays", None)
             })?;
+            limits::tick_item(out.len())?;
             out.push(text);
             Ok(())
         }
@@ -110,6 +111,7 @@ fn textjoin(args: &[Value]) -> Result<Value, Error> {
     limits::charge_string(total)?;
     let mut out = String::with_capacity(total);
     for (i, part) in parts.iter().enumerate() {
+        limits::tick_item(i)?;
         if i > 0 {
             out.push_str(&delimiters[(i - 1) % delimiters.len()]);
         }

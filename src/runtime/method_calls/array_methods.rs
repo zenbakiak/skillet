@@ -38,7 +38,8 @@ pub fn exec_array_method(
         "unique" => {
             let mut unique_vals = Vec::new();
             let mut seen = BTreeSet::new();
-            for val in recv_array {
+            for (i, val) in recv_array.iter().enumerate() {
+                crate::limits::tick_item(i)?;
                 let key = format!("{:?}", val); // Use debug representation as key
                 if seen.insert(key) {
                     unique_vals.push(val.clone());
@@ -60,6 +61,7 @@ pub fn exec_array_method(
 
             let mut nums = Vec::with_capacity(recv_array.len());
             for val in recv_array {
+                crate::limits::tick_item(nums.len())?;
                 match val {
                     Value::Number(n) => nums.push(*n),
                     _ => return Err(Error::new("sort expects numeric array", None)),
@@ -160,14 +162,18 @@ pub fn exec_array_method(
 
             let string_vals: Result<Vec<String>, Error> = recv_array
                 .iter()
-                .map(|v| match v {
-                    Value::String(s) => Ok(s.clone()),
-                    Value::Number(n) => Ok(n.to_string()),
-                    Value::Boolean(b) => Ok(b.to_string()),
-                    _ => Err(Error::new(
-                        "join method cannot convert value to string",
-                        None,
-                    )),
+                .enumerate()
+                .map(|(i, v)| {
+                    crate::limits::tick_item(i)?;
+                    match v {
+                        Value::String(s) => Ok(s.clone()),
+                        Value::Number(n) => Ok(n.to_string()),
+                        Value::Boolean(b) => Ok(b.to_string()),
+                        _ => Err(Error::new(
+                            "join method cannot convert value to string",
+                            None,
+                        )),
+                    }
                 })
                 .collect();
 

@@ -62,6 +62,8 @@ const VALUE_COST: u64 = 32;
 pub(crate) const STRING_COST: u64 = VALUE_COST + 16;
 /// The deadline is checked on every `TICKS_PER_CLOCK_READ`th charge.
 const TICKS_PER_CLOCK_READ: u32 = 256;
+/// Long per-item loops in builtins tick once every `ITEMS_PER_TICK` items ([`tick_item`]).
+const ITEMS_PER_TICK: usize = 64;
 const MIB: u64 = 1024 * 1024;
 
 /// Limits for evaluations run inside [`with_limits`].
@@ -336,6 +338,25 @@ pub(crate) fn charge_json_node(node: &serde_json::Value) -> Result<(), Error> {
 #[inline]
 pub(crate) fn tick() -> Result<(), Error> {
     charge(0)
+}
+
+/// Loops that do work per item without charging per item (`SORT`, `UNIQUE`, the joins) call this
+/// with the item index; every `ITEMS_PER_TICK`th item ticks, so one long call reads the clock
+/// every 16,384 items instead of running to completion before the next check (BL-035).
+#[inline(always)]
+pub(crate) fn tick_item(index: usize) -> Result<(), Error> {
+    if index % ITEMS_PER_TICK == 0 {
+        tick_cold()
+    } else {
+        Ok(())
+    }
+}
+
+/// Out of line so the per-item check stays one test and branch in the caller's loop.
+#[cold]
+#[inline(never)]
+fn tick_cold() -> Result<(), Error> {
+    tick()
 }
 
 /// `s` upper- or lower-cased (`UPPER`, `LOWER`, `.upper()`, `.lower()`). Case mapping can make
