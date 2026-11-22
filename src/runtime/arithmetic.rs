@@ -9,11 +9,11 @@ use crate::types::Value;
 
 pub fn exec_arithmetic(name: &str, args: &[Value]) -> Result<Value, Error> {
     match name {
-        "SUM" => Ok(fold_numbers(args, 0.0, |acc, n| acc + n)),
-        "PRODUCT" | "MULTIPLY" => Ok(fold_numbers(args, 1.0, |acc, n| acc * n)),
+        "SUM" => fold_numbers("SUM", args, 0.0, |acc, n| acc + n),
+        "PRODUCT" | "MULTIPLY" => fold_numbers("PRODUCT", args, 1.0, |acc, n| acc * n),
         "AVG" | "AVERAGE" => average(args),
-        "MIN" => Ok(extreme(args, f64::min)),
-        "MAX" => Ok(extreme(args, f64::max)),
+        "MIN" => extreme("MIN", args, f64::min, i64::min),
+        "MAX" => extreme("MAX", args, f64::max, i64::max),
         "ROUND" => round(args),
         "CEIL" | "CEILING" => ceiling(name, args),
         "FLOOR" => floor(args),
@@ -37,41 +37,88 @@ pub fn exec_arithmetic(name: &str, args: &[Value]) -> Result<Value, Error> {
 
 /// Visit every number in the arguments, flattening arrays. Other values are ignored, as Excel
 /// ignores text and logical values in a range (excel-compat X-3). A deprecated `Currency` is a
-/// number (ADR-0033).
+/// number (ADR-0033). A DateTime is an error: `name` does arithmetic on numbers, and Skillet has
+/// no date serial numbers (ADR-0031 amendment 2, B2).
 #[allow(deprecated)]
-fn for_each_number(args: &[Value], f: &mut impl FnMut(f64)) {
+fn for_each_number(name: &str, args: &[Value], f: &mut impl FnMut(f64)) -> Result<(), Error> {
     for a in args {
         match a {
             Value::Number(n) | Value::Currency(n) => f(*n),
-            Value::Array(items) => for_each_number(items, f),
+            Value::Array(items) => for_each_number(name, items, f)?,
+            Value::DateTime(_) => return Err(dates_not_accepted(name)),
             _ => {}
         }
     }
+    Ok(())
 }
 
-fn fold_numbers(args: &[Value], init: f64, op: impl Fn(f64, f64) -> f64) -> Value {
+fn fold_numbers(
+    name: &str,
+    args: &[Value],
+    init: f64,
+    op: impl Fn(f64, f64) -> f64,
+) -> Result<Value, Error> {
     let mut acc = init;
-    for_each_number(args, &mut |n| acc = op(acc, n));
-    Value::Number(acc)
+    for_each_number(name, args, &mut |n| acc = op(acc, n))?;
+    Ok(Value::Number(acc))
 }
 
 fn average(args: &[Value]) -> Result<Value, Error> {
     let (mut sum, mut count) = (0.0, 0usize);
-    for_each_number(args, &mut |n| {
+    for_each_number("AVERAGE", args, &mut |n| {
         sum += n;
         count += 1;
-    });
+    })?;
     if count == 0 {
         return Err(Error::new("AVERAGE of no numbers (#DIV/0!)", None));
     }
     Ok(Value::Number(sum / count as f64))
 }
 
-/// `MIN`/`MAX`: Excel returns 0 when the arguments contain no numbers.
-fn extreme(args: &[Value], pick: fn(f64, f64) -> f64) -> Value {
-    let mut cur: Option<f64> = None;
-    for_each_number(args, &mut |n| cur = Some(cur.map_or(n, |c| pick(c, n))));
-    Value::Number(cur.unwrap_or(0.0))
+/// `MIN`/`MAX` over the Numbers and DateTimes in the arguments, arrays flattened; other values
+/// are ignored. Only DateTimes → the earliest/latest DateTime; both kinds → `#VALUE!`; none →
+/// 0, as in Excel (ADR-0031 amendment 2, B1).
+#[allow(deprecated)] // `Value::Currency` is read as a Number (ADR-0033)
+fn extreme(
+    name: &str,
+    args: &[Value],
+    pick: fn(f64, f64) -> f64,
+    pick_date: fn(i64, i64) -> i64,
+) -> Result<Value, Error> {
+    fn visit(
+        args: &[Value],
+        num: &mut Option<f64>,
+        date: &mut Option<i64>,
+        pick: fn(f64, f64) -> f64,
+        pick_date: fn(i64, i64) -> i64,
+    ) {
+        for a in args {
+            match a {
+                Value::Number(n) | Value::Currency(n) => {
+                    *num = Some(num.map_or(*n, |c| pick(c, *n)))
+                }
+                Value::DateTime(t) => *date = Some(date.map_or(*t, |c| pick_date(c, *t))),
+                Value::Array(items) => visit(items, num, date, pick, pick_date),
+                _ => {}
+            }
+        }
+    }
+    let (mut num, mut date) = (None, None);
+    visit(args, &mut num, &mut date, pick, pick_date);
+    match (num, date) {
+        (Some(_), Some(_)) => Err(Error::new(
+            format!("{name} cannot compare dates with numbers (#VALUE!)"),
+            None,
+        )),
+        (None, Some(t)) => Ok(Value::DateTime(t)),
+        (n, None) => Ok(Value::Number(n.unwrap_or(0.0))),
+    }
+}
+
+/// The error of an aggregate that does arithmetic when a DateTime is among its data
+/// (ADR-0031 amendment 2, B2/B3). `name` is the canonical name, whichever alias was called.
+pub(crate) fn dates_not_accepted(name: &str) -> Error {
+    Error::new(format!("{name} does not accept dates (#VALUE!)"), None)
 }
 
 fn arity(name: &str, args: &[Value], min: usize, max: usize, sig: &str) -> Result<(), Error> {
