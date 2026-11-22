@@ -166,7 +166,7 @@ fn json_object(json_str: &str) -> Result<serde_json::Map<String, serde_json::Val
     }
 }
 
-#[allow(deprecated)] // `Value::Currency` is read as a Number (ADR-0033)
+#[allow(deprecated)] // `Currency` is read as a Number (ADR-0033); `Json` until 0.8 (ADR-0030)
 fn format_json_output(value: &Value, execution_time_ms: f64) -> String {
     let (result_value, type_name) = match value {
         Value::Number(n) | Value::Currency(n) => (json!(n), "Number"),
@@ -184,6 +184,8 @@ fn format_json_output(value: &Value, execution_time_ms: f64) -> String {
                     Value::Null => json!(null),
                     Value::Array(_) => json!(format!("{:?}", v)), // Nested arrays as debug string for now
                     Value::Json(s) => serde_json::from_str(s).unwrap_or_else(|_| json!(s)),
+                    // `Value` is #[non_exhaustive]: a later variant is sent as its Debug text
+                    _ => json!(format!("{:?}", v)),
                 })
                 .collect();
             (json!(json_arr), "Array")
@@ -193,6 +195,8 @@ fn format_json_output(value: &Value, execution_time_ms: f64) -> String {
             Ok(parsed) => (parsed, "Json"),
             Err(_) => (json!(s), "Json"),
         },
+        // `Value` is #[non_exhaustive]: a later variant is sent as its Debug text
+        _ => (json!(format!("{:?}", value)), "Unknown"),
     };
 
     let output = json!({

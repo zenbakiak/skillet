@@ -8,8 +8,49 @@
 /// assert_eq!(evaluate("NULL").unwrap(), Value::Null);
 /// assert_eq!(evaluate("'a'.upper()").unwrap().as_number(), None);
 /// ```
+///
+/// `Value` is `#[non_exhaustive]` (since 0.7.0): later releases add variants (`Object` in 0.8.0,
+/// ADR-0030) without a breaking change, so a `match` outside this crate needs a `_` arm:
+///
+/// ```rust
+/// use skillet::Value;
+///
+/// fn type_name(v: &Value) -> &'static str {
+///     match v {
+///         Value::Number(_) => "Number",
+///         Value::String(_) => "String",
+///         Value::Boolean(_) => "Boolean",
+///         Value::Array(_) => "Array",
+///         Value::DateTime(_) => "DateTime",
+///         Value::Null => "Null",
+///         _ => "Other",
+///     }
+/// }
+/// assert_eq!(type_name(&Value::Null), "Null");
+/// ```
+///
+/// Without it, the match does not compile (error E0004, "non-exhaustive patterns: `_` not
+/// covered"), even when it names every variant:
+///
+/// ```compile_fail,E0004
+/// # #![allow(deprecated)]
+/// use skillet::Value;
+///
+/// fn type_name(v: &Value) -> &'static str {
+///     match v {
+///         Value::Number(_) | Value::Currency(_) => "Number",
+///         Value::String(_) => "String",
+///         Value::Boolean(_) => "Boolean",
+///         Value::Array(_) => "Array",
+///         Value::DateTime(_) => "DateTime",
+///         Value::Null => "Null",
+///         Value::Json(_) => "Json",
+///     }
+/// }
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 #[allow(deprecated)] // the derives match `Currency` until it is removed in 0.8
+#[non_exhaustive]
 pub enum Value {
     /// Every number is an `f64`, including integers.
     Number(f64),

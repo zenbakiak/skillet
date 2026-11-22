@@ -510,7 +510,7 @@ fn parse_function_arguments(args_str: &str) -> Result<Vec<Value>, String> {
     Ok(args)
 }
 
-#[allow(deprecated)] // `Value::Currency` is read as a Number (ADR-0033)
+#[allow(deprecated)] // `Currency` is read as a Number (ADR-0033); `Json` until 0.8 (ADR-0030)
 fn format_value_for_comparison(value: &Value) -> String {
     match value {
         Value::Number(n) | Value::Currency(n) => {
@@ -529,6 +529,8 @@ fn format_value_for_comparison(value: &Value) -> String {
         }
         Value::DateTime(dt) => dt.to_string(),
         Value::Json(json) => json.clone(),
+        // `Value` is #[non_exhaustive]: a later variant compares by its Debug text
+        _ => format!("{:?}", value),
     }
 }
 

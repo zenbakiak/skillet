@@ -1,6 +1,9 @@
 use std::rc::Rc;
 
+/// A parsed expression ([`crate::parse`]). `#[non_exhaustive]` (since 0.7.0): new syntax adds
+/// variants, so a `match` outside this crate needs a `_` arm.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum Expr {
     Number(f64),
     StringLit(String),
@@ -54,7 +57,9 @@ pub enum Expr {
     Sequence(Vec<Expr>),
 }
 
+/// The target of a `::Type` cast. `#[non_exhaustive]` (since 0.7.0), like [`Expr`].
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum TypeName {
     Integer,
     Float,
@@ -66,14 +71,19 @@ pub enum TypeName {
     Json,
 }
 
+/// A prefix operator. `#[non_exhaustive]` (since 0.7.0), like [`Expr`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum UnaryOp {
     Plus,
     Minus,
     Not,
 }
 
+/// An infix operator. `#[non_exhaustive]` (since 0.7.0), like [`Expr`]: `Concat` was added in
+/// 0.7.0 (ADR-0034).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum BinaryOp {
     Add,
     Sub,
