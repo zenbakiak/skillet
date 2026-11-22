@@ -97,6 +97,16 @@ fn check_repeated_expressions(server: &Server, http: bool) {
         assert_eq!(r["success"], false, "{r}");
         assert_eq!(r["error"], "Unexpected token: Eof at position 2", "{r}");
     }
+    // BL-069: tokens after the expression are an error, not ignored.
+    for expr in ["=1 2", ":t := 1; :t 2"] {
+        let r = server.eval(http, &body(http, expr, serde_json::json!({}), false));
+        assert_eq!(r["success"], false, "{r}");
+        let want = format!(
+            "Unexpected token after end of expression at position {}",
+            expr.len() - 1
+        );
+        assert_eq!(r["error"], want, "{r}");
+    }
     let r = server.eval(
         http,
         &body(

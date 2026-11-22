@@ -1,7 +1,8 @@
 use crate::error::Error;
 use crate::runtime::utils::values_equal;
 use crate::types::Value;
-use std::collections::BTreeSet;
+use std::cmp::Ordering;
+use std::collections::HashSet;
 
 pub fn exec_array(name: &str, args: &[Value]) -> Result<Value, Error> {
     match name {
@@ -76,55 +77,18 @@ pub fn exec_array(name: &str, args: &[Value]) -> Result<Value, Error> {
             count_where(args, &|v| !matches!(v, Value::Null)) as f64,
         )),
         "UNIQUE" => match args.first() {
-            Some(Value::Array(items)) => {
-                let mut set = BTreeSet::new();
-                let mut out = Vec::new();
-                for it in items {
-                    if let Value::Number(n) = it {
-                        if set.insert(n.to_bits()) {
-                            out.push(Value::Number(*n));
-                        }
-                    }
-                }
-                Ok(Value::Array(out))
-            }
+            Some(Value::Array(items)) => Ok(Value::Array(unique(items))),
             _ => Err(Error::new("UNIQUE expects array", None)),
         },
         "SORT" => match args.first() {
-            Some(Value::Array(items)) => {
-                // Excel's sort_order: 1 ascending, -1 descending; "ASC"/"DESC" are Skillet's.
-                let desc = match args.get(1) {
-                    None => false,
-                    Some(Value::String(s)) if s.eq_ignore_ascii_case("DESC") => true,
-                    Some(Value::String(s)) if s.eq_ignore_ascii_case("ASC") => false,
-                    Some(Value::Number(n)) if *n == 1.0 => false,
-                    Some(Value::Number(n)) if *n == -1.0 => true,
-                    Some(_) => {
-                        return Err(Error::new(
-                            "SORT order must be 1, -1, \"ASC\" or \"DESC\" (#VALUE!)",
-                            None,
-                        ))
-                    }
-                };
-                let mut nums: Vec<f64> = Vec::new();
-                for it in items {
-                    if let Value::Number(n) = it {
-                        nums.push(*n);
-                    } else {
-                        return Err(Error::new("SORT expects numeric array", None));
-                    }
-                }
-                crate::runtime::utils::sort_numbers(&mut nums, false)?;
-                if desc {
-                    nums.reverse();
-                }
-                Ok(Value::Array(nums.into_iter().map(Value::Number).collect()))
-            }
+            Some(Value::Array(items)) => sort(items, args.get(1)),
             _ => Err(Error::new("SORT expects array", None)),
         },
+        // Items in reverse order; a string reverses its characters (excel-compat B-11).
         "REVERSE" => match args.first() {
             Some(Value::Array(items)) => Ok(Value::Array(items.iter().rev().cloned().collect())),
-            _ => Err(Error::new("REVERSE expects array", None)),
+            Some(Value::String(s)) => Ok(Value::String(s.chars().rev().collect())),
+            _ => Err(Error::new("REVERSE expects array or string", None)),
         },
         "JOIN" => match args.first() {
             Some(Value::Array(items)) => {
@@ -190,4 +154,99 @@ fn count_where(args: &[Value], keep: &dyn Fn(&Value) -> bool) -> usize {
             other => usize::from(keep(other)),
         })
         .sum()
+}
+
+/// Excel `UNIQUE`: every distinct value, in first-seen order, with Skillet's `==` (ADR-0023:
+/// same type and value, text case-sensitive). Scalars are found by hash; arrays and JSON objects
+/// are compared with the values kept so far.
+fn unique(items: &[Value]) -> Vec<Value> {
+    #[derive(PartialEq, Eq, Hash)]
+    enum Key<'a> {
+        Number(u64),
+        Currency(u64),
+        Text(&'a str),
+        Boolean(bool),
+        DateTime(i64),
+        Null,
+    }
+    // `+ 0.0` makes -0.0 and 0.0 one key, as `==` does. NaN never equals itself, so each is kept.
+    let bits = |n: f64| (n + 0.0).to_bits();
+    let mut seen = HashSet::new();
+    let mut out: Vec<Value> = Vec::new();
+    for it in items {
+        let key = match it {
+            Value::Number(n) if !n.is_nan() => Some(Key::Number(bits(*n))),
+            Value::Currency(n) if !n.is_nan() => Some(Key::Currency(bits(*n))),
+            Value::String(s) => Some(Key::Text(s)),
+            Value::Boolean(b) => Some(Key::Boolean(*b)),
+            Value::DateTime(t) => Some(Key::DateTime(*t)),
+            Value::Null => Some(Key::Null),
+            Value::Number(_) | Value::Currency(_) => {
+                out.push(it.clone());
+                continue;
+            }
+            Value::Array(_) | Value::Json(_) => None,
+        };
+        let new = match key {
+            Some(k) => seen.insert(k),
+            None => !out.iter().any(|v| values_equal(v, it)),
+        };
+        if new {
+            out.push(it.clone());
+        }
+    }
+    out
+}
+
+/// Excel `SORT(array, [order])` on one column: numbers (and currency) < text < booleans; text
+/// ignores case (Unicode lowercase, then code point); `FALSE < TRUE`. Equal items keep their
+/// order, in both directions. Other values (NULL, DateTime, arrays, JSON) and NaN are an error.
+fn sort(items: &[Value], order: Option<&Value>) -> Result<Value, Error> {
+    // Excel's sort_order: 1 ascending, -1 descending; "ASC"/"DESC" are Skillet's.
+    let desc = match order {
+        None => false,
+        Some(Value::String(s)) if s.eq_ignore_ascii_case("DESC") => true,
+        Some(Value::String(s)) if s.eq_ignore_ascii_case("ASC") => false,
+        Some(Value::Number(n)) if *n == 1.0 => false,
+        Some(Value::Number(n)) if *n == -1.0 => true,
+        Some(_) => {
+            return Err(Error::new(
+                "SORT order must be 1, -1, \"ASC\" or \"DESC\" (#VALUE!)",
+                None,
+            ))
+        }
+    };
+    enum Key {
+        Number(f64),
+        Text(String),
+        Boolean(bool),
+    }
+    let mut keyed = Vec::with_capacity(items.len());
+    for it in items {
+        let key = match it {
+            Value::Number(n) | Value::Currency(n) if n.is_nan() => {
+                return Err(Error::new("Cannot sort NaN values", None))
+            }
+            Value::Number(n) | Value::Currency(n) => Key::Number(*n),
+            Value::String(s) => Key::Text(s.to_lowercase()),
+            Value::Boolean(b) => Key::Boolean(*b),
+            _ => return Err(Error::new("SORT expects numbers, text or booleans", None)),
+        };
+        keyed.push((key, it));
+    }
+    let cmp = |a: &Key, b: &Key| match (a, b) {
+        (Key::Number(x), Key::Number(y)) => x.partial_cmp(y).unwrap_or(Ordering::Equal),
+        (Key::Text(x), Key::Text(y)) => x.cmp(y),
+        (Key::Boolean(x), Key::Boolean(y)) => x.cmp(y),
+        (Key::Number(_), _) | (Key::Text(_), Key::Boolean(_)) => Ordering::Less,
+        _ => Ordering::Greater,
+    };
+    if desc {
+        keyed.sort_by(|a, b| cmp(&b.0, &a.0));
+    } else {
+        keyed.sort_by(|a, b| cmp(&a.0, &b.0));
+    }
+    Ok(Value::Array(
+        keyed.into_iter().map(|(_, v)| v.clone()).collect(),
+    ))
 }
