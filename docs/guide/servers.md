@@ -481,34 +481,30 @@ sk_eval() {
 
 ### 1. Connection Pooling (Python)
 
-For high-throughput applications, reuse connections:
+For high-throughput applications, reuse connections. Each response is one `\n`-terminated JSON
+line of any length (up to the 256 MiB budget), so read whole lines; a single `recv(4096)` cuts
+large results short and leaves the rest to be read as the next response:
 
 ```python
-import socket
 import json
+import socket
 import threading
 
 class SkilletPool:
     def __init__(self, host='localhost', port=8080, pool_size=5):
         self.host = host
         self.port = port
-        self.pool = []
+        self.pool = [self._connect() for _ in range(pool_size)]
         self.lock = threading.Lock()
 
-        # Pre-create connections
-        for _ in range(pool_size):
-            conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            conn.connect((host, port))
-            self.pool.append(conn)
+    def _connect(self):
+        conn = socket.create_connection((self.host, self.port))
+        return conn, conn.makefile('rb')  # buffered reader for whole lines
 
     def evaluate(self, expression, variables=None):
         with self.lock:
-            if not self.pool:
-                # Create new connection if pool is empty
-                conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                conn.connect((self.host, self.port))
-            else:
-                conn = self.pool.pop()
+            pooled = self.pool.pop() if self.pool else None
+        conn, reader = pooled or self._connect()
 
         try:
             request = {
@@ -516,22 +512,24 @@ class SkilletPool:
                 'variables': variables,
                 'output_json': False
             }
-
-            conn.send((json.dumps(request) + '\n').encode())
-            response = json.loads(conn.recv(4096).decode())
-
-            # Return connection to pool
-            with self.lock:
-                self.pool.append(conn)
-
-            if response['success']:
-                return response['result']
-            else:
-                raise Exception(response['error'])
-        except:
-            # Don't return broken connection to pool
+            conn.sendall((json.dumps(request) + '\n').encode())
+            line = reader.readline()
+            if not line.endswith(b'\n'):
+                # Closed by the server (idle 30 s, bad token) or cut by the 10 s write deadline
+                raise ConnectionError('connection closed before a complete response')
+            response = json.loads(line)
+        except Exception:
+            # Don't return a broken connection to the pool
+            reader.close()
             conn.close()
             raise
+
+        with self.lock:
+            self.pool.append((conn, reader))
+
+        if response['success']:
+            return response['result']
+        raise Exception(response['error'])
 
 # High-performance usage
 pool = SkilletPool(pool_size=10)
