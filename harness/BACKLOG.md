@@ -277,6 +277,10 @@ Remove or relocate `test_js_upload.py`, `test_large_request.py`, `performance_re
 `SETUP_COMPLETE.md`; check `.DS_Store`, `dist/`, `.env` are ignored.
 
 ### BL-016 · Structured error kinds · P3 · `ready` (planned after the current lanes) · language-designer (ADR) → rust-engineer
+Audit 2026-11-22 adds: Excel error tags (`#VALUE!`, `#NUM!`, `#DIV/0!`) are typed by hand into
+~150 messages and applied unevenly (LANG-9); no `IFERROR`/`ISERROR` exists; ~250 test
+assertions pin exact message text in two styles (QA-6). The ADR should cover all three.
+
 `Error` is `{message, position}` only; callers can't match on error type. Propose an `ErrorKind`
 enum without breaking `Error::new`.
 
@@ -1224,3 +1228,119 @@ Recommendations, waiting for the maintainer:
 From BL-014: `cargo update` churns the lock heavily (syn 2.0.119 plus syn 3, r-efi 6, shlex 2,
 regex 1.13, new stacker/psm). Do it in its own PR, gated on CI's `cargo audit` and MSRV 1.85 jobs.
 Also decide when rustfmt moves to `style_edition = "2024"` (a fmt-only commit, touches most files).
+
+---
+
+Items BL-080 to BL-094 come from the audit of PRs #73-#109 (2026-11-22, five read-only role
+reviews). Maintainer decisions of 2026-11-22 are recorded on each item.
+
+### BL-080 · Criteria wildcard matching ignores the deadline · P1 · `ready` · security-reviewer → rust-engineer
+SEC-1. The `*`/`?` matcher behind `COUNTIF`/`SUMIF`/`AVERAGEIF` (`src/runtime/criteria.rs`) is
+quadratic and never checks the evaluation deadline, so one request can run far past
+`--eval-timeout`. Fix: a linear-time wildcard matcher and `tick_item` per row; regression test
+that the deadline is honoured. No decision needed.
+
+### BL-081 · Lambda criteria pick up an outer `:x` · P1 · `ready` · rust-engineer
+PERF-3. A lambda criterion is first evaluated once against the outer variables; when those define
+`x`, a number result becomes a fixed criterion (`COUNTIF([5,5,1], :x)` with `x=5` gives 2). Also
+stop cloning every item (+18-37% on `COUNTIF`). No decision needed.
+
+### BL-082 · Compare Currency with numbers by amount · P1 · `ready` · rust-engineer
+LANG-1. Since #108 `SUM(10::Currency, 5)` is Currency, but ordering Currency against a Number is an
+error (ADR-0027), so `SUM(...) > 10` fails and `SUM(...) == 15` is silently false.
+Decision (maintainer): `== != < <= > >=` compare Currency with Number by amount (amends ADR-0027).
+
+### BL-083 · Make 0.7.0 releasable · P1 · `ready` · release-engineer (+ maintainer settings)
+REL-1, REL-2, REL-5, SEC-7. `main` and `develop` conflict in 20 files; `release.yml` and `fuzz.yml`
+are not on `main`, so the weekly fuzz run never fired and no release dry run is possible; any `v*`
+tag publishes to crates.io.
+Decision (maintainer): back-merge `main` into `develop` keeping develop's side, through a PR merged
+with a merge commit (not squash), after checking every main commit's content is on develop.
+Maintainer adds a `v*` tag ruleset and a protected `crates-io` environment with a required reviewer.
+
+### BL-084 · Docs catch up with what merged · P2 · `todo` · docs-engineer
+- REL-3: migration guide misses silent changes: `[1,2]==[1,2]` false→true (also objects, Currency,
+  dates), `FALSE<TRUE` false→true, `SUBSTITUTE` with an instance, `CONCAT` with Currency, `DB`,
+  `SORT(…,-1)`, hooks can't use builtin names (#86). Mark #88 BREAKING.
+- REL-7: CHANGELOG credits the unmerged #84; relative links break in release notes.
+- SEC-4: threat model is stale (10 s timeout, 400 read errors, CI image, pinning) and contradicts
+  itself.
+- LANG-11, LANG-10: excel-compat lists bugs #96 fixed; X-3's stated reason is wrong.
+- LANG-4: write the ADR for the date units (B-15): VBA codes in `DATEADD`/`DATEDIFF`, Excel codes in
+  `DATEDIF`, as the maintainer decided.
+- PERF-6: refresh `benches/BASELINE.md`; record that the +10-18% parse cost from #82 is accepted.
+- REL-10: AGENTS.md, README and role-file drift.
+
+### BL-085 · Result cache serves stale results · P2 · `ready` · rust-engineer
+SEC-2. The HTTP result cache returns old values for volatile builtins (`NOW()`, `TODAY()`, `RAND`)
+and drops `variables` when `include_variables` differs.
+Decision (maintainer): never cache results that use a volatile builtin; add `include_variables` to
+the key. Custom-function results stay cached (reload clears the cache since BL-077).
+
+### BL-086 · HTTP JSON variables bypass the budget · P2 · `ready` · rust-engineer
+SEC-3. With `--max-eval-bytes 1M`, a 0.75 MB body used 37 MB and succeeded; the banner understates
+the worst case.
+Decision (maintainer): charge the parsed variables to the evaluation budget; fix the banner.
+Migration-guide row (some large requests now fail with the budget error).
+
+### BL-087 · Test safety nets · P2 · `ready` · qa-engineer
+- QA-1: give `evaluator_parity` expected values (it compares a function with itself; 10 results
+  changed with no failing test).
+- QA-2: run the 10 `#[ignore]` tests (408, read/write deadlines, ~100 s) in a scheduled CI job.
+- QA-3: run `cargo test --no-default-features` in the gate.
+- QA-4: finish BL-061 in `eval_budget.rs`, `js_limits.rs`, `server_pid_file.rs`; clear `SKILLET_*`
+  env vars for test servers.
+- QA-7, QA-8: `--fast` skips the 10 s JS test; loosen tight wall-clock bounds.
+
+### BL-088 · Per-item costs on big arrays · P2 · `ready` · performance-engineer → rust-engineer
+- PERF-1: `ROUND()` is 3.6x slower (formats and re-parses every number) and disagrees with
+  `.round()` (`ROUND(1.005,2)` = 1.01, `1.005.round(2)` = 1.0). Fast path with a tie-only fallback.
+  Decision (maintainer): `.round()` follows `ROUND`.
+- PERF-2: `AND`/`OR`/`XOR` allocate a `Vec<bool>` per call (+18-24% in filters).
+- PERF-4: date to text is 2x slower (chrono re-parses the pattern; `.to_s()`/`CONCAT` format twice).
+
+### BL-089 · One truth rule for conditions · P2 · `todo` (maintainer decision pending) · language-designer (ADR) → rust-engineer
+LANG-2, LANG-3, QA-9. A NULL flag (e.g. from `&.`) gets different answers by form: `AND()` TRUE
+(NULL skipped), the `AND`/`&&` operators an error, `IF` FALSE, `? :` an error, `NOT` TRUE but `!`
+an error; `FALSE AND NULL` is false but `NULL AND FALSE` errors. `? :` rejects numbers that `IF`
+accepts. `filter`/`find`/`FILTER` treat anything but TRUE as false silently, while `COUNTIF` errors
+on the same lambda. `IF` ignores extra arguments.
+
+### BL-090 · Dates in aggregates, sort and criteria · P2 · `ready` · language-designer → rust-engineer
+LANG-5, LANG-6. `MAX`/`MIN`/`SUM` of dates return 0 silently; no sort accepts dates; ISO date text is
+read only by `::DateTime`, so `COUNTIF(r, ">" & DATE(...))` matches nothing.
+Decision (maintainer): `MAX`/`MIN`/sort accept dates, `SUM` of dates is an error, criteria parse
+ISO date text.
+
+### BL-091 · One text form per value type · P2 · `ready` · language-designer → rust-engineer
+LANG-7, LANG-8, REL-8, LANG-12. Currency has four text forms and `&`/`CONCAT` print float noise
+(`0.30000000000000004`); `[DATE(..)]::String` prints Rust Debug output; `&` is an internal
+`__CONCAT__` call that formulas can call and that shows in the public AST; `"héllo".length()`
+counts bytes.
+Decision (maintainer): one text form per type, Currency at 2 decimals; `.length()` counts characters;
+`&` gets its own AST node.
+
+### BL-092 · API changes that are cheap only in 0.7.0 · P2 · `ready` · rust-engineer
+REL-4. Decision (maintainer): deprecate `Value::Json` (ADR-0030 step 2) in 0.7.0, not 0.7.x, and add
+`#[non_exhaustive]` to `Value`, `Token`, `Expr` and `BinaryOp`.
+
+### BL-093 · Capacity for large data · P2 · `ready` · performance-engineer → rust-engineer
+PERF-5, PERF-7. With the `48 + len` string cost, a `.map` over 2M short strings exceeds 256 MiB; the
+1 MiB request cap limits one HTTP request to ~120k numbers, so the 20 s / 256 MiB limits never apply
+to real payloads.
+Decision (maintainer): make the request-size cap configurable (flag + env var, like BL-075) and
+document per-item capacity in `docs/guide/limits.md`.
+
+### BL-094 · Install, Docker and dev-mode hygiene · P3 · `todo` · release-engineer + security-reviewer
+REL-6, REL-9, SEC-5, SEC-6, SEC-8. Install docs name a `linux-aarch64` archive the release doesn't
+build; `install.sh` skips checksums and uses fixed /tmp paths; the Alpine `runtime-test` image
+starts on all interfaces with no tokens; the compose proxy has no TLS despite its comment, a
+floating Traefik tag and the Docker socket; no Host check in dev mode.
+
+### BL-095 · Organise tests by feature area · P3 · `todo` · qa-engineer
+QA-5. Test files are named by PR; the same facts are pinned in 3-4 files.
+
+### BL-096 · Small leftovers from BL-077 · P3 · `todo` · maintainer decision → rust-engineer
+`sk --json` exits 2 on the library path and 1 on the `:=` path for the same JSON errors; `sk_server`
+keeps JSON keys as written, so a key like `first-name` can't be read. Decide: unify the exit code,
+and whether `sk_server` sanitizes keys like the other surfaces.
