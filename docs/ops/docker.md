@@ -68,9 +68,11 @@ entrypoint does not read them; `sk_http_server` inherits the container environme
 itself, and the start-up log shows the values in use. Behind a reverse proxy every client has the
 proxy's address, so set the connection limit at the proxy instead (ADR-0025).
 
-Memory: every worker thread can run one evaluation at the full budget, so plan for about
-`SK_THREADS × SKILLET_MAX_EVAL_BYTES`: 4 × 256 MiB = 1 GiB counted with the image defaults, and
-about 2 GiB live (see [limits](../guide/limits.md#sizing-a-server)). The image and
+Memory: every worker thread can hold one evaluation at the full budget (up to about twice the
+budget live), plus about 234 MiB to read and parse a 1 MiB request, run a JavaScript call and keep
+its parse cache. Plan for `SK_THREADS × (2 × SKILLET_MAX_EVAL_BYTES + 234 MiB)` plus the 63 MiB
+result cache: about 3 GiB with the image defaults (4 × 746 MiB + 63 MiB). The start-up log prints
+this figure (see [limits](../guide/limits.md#sizing-a-server)). The image and
 `docker-compose.yml` default to 4 threads (it was 2 before BL-075); give the container at least
 that much memory, or lower the budget or the thread count.
 

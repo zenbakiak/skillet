@@ -8,7 +8,7 @@ use std::sync::{
 use std::time::Instant;
 
 use super::auth::check_authentication;
-use super::cache::{clear_cache, evaluate_cached, get_cache_stats};
+use super::cache::{clear_cache, evaluate_cached, get_cache_stats, CachedResult};
 use super::eval_limits::server_limits;
 use super::json_keys::{check_json_keys, sanitize_json_key};
 use super::parse_cache;
@@ -270,7 +270,16 @@ fn process_eval_request(
         req.include_variables,
         Some(IncludeVariables::All) | Some(IncludeVariables::Selected(_))
     );
-    let cached_result = evaluate_cached(&req.expression, &vars, include_variables);
+    // The variables are charged in the evaluation's own budget scope (ADR-0011 amendment 5):
+    // `evaluate_cached` opens the same limits again, which joins this scope.
+    let cached_result =
+        skillet::with_limits(server_limits(), || match skillet::charge_variables(&vars) {
+            Ok(()) => evaluate_cached(&req.expression, &vars, include_variables),
+            Err(e) => CachedResult {
+                result: Err(e.to_string()),
+                variable_context: None,
+            },
+        });
 
     let (result, variable_context) = match cached_result.result {
         Ok(value) => (Ok(value), cached_result.variable_context),

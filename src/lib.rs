@@ -65,7 +65,7 @@ pub use custom::{CustomFunction, FunctionRegistry};
 pub use error::Error;
 #[cfg(feature = "plugins")]
 pub use js_plugin::{JSPluginLoader, JavaScriptFunction};
-pub use limits::{with_limits, EvalLimits, MAX_EVAL_BYTES, MAX_NESTING_DEPTH};
+pub use limits::{charge_variables, with_limits, EvalLimits, MAX_EVAL_BYTES, MAX_NESTING_DEPTH};
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, RwLock};
 pub use types::Value;
@@ -92,6 +92,19 @@ fn json_vars_to_map(json_vars: &str) -> Result<HashMap<String, Value>, Error> {
     // `:arguments.arguments`.
     vars.insert("arguments".to_string(), Value::Json(json_vars.to_string()));
     Ok(vars)
+}
+
+/// Run `eval` on the variables of `json_vars`, building and charging them inside the evaluation's
+/// budget scope (ADR-0011 amendment 5): the caller's [`with_limits`] scope, or a default one.
+fn with_json_vars(
+    json_vars: &str,
+    eval: impl FnOnce(&HashMap<String, Value>) -> Result<Value, Error>,
+) -> Result<Value, Error> {
+    limits::evaluation(|| {
+        let vars = json_vars_to_map(json_vars)?;
+        charge_variables(&vars)?;
+        eval(&vars)
+    })
 }
 
 // Global function registry
@@ -206,6 +219,12 @@ pub fn evaluate_with(input: &str, vars: &HashMap<String, Value>) -> Result<Value
 ///
 /// The input must be a JSON object; anything else is an error.
 ///
+/// The variables count towards the evaluation budget ([`charge_variables`], ADR-0011 amendment 5),
+/// in the same scope as the evaluation: values with the cost model of [`MAX_EVAL_BYTES`], plus
+/// `:arguments` (48 bytes plus the length of the JSON text). Variables that alone are over the
+/// budget fail with the budget error. [`evaluate_with`] and the other `HashMap` entry points do
+/// not charge the map they are given.
+///
 /// ```rust
 /// use skillet::{evaluate_with_json, Value};
 ///
@@ -230,9 +249,18 @@ pub fn evaluate_with(input: &str, vars: &HashMap<String, Value>) -> Result<Value
 ///     evaluate_with_json("1", "[1, 2]").unwrap_err().message,
 ///     "JSON must be an object with key-value pairs"
 /// );
+///
+/// // `{"n":[1,2]}`: `:n` costs 32 + 2 × 32 = 96, `:arguments` 48 + 11 = 59.
+/// let mut limits = skillet::EvalLimits::default();
+/// limits.max_bytes = 155 + 32; // + the result
+/// let r = skillet::with_limits(limits, || evaluate_with_json(":n.length()", r#"{"n":[1,2]}"#));
+/// assert_eq!(r.unwrap(), Value::Number(2.0));
+/// limits.max_bytes = 154;
+/// let r = skillet::with_limits(limits, || evaluate_with_json("1", r#"{"n":[1,2]}"#));
+/// assert_eq!(r.unwrap_err().message, "Evaluation budget exceeded (max 154 bytes)");
 /// ```
 pub fn evaluate_with_json(input: &str, json_vars: &str) -> Result<Value, Error> {
-    evaluate_with(input, &json_vars_to_map(json_vars)?)
+    with_json_vars(json_vars, |vars| evaluate_with(input, vars))
 }
 
 /// Convert a `serde_json::Value` into a Skillet [`Value`].
@@ -270,7 +298,7 @@ pub fn json_to_value(json: serde_json::Value) -> Result<Value, Error> {
         }
         serde_json::Value::String(s) => Ok(Value::String(s)),
         serde_json::Value::Array(arr) => {
-            let mut result = Vec::new();
+            let mut result = Vec::with_capacity(arr.len());
             for item in arr {
                 result.push(json_to_value(item)?);
             }
@@ -481,7 +509,7 @@ pub fn evaluate_with_custom(input: &str, vars: &HashMap<String, Value>) -> Resul
 /// );
 /// ```
 pub fn evaluate_with_json_custom(input: &str, json_vars: &str) -> Result<Value, Error> {
-    evaluate_with_custom(input, &json_vars_to_map(json_vars)?)
+    with_json_vars(json_vars, |vars| evaluate_with_custom(input, vars))
 }
 
 /// Evaluate an expression that may assign variables (`:name := value`) and chain steps with `;`.

@@ -120,7 +120,11 @@ fn main() {
             // The original JSON for JQ, last so a key named `arguments` cannot replace it
             // (BL-077).
             vars.insert("arguments".to_string(), Value::Json(json_str.clone()));
-            evaluate_with_assignments(expr, &vars)
+            // Charged like `evaluate_with_json_custom` does (ADR-0011 amendment 5).
+            skillet::with_limits(skillet::EvalLimits::default(), || {
+                skillet::charge_variables(&vars)?;
+                evaluate_with_assignments(expr, &vars)
+            })
         } else {
             skillet::evaluate_with_json_custom(expr, &json_str)
         }

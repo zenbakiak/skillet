@@ -49,6 +49,33 @@
 > up to about twice that (Consequences). The Docker image's default `SK_THREADS` becomes 4:
 > 4 × 256 MiB = 1 GiB counted, about 2 GiB live. Operators must size `--threads` and
 > `--max-eval-bytes` for the host. The 10 s figures below describe the original decision.
+>
+> **Amendment 5 (maintainer, 2026-11-22, BL-086):** variables built from JSON are **charged to
+> the evaluation budget**, with the existing cost model (32 per value, 48 + length per string or
+> `Json`, an array 32 plus its items), in the **same scope** as the evaluation they feed. This
+> covers `sk_http_server` (the `arguments` of `POST /eval` and the query variables of
+> `GET /eval`, plus the `:arguments` JSON text it adds), `sk_server` (`variables`), the library's
+> `evaluate_with_json` and `evaluate_with_json_custom` (plus `:arguments`), and the CLI's
+> `--json`. A request whose variables alone exceed `--max-eval-bytes` fails with the normal
+> `Evaluation budget exceeded (max …)` error: HTTP 400 with `success: false` from
+> `sk_http_server`, `success: false` from `sk_server`, as for a budget error during evaluation.
+> Each value is charged **once**, after it is built: one walk over the values, O(items), with no
+> allocation; keys are not charged. The evaluator does not charge it again: borrowed reads stay
+> free, a copying read is charged for the copy it makes (amendment 2, a new value), and the
+> working copy of the map that the assignment entry points take is not charged (as before).
+> The transient `serde_json` tree of the request is not charged either; it is bounded by the
+> 1 MiB request cap and counted in the worst case below. A new public function,
+> `skillet::charge_variables(&HashMap<String, Value>)`, charges a map to the active scope; the
+> servers use it, and a host can call it inside `with_limits`. Library callers that pass a
+> `HashMap` directly (`evaluate_with`, `evaluate_with_custom`, `evaluate_with_assignments*`,
+> the `evaluate_parsed*` twins) are **not** charged for it: they built the values themselves.
+> Worst-case memory, corrected (SEC-3): per worker, 2 × budget for the evaluation, 160 ×
+> the request cap (160 MiB) to read and parse one request (measured up to 138 bytes per request
+> byte, for an array of one-key objects; about 25 for an array of numbers), the 64 MiB QuickJS
+> heap and ~10 MiB of parsed expressions; `sk_http_server` adds its result cache once
+> (1000 × 64 KiB). Defaults, 8 threads: about 5.9 GiB; the Docker image's 4 threads: about
+> 3 GiB. The start-up banner of both servers prints this figure and its parts. This replaces
+> the "`threads × max-eval-bytes`" figure of amendment 4, which counted only the budget.
 
 - Status: Accepted (2026-11-20, with amendment below)
 - Date: 2026-11-20
