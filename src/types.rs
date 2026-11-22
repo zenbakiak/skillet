@@ -8,8 +8,49 @@
 /// assert_eq!(evaluate("NULL").unwrap(), Value::Null);
 /// assert_eq!(evaluate("'a'.upper()").unwrap().as_number(), None);
 /// ```
+///
+/// `Value` is `#[non_exhaustive]` (since 0.7.0): later releases add variants (`Object` in 0.8.0,
+/// ADR-0030) without a breaking change, so a `match` outside this crate needs a `_` arm:
+///
+/// ```rust
+/// use skillet::Value;
+///
+/// fn type_name(v: &Value) -> &'static str {
+///     match v {
+///         Value::Number(_) => "Number",
+///         Value::String(_) => "String",
+///         Value::Boolean(_) => "Boolean",
+///         Value::Array(_) => "Array",
+///         Value::DateTime(_) => "DateTime",
+///         Value::Null => "Null",
+///         _ => "Other",
+///     }
+/// }
+/// assert_eq!(type_name(&Value::Null), "Null");
+/// ```
+///
+/// Without it, the match does not compile (error E0004, "non-exhaustive patterns: `_` not
+/// covered"), even when it names every variant:
+///
+/// ```compile_fail,E0004
+/// # #![allow(deprecated)]
+/// use skillet::Value;
+///
+/// fn type_name(v: &Value) -> &'static str {
+///     match v {
+///         Value::Number(_) | Value::Currency(_) => "Number",
+///         Value::String(_) => "String",
+///         Value::Boolean(_) => "Boolean",
+///         Value::Array(_) => "Array",
+///         Value::DateTime(_) => "DateTime",
+///         Value::Null => "Null",
+///         Value::Json(_) => "Json",
+///     }
+/// }
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 #[allow(deprecated)] // the derives match `Currency` until it is removed in 0.8
+#[non_exhaustive]
 pub enum Value {
     /// Every number is an `f64`, including integers.
     Number(f64),
@@ -33,6 +74,23 @@ pub enum Value {
     /// Seconds since the Unix epoch.
     DateTime(i64),
     /// A JSON object, kept as JSON text (nested objects from JSON variables, object literals).
+    ///
+    /// Deprecated (ADR-0030 step 2): in 0.8.0 (BL-011) objects become a structured
+    /// `Value::Object` and this variant is removed. It still works unchanged in 0.7: objects
+    /// that Skillet evaluates or reads from JSON are `Json`, and you can build and match it. To
+    /// build an object without naming the variant, use [`crate::json_to_value`].
+    ///
+    /// Naming it is a deprecation warning, so a crate that denies warnings stops compiling:
+    ///
+    /// ```compile_fail
+    /// #![deny(deprecated)]
+    /// let _ = skillet::Value::Json(r#"{"a":1}"#.to_string());
+    /// ```
+    #[deprecated(
+        since = "0.7.0",
+        note = "JSON objects become the structured Value::Object in 0.8.0 (ADR-0030, BL-011) \
+                and this variant is removed; build objects with skillet::json_to_value"
+    )]
     Json(String),
 }
 

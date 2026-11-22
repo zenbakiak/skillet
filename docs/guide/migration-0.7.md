@@ -419,8 +419,49 @@ unchanged at 256 MiB, only now configurable. Details: [Limits](limits.md).
 | `runtime::method_calls::exec_filter`/`exec_map`/`exec_find`/`exec_reduce`, `exec_string_method`, `exec_array_method` | take a variable map | take `&dyn EvaluationContext` |
 | Minimum Rust version | not stated | 1.85 (ADR-0012) |
 | `runtime::builtin_functions::exec_builtin` | public | deprecated (still works); it reports argument errors as `Unknown function`. Use `runtime::function_dispatch::exec_builtin_fast` or `evaluate` |
-| `skillet::parse("a & b")` | `Expr::FunctionCall { name: "__CONCAT__", … }` | `Expr::Binary(a, BinaryOp::Concat, b)` (ADR-0034); a `match` on `BinaryOp` needs a `Concat` arm |
+| `skillet::parse("a & b")` | `Expr::FunctionCall { name: "__CONCAT__", … }` | `Expr::Binary(a, BinaryOp::Concat, b)` (ADR-0034); a `match` on `BinaryOp` needs a `_` arm (see `#[non_exhaustive]` below) |
 | `Value::Currency` | a tagged number | deprecated (ADR-0033), removed in 0.8. Still compiles; a Currency you pass in is read as a Number, and results never contain one. Use `Value::Number` |
+| `Value::Json` | the variant for JSON objects | deprecated (ADR-0030); behaviour unchanged. Objects that Skillet evaluates or reads from JSON are still `Json`, and you can build and match it, with a warning. In 0.8.0 (BL-011) it is replaced by the structured `Value::Object` and removed. Build objects with `skillet::json_to_value` (its signature stays in 0.8.0) |
+| `Value`, `lexer::Token`, `ast::Expr`, `ast::BinaryOp`, `ast::UnaryOp`, `ast::TypeName` | exhaustive enums | `#[non_exhaustive]`: later variants (`Value::Object` in 0.8.0) are not breaking, but a `match` on them in your crate needs a `_` arm, even one that names every variant. `matches!`, `if let` and `==` are unaffected. Constructing variants is unaffected |
+
+The two changes that most Rust callers see:
+
+```rust
+// 0.6: compiles. 0.7: error[E0004]: non-exhaustive patterns: `&_` not covered,
+// and warnings "use of deprecated tuple variant `skillet::Value::Json`"
+// (and `Value::Currency`).
+match &value {
+    Value::Number(n) | Value::Currency(n) => println!("{n}"),
+    Value::String(s) => println!("{s}"),
+    Value::Boolean(b) => println!("{b}"),
+    Value::Array(items) => println!("{} items", items.len()),
+    Value::DateTime(t) => println!("{t}"),
+    Value::Null => println!("null"),
+    Value::Json(text) => println!("{text}"),
+}
+
+// 0.7: a `_` arm. Keep the `Json` arm (with `#[allow(deprecated)]` on the function) while you
+// still read objects as text; 0.8.0 replaces it with `Value::Object`.
+#[allow(deprecated)] // `Value::Json` until 0.8 (ADR-0030)
+fn print(value: &Value) {
+    match value {
+        Value::Number(n) => println!("{n}"),
+        Value::String(s) => println!("{s}"),
+        Value::Boolean(b) => println!("{b}"),
+        Value::Array(items) => println!("{} items", items.len()),
+        Value::DateTime(t) => println!("{t}"),
+        Value::Null => println!("null"),
+        Value::Json(text) => println!("{text}"),
+        other => println!("{other:?}"), // a variant added later
+    }
+}
+
+// Building an object: 0.6 `Value::Json(r#"{"a":1}"#.to_string())`; 0.7 warns. Use:
+let obj = skillet::json_to_value(serde_json::json!({"a": 1}))?;
+```
+
+For evaluation results, `Value::Number(n)` alone covers every number in 0.7: results never
+contain a `Currency` (ADR-0033), so that arm is no longer needed there.
 
 ## JSON variables (BL-077)
 Where variables come from a JSON object (`evaluate_with_json`, `evaluate_with_json_custom`,

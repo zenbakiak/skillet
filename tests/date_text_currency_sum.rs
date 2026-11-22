@@ -74,6 +74,7 @@ fn time_of_day_and_old_dates() {
 }
 
 #[test]
+#[allow(deprecated)] // `Value::Json` is deprecated until 0.8 (ADR-0030)
 fn arrays_and_json() {
     // An array's text is its JSON text, a date in it a JSON string (ADR-0034 §4).
     assert_eq!(

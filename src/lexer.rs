@@ -1,6 +1,9 @@
 use crate::error::Error;
 
+/// A lexer token. `#[non_exhaustive]` (since 0.7.0): new syntax adds variants (`Ampersand` in
+/// 0.7.0), so a `match` outside this crate needs a `_` arm.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum Token {
     Number(f64),
     Identifier(String),

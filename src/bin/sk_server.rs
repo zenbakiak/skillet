@@ -362,7 +362,7 @@ impl Serialize for Wire {
     }
 }
 
-#[allow(deprecated)] // `Value::Currency` is read as a Number (ADR-0033)
+#[allow(deprecated)] // `Currency` is read as a Number (ADR-0033); `Json` until 0.8 (ADR-0030)
 fn type_name(val: &Value) -> &'static str {
     match val {
         Value::Number(_) | Value::Currency(_) => "Number",
@@ -372,6 +372,8 @@ fn type_name(val: &Value) -> &'static str {
         Value::Array(_) => "Array",
         Value::Null => "Null",
         Value::Json(_) => "Json",
+        // `Value` is #[non_exhaustive]: a variant added later
+        _ => "Unknown",
     }
 }
 
@@ -393,7 +395,7 @@ fn to_wire(val: Value, datetime_text: bool) -> Wire {
     }
 }
 
-#[allow(deprecated)] // `Value::Currency` is read as a Number (ADR-0033)
+#[allow(deprecated)] // `Currency` is read as a Number (ADR-0033); `Json` until 0.8 (ADR-0030)
 fn scalar_json(val: Value, datetime_text: bool) -> serde_json::Value {
     match val {
         Value::Number(n) | Value::Currency(n) => serde_json::json!(n),
@@ -403,8 +405,9 @@ fn scalar_json(val: Value, datetime_text: bool) -> serde_json::Value {
         Value::DateTime(dt) => serde_json::json!(dt),
         Value::Null => serde_json::json!(null),
         Value::Json(s) => serde_json::from_str(&s).unwrap_or(serde_json::Value::String(s)),
-        // Arrays are handled by `to_wire`; kept total for the old format.
-        Value::Array(_) => serde_json::Value::String(format!("{:?}", val)),
+        // Arrays are handled by `to_wire`; kept total for the old format. `Value` is
+        // #[non_exhaustive]: a later variant is sent as its Debug text too.
+        _ => serde_json::Value::String(format!("{:?}", val)),
     }
 }
 

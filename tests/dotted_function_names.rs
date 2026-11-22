@@ -91,6 +91,7 @@ fn dotted_name_requires_touching_parts_and_a_call() {
 }
 
 #[test]
+#[allow(deprecated)] // `Value::Json` is deprecated until 0.8 (ADR-0030)
 fn variables_methods_and_results_are_unaffected() {
     let mut vars = HashMap::new();
     vars.insert(

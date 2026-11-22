@@ -111,6 +111,7 @@ fn eval(expr: &str, vars: &HashMap<String, Value>) -> Result<Value, Error> {
     }
 }
 
+#[allow(deprecated)] // `Value::Json` is deprecated until 0.8 (ADR-0030)
 fn vars_from_json(json: Option<&str>) -> HashMap<String, Value> {
     let mut vars = HashMap::new();
     let Some(json) = json else { return vars };

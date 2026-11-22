@@ -10,6 +10,7 @@ use skillet::Value;
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
+#[allow(deprecated)] // host `Currency` and `Json` variables stay covered until 0.8 (ADR-0030, 0033)
 static VARS: LazyLock<HashMap<String, Value>> = LazyLock::new(|| {
     let mut v = HashMap::new();
     v.insert("a".into(), Value::Number(3.0));

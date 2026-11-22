@@ -36,7 +36,7 @@ fn budget_error(max: u64) -> String {
     }
 }
 
-#[allow(deprecated)] // `Value::Currency` is read as a Number (ADR-0033)
+#[allow(deprecated)] // `Currency` is read as a Number (ADR-0033); `Json` until 0.8 (ADR-0030)
 fn size(value: &Value, nested_debug: bool, depth: usize) -> u64 {
     match value {
         // Longest f64 / i64 texts, quoted where the servers send a string.
@@ -54,6 +54,12 @@ fn size(value: &Value, nested_debug: bool, depth: usize) -> u64 {
         Value::Array(items) => items.iter().fold(2, |acc, v| {
             acc.saturating_add(1 + size(v, nested_debug, depth + 1))
         }),
+        // `Value` is #[non_exhaustive]: the servers send a later variant as its Debug text
+        _ => {
+            let mut c = EscapedCounter(2);
+            let _ = write!(c, "{:?}", value);
+            c.0
+        }
     }
 }
 

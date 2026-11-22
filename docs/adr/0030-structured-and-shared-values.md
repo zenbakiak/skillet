@@ -3,6 +3,12 @@
 > **Amended by [ADR-0034](0034-text-form-of-values.md) (2026-11-22):** the text of a single
 > Number (decision d, last paragraph) is ADR-0034 §2; `CONCAT` of an object is its JSON text (E5);
 > an array's text is its JSON text (E15). Decisions b and d's JSON number rule stand.
+>
+> **Amended (BL-092, maintainer decision 2026-11-22):** plan step 2's `#[deprecated]` on
+> `Value::Json` ships in 0.7.0 (not 0.7.x), with the note naming `Value::Object` in 0.8.0 and
+> `skillet::json_to_value` (the other step 2 helpers are not built yet). `#[non_exhaustive]` on
+> `Value` moves from step 5 to 0.7.0, together with `Token`, `Expr`, `BinaryOp`, `UnaryOp` and
+> `TypeName`.
 
 - Status: Accepted (2026-11-21, with decisions a–d)
 - Date: 2026-11-21

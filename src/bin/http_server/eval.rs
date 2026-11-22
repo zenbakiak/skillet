@@ -259,6 +259,7 @@ fn process_eval_request(
                 }
             }
             // Inserted last so a request key named `arguments` cannot replace it (BL-077).
+            #[allow(deprecated)] // `Value::Json` until 0.8 (ADR-0030)
             result.insert("arguments".to_string(), Value::Json(json_str));
             result
         }
@@ -363,7 +364,7 @@ fn process_eval_request(
     }
 }
 
-#[allow(deprecated)] // `Value::Currency` is read as a Number (ADR-0033)
+#[allow(deprecated)] // `Currency` is read as a Number (ADR-0033); `Json` until 0.8 (ADR-0030)
 fn format_structured_output(val: &Value, execution_time_ms: f64) -> serde_json::Value {
     let (result_value, type_name) = match val {
         Value::Number(n) | Value::Currency(n) => (serde_json::json!(n), "Number"),
@@ -379,6 +380,8 @@ fn format_structured_output(val: &Value, execution_time_ms: f64) -> serde_json::
             Ok(parsed) => (parsed, "Json"),
             Err(_) => (serde_json::json!(s), "Json"),
         },
+        // `Value` is #[non_exhaustive]: a later variant is sent as its Debug text
+        _ => (serde_json::json!(format!("{:?}", val)), "Unknown"),
     };
 
     serde_json::json!({
@@ -388,7 +391,7 @@ fn format_structured_output(val: &Value, execution_time_ms: f64) -> serde_json::
     })
 }
 
-#[allow(deprecated)] // `Value::Currency` is read as a Number (ADR-0033)
+#[allow(deprecated)] // `Currency` is read as a Number (ADR-0033); `Json` until 0.8 (ADR-0030)
 fn format_simple_output(val: &Value) -> serde_json::Value {
     match val {
         Value::Number(n) | Value::Currency(n) => serde_json::json!(n),
@@ -401,5 +404,7 @@ fn format_simple_output(val: &Value) -> serde_json::Value {
         }
         Value::Null => serde_json::json!(null),
         Value::Json(s) => serde_json::from_str(s).unwrap_or_else(|_| serde_json::json!(s)),
+        // `Value` is #[non_exhaustive]: a later variant is sent as its Debug text
+        _ => serde_json::json!(format!("{:?}", val)),
     }
 }

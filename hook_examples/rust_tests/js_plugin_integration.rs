@@ -270,6 +270,7 @@ fn test_object_keys_function() {
     
     // Test with a JSON string (this is how JSON values are passed to JS functions)
     let obj_str = r#"{"name": "John", "age": 30}"#;
+    #[allow(deprecated)] // `Value::Json` is deprecated until 0.8 (ADR-0030)
     let obj_value = Value::Json(obj_str.to_string());
     
     let result = js_func.execute(vec![obj_value]).unwrap();

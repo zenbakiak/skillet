@@ -26,6 +26,7 @@ fn sk_json(expr: &str, json: &str) -> (String, String, i32) {
 const WITH_ARGUMENTS_KEY: &str = r#"{"x": 1, "arguments": {"a": 2}}"#;
 
 #[test]
+#[allow(deprecated)] // `Value::Json` is deprecated until 0.8 (ADR-0030)
 fn library_keeps_the_reserved_arguments_variable() {
     for eval in [evaluate_with_json, evaluate_with_json_custom] {
         let whole = eval(":arguments", WITH_ARGUMENTS_KEY).unwrap();

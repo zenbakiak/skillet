@@ -98,6 +98,7 @@ fn test_safe_navigation_mixed_with_regular() {
 }
 
 #[test]
+#[allow(deprecated)] // `Value::Json` is deprecated until 0.8 (ADR-0030)
 fn test_safe_navigation_method_calls() {
     // Test safe navigation with method calls
     let expression = r#":cuentas := [{"FechaCierreCuenta": null}, {"FechaCierreCuenta": ""}]; :cuentas.filter(:x&.FechaCierreCuenta&.length() == 0)"#;

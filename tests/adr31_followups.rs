@@ -107,6 +107,7 @@ fn every_cast_counts_against_the_nesting_limit() {
 // ---- A2. `.to_json()` on a date --------------------------------------------------------------
 
 #[test]
+#[allow(deprecated)] // `Value::Json` is deprecated until 0.8 (ADR-0030)
 fn to_json_on_a_date_is_iso_text_and_json_cast_a_number() {
     assert_eq!(
         eval("DATE(2026,1,1).to_json()"),

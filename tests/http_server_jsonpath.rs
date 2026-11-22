@@ -3,6 +3,7 @@ use skillet::{evaluate_with_custom, Value};
 use std::collections::HashMap;
 
 // This function simulates how the HTTP server processes JSONPath arguments
+#[allow(deprecated)] // `Value::Json` is deprecated until 0.8 (ADR-0030)
 fn test_http_server_jsonpath_eval(
     expression: &str,
     arguments: HashMap<String, serde_json::Value>,

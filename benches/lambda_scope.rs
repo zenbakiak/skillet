@@ -12,6 +12,7 @@ use skillet::{evaluate_with_custom, json_to_value, Value};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
+#[allow(deprecated)] // `Value::Json` is deprecated until 0.8 (ADR-0030)
 fn vars_from_json(json: &str) -> HashMap<String, Value> {
     let parsed: serde_json::Value = serde_json::from_str(json).expect("bench JSON is valid");
     let mut vars = HashMap::new();

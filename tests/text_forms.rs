@@ -128,12 +128,14 @@ fn objects_in_array_text() {
 }
 
 #[test]
+#[allow(deprecated)] // `Value::Json` is deprecated until 0.8 (ADR-0030)
 fn array_text_reads_back_with_json_cast() {
     let back = eval(r#"(["a", 1, TRUE, NULL]::String)::Json"#);
     assert_eq!(back, Value::Json(r#"["a",1,true,null]"#.into()));
 }
 
 #[test]
+#[allow(deprecated)] // `Value::Json` is deprecated until 0.8 (ADR-0030)
 fn to_json_writes_integral_numbers_as_integers() {
     assert_eq!(eval("[1.5, 5].to_json()"), Value::Json("[1.5,5]".into()));
     assert_eq!(eval("5.to_json()"), Value::Json("5".into()));

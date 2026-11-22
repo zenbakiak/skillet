@@ -55,6 +55,7 @@ fn incompatible() -> Error {
 }
 
 /// `==`: same type, same value. A deprecated `Currency` is a Number (ADR-0033).
+#[allow(deprecated)] // `Value::Json` until objects become `Value::Object` in 0.8 (ADR-0030)
 fn equal(a: &Value, b: &Value) -> Result<bool, Error> {
     if let (Some(x), Some(y)) = (a.as_number(), b.as_number()) {
         return Ok(x == y);

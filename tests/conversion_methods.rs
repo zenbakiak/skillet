@@ -28,6 +28,7 @@ fn a(v: Value) -> Vec<Value> {
         panic!("expected array")
     }
 }
+#[allow(deprecated)] // `Value::Json` is deprecated until 0.8 (ADR-0030)
 fn j(v: Value) -> String {
     if let Value::Json(j) = v {
         j

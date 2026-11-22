@@ -34,6 +34,7 @@ fn test_sum_with_jsonpath() {
 }
 
 #[test]
+#[allow(deprecated)] // `Value::Json` is deprecated until 0.8 (ADR-0030)
 fn test_sum_with_jsonpath_variables() {
     // Test using JSONPath with variables directly
     let mut vars = HashMap::new();
