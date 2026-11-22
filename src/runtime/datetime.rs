@@ -2,12 +2,21 @@ use super::local_time;
 use super::utils::coerce_to_number;
 use crate::error::Error;
 use crate::types::Value;
-use chrono::{DateTime, Datelike, NaiveDate, NaiveTime, Timelike, Utc};
+use chrono::{DateTime, Datelike, NaiveDate, NaiveTime, TimeDelta, Timelike, Utc};
 
 pub fn is_datetime_function(name: &str) -> bool {
     matches!(
         name,
-        "NOW" | "DATE" | "TODAY" | "TIME" | "YEAR" | "MONTH" | "DAY" | "DATEADD" | "DATEDIFF"
+        "NOW"
+            | "DATE"
+            | "TODAY"
+            | "TIME"
+            | "YEAR"
+            | "MONTH"
+            | "DAY"
+            | "DATEADD"
+            | "DATEDIFF"
+            | "DATEDIF"
     )
 }
 
@@ -57,130 +66,9 @@ pub fn exec_datetime(name: &str, args: &[Value]) -> Result<Value, Error> {
                 Err(Error::new("DAY expects datetime", None))
             }
         }
-        "DATEADD" => {
-            if args.len() < 3 {
-                return Err(Error::new("DATEADD expects date, interval, unit", None));
-            }
-            let timestamp = match args.first() {
-                Some(Value::DateTime(ts)) => *ts,
-                _ => {
-                    return Err(Error::new(
-                        "DATEADD expects datetime as first argument",
-                        None,
-                    ))
-                }
-            };
-            let interval = match args.get(1) {
-                Some(Value::Number(n)) => *n as i64,
-                _ => {
-                    return Err(Error::new(
-                        "DATEADD expects number as second argument",
-                        None,
-                    ))
-                }
-            };
-            let unit = match args.get(2) {
-                Some(Value::String(s)) => s.to_lowercase(),
-                _ => {
-                    return Err(Error::new(
-                        "DATEADD expects string unit as third argument",
-                        None,
-                    ))
-                }
-            };
-
-            let dt = DateTime::from_timestamp(timestamp, 0)
-                .ok_or_else(|| Error::new("Invalid timestamp", None))?;
-
-            let new_dt = match unit.as_str() {
-                "days" | "day" | "d" => dt + chrono::Duration::days(interval),
-                "hours" | "hour" | "h" => dt + chrono::Duration::hours(interval),
-                "minutes" | "minute" | "m" => dt + chrono::Duration::minutes(interval),
-                "seconds" | "second" | "s" => dt + chrono::Duration::seconds(interval),
-                "weeks" | "week" | "w" => dt + chrono::Duration::weeks(interval),
-                "months" | "month" => {
-                    let mut year = dt.year();
-                    let mut month = dt.month() as i32;
-                    month += interval as i32;
-                    while month > 12 {
-                        year += 1;
-                        month -= 12;
-                    }
-                    while month < 1 {
-                        year -= 1;
-                        month += 12;
-                    }
-                    let new_date = NaiveDate::from_ymd_opt(year, month as u32, dt.day())
-                        .unwrap_or_else(|| NaiveDate::from_ymd_opt(year, month as u32, 28).unwrap());
-                    new_date.and_time(dt.time()).and_utc()
-                }
-                "years" | "year" | "y" => {
-                    let new_year = dt.year() + interval as i32;
-                    let new_date = NaiveDate::from_ymd_opt(new_year, dt.month(), dt.day())
-                        .unwrap_or_else(|| NaiveDate::from_ymd_opt(new_year, dt.month(), 28).unwrap());
-                    new_date.and_time(dt.time()).and_utc()
-                }
-                _ => return Err(Error::new("DATEADD unit must be one of: days, hours, minutes, seconds, weeks, months, years", None)),
-            };
-
-            Ok(Value::DateTime(new_dt.timestamp()))
-        }
-        "DATEDIFF" => {
-            if args.len() < 3 {
-                return Err(Error::new("DATEDIFF expects date1, date2, unit", None));
-            }
-            let timestamp1 = match args.first() {
-                Some(Value::DateTime(ts)) => *ts,
-                _ => {
-                    return Err(Error::new(
-                        "DATEDIFF expects datetime as first argument",
-                        None,
-                    ))
-                }
-            };
-            let timestamp2 = match args.get(1) {
-                Some(Value::DateTime(ts)) => *ts,
-                _ => {
-                    return Err(Error::new(
-                        "DATEDIFF expects datetime as second argument",
-                        None,
-                    ))
-                }
-            };
-            let unit = match args.get(2) {
-                Some(Value::String(s)) => s.to_lowercase(),
-                _ => {
-                    return Err(Error::new(
-                        "DATEDIFF expects string unit as third argument",
-                        None,
-                    ))
-                }
-            };
-
-            let dt1 = DateTime::from_timestamp(timestamp1, 0)
-                .ok_or_else(|| Error::new("Invalid timestamp1", None))?;
-            let dt2 = DateTime::from_timestamp(timestamp2, 0)
-                .ok_or_else(|| Error::new("Invalid timestamp2", None))?;
-
-            let duration = dt2.signed_duration_since(dt1);
-
-            let diff = match unit.as_str() {
-                "days" | "day" | "d" => duration.num_days() as f64,
-                "hours" | "hour" | "h" => duration.num_hours() as f64,
-                "minutes" | "minute" | "m" => duration.num_minutes() as f64,
-                "seconds" | "second" | "s" => duration.num_seconds() as f64,
-                "weeks" | "week" | "w" => duration.num_weeks() as f64,
-                "months" | "month" => {
-                    let years_diff = dt2.year() - dt1.year();
-                    let months_diff = dt2.month() as i32 - dt1.month() as i32;
-                    (years_diff * 12 + months_diff) as f64
-                }
-                "years" | "year" | "y" => (dt2.year() - dt1.year()) as f64,
-                _ => return Err(Error::new("DATEDIFF unit must be one of: days, hours, minutes, seconds, weeks, months, years", None)),
-            };
-
-            Ok(Value::Number(diff))
-        }
+        "DATEADD" => exec_dateadd(args),
+        "DATEDIFF" => exec_datediff(args),
+        "DATEDIF" => exec_datedif(args),
         _ => Err(Error::new(
             format!("Unknown datetime function: {}", name),
             None,
@@ -294,4 +182,215 @@ fn exec_time(args: &[Value]) -> Result<Value, Error> {
             None,
         )),
     }
+}
+
+/// A `DATEADD`/`DATEDIFF` unit (B-15). The codes are VBA's `DateAdd`/`DateDiff` codes, the
+/// closest Excel functions, so `"m"` is months and `"n"` minutes. The long words are Skillet's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Interval {
+    Year,
+    Quarter,
+    Month,
+    /// `"d"`, `"y"` (day of year) and the long words.
+    Day,
+    /// `"w"`: adds days, counts whole weeks (VBA).
+    Weekday,
+    /// `"ww"`: adds weeks, counts Sundays (VBA).
+    CalendarWeek,
+    /// `"weeks"`: adds and counts whole weeks.
+    Week,
+    Hour,
+    Minute,
+    Second,
+}
+
+const INTERVAL_UNITS: &str = "yyyy, q, m, y, d, w, ww, h, n, s, years, months, weeks, days, \
+hours, minutes, seconds (#VALUE!)";
+
+/// The unit argument, case-insensitive. Unknown units are `#VALUE!`, as VBA rejects them.
+fn interval(func: &str, unit: Option<&Value>) -> Result<Interval, Error> {
+    let Some(Value::String(unit)) = unit else {
+        return Err(Error::new(
+            format!("{func} expects string unit as third argument"),
+            None,
+        ));
+    };
+    Ok(match unit.to_ascii_lowercase().as_str() {
+        "yyyy" | "years" | "year" => Interval::Year,
+        "q" => Interval::Quarter,
+        "m" | "months" | "month" => Interval::Month,
+        "y" | "d" | "days" | "day" => Interval::Day,
+        "w" => Interval::Weekday,
+        "ww" => Interval::CalendarWeek,
+        "weeks" | "week" => Interval::Week,
+        "h" | "hours" | "hour" => Interval::Hour,
+        "n" | "minutes" | "minute" => Interval::Minute,
+        "s" | "seconds" | "second" => Interval::Second,
+        _ => {
+            return Err(Error::new(
+                format!("{func} unit must be one of: {INTERVAL_UNITS}"),
+                None,
+            ))
+        }
+    })
+}
+
+fn datetime_arg(v: Option<&Value>, func: &str, which: &str) -> Result<DateTime<Utc>, Error> {
+    let Some(Value::DateTime(ts)) = v else {
+        return Err(Error::new(
+            format!("{func} expects datetime as {which} argument"),
+            None,
+        ));
+    };
+    DateTime::from_timestamp(*ts, 0).ok_or_else(|| Error::new("Invalid timestamp", None))
+}
+
+/// `DATEADD(datetime, amount, unit)`, like VBA `DateAdd`: `amount` is truncated; months,
+/// quarters and years keep the day, clamped to the end of a shorter month.
+fn exec_dateadd(args: &[Value]) -> Result<Value, Error> {
+    if args.len() < 3 {
+        return Err(Error::new("DATEADD expects date, interval, unit", None));
+    }
+    let dt = datetime_arg(args.first(), "DATEADD", "first")?;
+    let amount = match args.get(1) {
+        Some(Value::Number(n)) if n.is_finite() => n.trunc() as i64,
+        _ => {
+            return Err(Error::new(
+                "DATEADD expects number as second argument",
+                None,
+            ))
+        }
+    };
+    let seconds = |per: i64| {
+        amount
+            .checked_mul(per)
+            .and_then(TimeDelta::try_seconds)
+            .and_then(|d| dt.checked_add_signed(d))
+    };
+    let result = match interval("DATEADD", args.get(2))? {
+        Interval::Year => amount.checked_mul(12).and_then(|m| add_months(dt, m)),
+        Interval::Quarter => amount.checked_mul(3).and_then(|m| add_months(dt, m)),
+        Interval::Month => add_months(dt, amount),
+        Interval::Day | Interval::Weekday => seconds(86_400),
+        Interval::Week | Interval::CalendarWeek => seconds(7 * 86_400),
+        Interval::Hour => seconds(3_600),
+        Interval::Minute => seconds(60),
+        Interval::Second => seconds(1),
+    };
+    result
+        .map(|dt| Value::DateTime(dt.timestamp()))
+        .ok_or_else(|| Error::new("DATEADD result is out of range (#NUM!)", None))
+}
+
+/// `dt` plus `months` calendar months, the day clamped to the last day of the target month.
+fn add_months(dt: DateTime<Utc>, months: i64) -> Option<DateTime<Utc>> {
+    let total = i64::from(dt.year())
+        .checked_mul(12)?
+        .checked_add(i64::from(dt.month0()))?
+        .checked_add(months)?;
+    let year = i32::try_from(total.div_euclid(12)).ok()?;
+    let month = total.rem_euclid(12) as u32 + 1;
+    let date = (dt.day().min(28)..=dt.day())
+        .rev()
+        .find_map(|day| NaiveDate::from_ymd_opt(year, month, day))?;
+    Some(date.and_time(dt.time()).and_utc())
+}
+
+/// `DATEDIFF(date1, date2, unit)`: `date2 - date1` with VBA `DateDiff`'s codes. Years,
+/// quarters, months and `"ww"` count calendar boundaries (`"ww"` counts Sundays, as in VBA);
+/// the other units count whole elapsed units.
+fn exec_datediff(args: &[Value]) -> Result<Value, Error> {
+    if args.len() < 3 {
+        return Err(Error::new("DATEDIFF expects date1, date2, unit", None));
+    }
+    let dt1 = datetime_arg(args.first(), "DATEDIFF", "first")?;
+    let dt2 = datetime_arg(args.get(1), "DATEDIFF", "second")?;
+    let elapsed = dt2.signed_duration_since(dt1);
+    let months = |dt: DateTime<Utc>| i64::from(dt.year()) * 12 + i64::from(dt.month0());
+    let sundays = |dt: DateTime<Utc>| i64::from(dt.date_naive().num_days_from_ce()).div_euclid(7);
+    let diff = match interval("DATEDIFF", args.get(2))? {
+        Interval::Year => i64::from(dt2.year() - dt1.year()),
+        Interval::Quarter => months(dt2).div_euclid(3) - months(dt1).div_euclid(3),
+        Interval::Month => months(dt2) - months(dt1),
+        Interval::Day => elapsed.num_days(),
+        Interval::Weekday | Interval::Week => elapsed.num_weeks(),
+        Interval::CalendarWeek => sundays(dt2) - sundays(dt1),
+        Interval::Hour => elapsed.num_hours(),
+        Interval::Minute => elapsed.num_minutes(),
+        Interval::Second => elapsed.num_seconds(),
+    };
+    Ok(Value::Number(diff as f64))
+}
+
+/// Excel `DATEDIF(start_date, end_date, unit)`: complete years (`"y"`), months (`"m"`) or days
+/// (`"d"`), and `"md"`, `"ym"`, `"yd"`, which ignore the larger units. Times are ignored. An
+/// unknown unit or `start_date` after `end_date` is `#NUM!`, as in Excel.
+fn exec_datedif(args: &[Value]) -> Result<Value, Error> {
+    let [start, end, unit] = args else {
+        return Err(Error::new(
+            "DATEDIF expects start_date, end_date, unit",
+            None,
+        ));
+    };
+    let start = datetime_arg(Some(start), "DATEDIF", "first")?.date_naive();
+    let end = datetime_arg(Some(end), "DATEDIF", "second")?.date_naive();
+    let Value::String(unit) = unit else {
+        return Err(Error::new(
+            "DATEDIF expects string unit as third argument",
+            None,
+        ));
+    };
+    if start > end {
+        return Err(Error::new(
+            "DATEDIF start_date is after end_date (#NUM!)",
+            None,
+        ));
+    }
+    let out_of_range = || Error::new("DATEDIF result is out of range (#NUM!)", None);
+    let mut months = (i64::from(end.year()) - i64::from(start.year())) * 12
+        + i64::from(end.month0())
+        - i64::from(start.month0());
+    if end.day() < start.day() {
+        months -= 1;
+    }
+    let days = match unit.to_ascii_lowercase().as_str() {
+        "y" => months / 12,
+        "m" => months,
+        "ym" => months % 12,
+        "d" => (end - start).num_days(),
+        "md" if end.day() >= start.day() => i64::from(end.day() - start.day()),
+        // Excel: end - DATE(YEAR(end), MONTH(end) - 1, DAY(start)), which can be negative.
+        "md" => {
+            let from = rollover_date(end.year(), i64::from(end.month0()) - 1, start.day())
+                .ok_or_else(out_of_range)?;
+            (end - from).num_days()
+        }
+        // Excel: days since the last anniversary of start_date on or before end_date.
+        "yd" => {
+            let anniversary = |year| rollover_date(year, i64::from(start.month0()), start.day());
+            let mut from = anniversary(end.year()).ok_or_else(out_of_range)?;
+            if from > end {
+                from = anniversary(end.year() - 1).ok_or_else(out_of_range)?;
+            }
+            (end - from).num_days()
+        }
+        _ => {
+            return Err(Error::new(
+                "DATEDIF unit must be one of: y, m, d, md, ym, yd (#NUM!)",
+                None,
+            ))
+        }
+    };
+    Ok(Value::Number(days as f64))
+}
+
+/// Excel `DATE(year, month0 + 1, day)` with month and day rolling over.
+fn rollover_date(year: i32, month0: i64, day: u32) -> Option<NaiveDate> {
+    let total = i64::from(year).checked_mul(12)?.checked_add(month0)?;
+    let first = NaiveDate::from_ymd_opt(
+        i32::try_from(total.div_euclid(12)).ok()?,
+        total.rem_euclid(12) as u32 + 1,
+        1,
+    )?;
+    first.checked_add_signed(TimeDelta::try_days(i64::from(day) - 1)?)
 }
