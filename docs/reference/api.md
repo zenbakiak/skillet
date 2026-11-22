@@ -184,6 +184,25 @@ Tightest first, as in Excel. Operators on the same row are left-associative.
 `-(2^2)` gives `-4`. Before BL-054, `^` was right-associative (`2^3^2` was `512`) and
 unary minus bound looser than `^` (`-2^2` was `-4`).
 
+`AND` and `OR` (any case) between two operands are the `&&` and `||` operators; followed by `(`
+in operand position they are the `AND(...)` and `OR(...)` builtins: `AND(TRUE, FALSE) OR TRUE`
+is `TRUE`.
+
+### End of input
+The whole input must be one expression, or a `;` sequence of them (one trailing `;` is allowed).
+Anything left after it is a parse error at the first extra token; the position counts from the
+start of the input, including a leading `=`:
+
+```bash
+=1 2           # Error: Unexpected token after end of expression at position 3
+1; 2 3         # Error: Unexpected token after end of expression at position 5
+(1) (2)        # Error: Unexpected token after end of expression at position 4
+```
+
+Before BL-069 the rest was dropped silently: `=1 2` was `1` and `TRUE AND FALSE` was `TRUE`.
+This applies to `parse`, every `evaluate*` function, `sk` and both servers. Error positions now
+also count the leading whitespace and `=` (before, `=1 +` reported the position in `1 +`).
+
 ---
 
 ## Built-in Functions
@@ -1201,7 +1220,8 @@ for price in [2.5, 3.0] {
 }
 ```
 
-Limits: `parse` rejects input nested deeper than 128 (`Expression nested too deeply (max 128)`),
+`parse` rejects tokens after the expression (`Unexpected token after end of expression`, see
+[End of input](#end-of-input)). Limits: `parse` rejects input nested deeper than 128 (`Expression nested too deeply (max 128)`),
 and every `evaluate_parsed*` call gets its own evaluation budget and the deadline of an enclosing
 `with_limits`, as a text evaluation does ([limits](../guide/limits.md)). Pass trees that came from
 `parse`: a hand-built `Expr` is not depth-checked. `Expr` uses `Rc`, so a parsed expression stays
