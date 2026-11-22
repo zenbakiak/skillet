@@ -31,7 +31,7 @@ USER skillet
 # host side (docker-compose.yml publishes to 127.0.0.1 by default).
 ENV PORT=8080 \
     HOST=0.0.0.0 \
-    SK_THREADS=2 \
+    SK_THREADS=4 \
     SKILLET_HOOKS_DIR=/app/hooks
 
 # SKILLET_AUTH_TOKEN and SKILLET_ADMIN_TOKEN are required at run time and have no default;

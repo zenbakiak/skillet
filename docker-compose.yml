@@ -9,6 +9,8 @@ services:
     environment:
       PORT: "8080"
       HOST: "0.0.0.0"
+      # Worker threads. Worst case about SK_THREADS x SKILLET_MAX_EVAL_BYTES (4 x 256 MiB = 1 GiB).
+      SK_THREADS: "4"
       SKILLET_HOOKS_DIR: /app/hooks
       # Required. Read from the shell environment or from .env (gitignored; see .env.example).
       # The container refuses to start if either is empty.
