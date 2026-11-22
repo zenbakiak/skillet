@@ -17,3 +17,12 @@ Input data from JSON is often incomplete. Erroring on every `null` made formulas
 ## Consequences
 - + Formulas degrade gracefully with `&.` / `to_*`.
 - − Silent defaults (`0`, `""`) can hide data problems; authors must choose deliberately.
+
+## Amendment (maintainer, 2026-11-22, BL-105): `::Array` on a string
+`::Array` on a string splits it into characters, exactly as `.to_a()`: `"hello"::Array` is
+`["h","e","l","l","o"]` (was `["hello"]`) and `""::Array` is `[]` (was `[""]`). Characters are
+Unicode scalars, as `.length()` counts them (ADR-0034 §5). One helper
+(`runtime::text::string_chars`) serves both, so they cannot drift; it charges the evaluation
+budget before building (ADR-0011). Every other input keeps its result: an array stays itself,
+and a number, boolean, date, object or `NULL` becomes a one-item array. So `NULL::Array` is still
+`[NULL]` while `NULL.to_a()` is `[]`. Ships in 0.7.0; see the migration guide.
