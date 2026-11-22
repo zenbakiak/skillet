@@ -12,6 +12,7 @@ Check these first. They change results without an error:
 4. **`JQ`** with a wildcard path that matches one item now returns an array.
 5. **`%` before `-` or `+`** is now a percent, not modulo: `10 % -3` is `-2.9` (was `1`).
 6. **`1e3`** is now `1000` (it was silently `1`).
+7. **`AND`/`OR` with `NULL` or an array holding text**: `AND(TRUE, NULL)` is now `true`.
 
 ## Expressions
 
@@ -88,12 +89,31 @@ To keep a default, test first: `IF(:n == 0, 0, :total / :n)` (now lazy, see belo
 | `TIME(14, 30, 0)` | current time (0.6.3) | `0.6041666666666666` (fraction of a day) |
 | `IPMT(0.1, 1, 3, 1000)`, `IPMT(0.1, 2, 3, 1000)` | `100`, `49.79…` | `-100`, `-69.79…` |
 | `FIND("b", "abc")` | `Error` | `2` (text search) |
-| `IF(TRUE, 1, UPPER(1))` | `Error` | `1` (only the chosen branch runs) |
-| `IF("x", 1, 2)` | `2` | `Error` |
-| `IFS(FALSE, 1)` (no true condition) | `false` | `Error` |
 
 The methods keep Ruby semantics and do not change: `"  a   b  ".trim()` is still `"a   b"`, and
 `(-3.7).int()` is still `-3` (while `INT(-3.7)` is `-4`).
+
+### Logical functions and operators (ADR-0018 D-8, ADR-0029)
+`IF` and `IFS` evaluate only the branch they pick. Their condition must be `TRUE`/`FALSE` or a
+number (non-zero is true); `NULL` is false. The `AND`/`OR`/`NOT`/`XOR` builtins follow Excel:
+inside an array, text and `NULL` are skipped; text passed directly is `#VALUE!`; no logical value
+at all is `#VALUE!`. The builtins evaluate every argument, while the operators `AND`, `OR`, `&&`
+and `||` stop as soon as the left side decides the result.
+
+| Expression | 0.6 | 0.7 |
+|---|---|---|
+| `IF(TRUE, 1, UPPER(1))` | `Error` | `1` (only the chosen branch runs) |
+| `IF("x", 1, 2)`, `IF([1], 1, 2)` | `2` | `Error` (`#VALUE!`) |
+| `IFS(FALSE, 1)` (no true condition) | `false` | `Error` (`#N/A`) |
+| `AND(TRUE, NULL)`, `AND(TRUE, [TRUE, "x"])` | `false` | `true` (blank and text ignored) |
+| `AND(TRUE, "x")`, `OR(FALSE, "TRUE")`, `NOT("x")` | `false`, `false`, `true` | `Error` (`#VALUE!`) |
+| `AND()`, `OR()`, `AND([])` | `true`, `false`, `true` | `Error` (`#VALUE!`) |
+| `XOR(TRUE, TRUE, TRUE)`, `XOR(TRUE)` | `Error` | `true` (odd number of TRUE) |
+| `FALSE && 1/0`, `TRUE \|\| UPPER(1)` | `Error` | `false`, `true` (right side not evaluated) |
+| `NOT TRUE`, `not (1 > 2)` | parse error | `false`, `true` (`NOT` keyword, binds like `!`) |
+| `AND(1, TRUE)`, `NOT(0)`, `1 AND TRUE` | `true`, `true`, `Error` | unchanged |
+
+`NOT x` binds as tightly as `!`, so `NOT :x > 1` is `(NOT :x) > 1`; write `NOT (:x > 1)`.
 
 ### Dates (ADR-0018 D-5)
 | Expression | 0.6 | 0.7 |
