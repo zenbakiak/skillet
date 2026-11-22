@@ -85,8 +85,14 @@ pub enum BinaryOp {
     Lt,
     Ge,
     Le,
+    /// `==`: equality, case-insensitive for text (ADR-0023).
     Eq,
+    /// `!=`: negation of `==`.
     Ne,
+    /// `===`: strict equality, case-sensitive text (ADR-0023).
+    StrictEq,
+    /// `!==`: negation of `===`.
+    StrictNe,
     And,
     Or,
 }

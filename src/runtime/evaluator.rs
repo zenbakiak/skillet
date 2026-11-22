@@ -366,48 +366,12 @@ impl Evaluator {
             }
             BinaryOp::Eq
             | BinaryOp::Ne
+            | BinaryOp::StrictEq
+            | BinaryOp::StrictNe
             | BinaryOp::Lt
             | BinaryOp::Le
             | BinaryOp::Gt
-            | BinaryOp::Ge => {
-                let result = match (a, b) {
-                    (Value::Number(x), Value::Number(y)) => match op {
-                        BinaryOp::Eq => x == y,
-                        BinaryOp::Ne => x != y,
-                        BinaryOp::Lt => x < y,
-                        BinaryOp::Le => x <= y,
-                        BinaryOp::Gt => x > y,
-                        BinaryOp::Ge => x >= y,
-                        _ => unreachable!(),
-                    },
-                    (Value::String(x), Value::String(y)) => match op {
-                        BinaryOp::Eq => x == y,
-                        BinaryOp::Ne => x != y,
-                        BinaryOp::Lt => x < y,
-                        BinaryOp::Le => x <= y,
-                        BinaryOp::Gt => x > y,
-                        BinaryOp::Ge => x >= y,
-                        _ => unreachable!(),
-                    },
-                    (Value::Boolean(x), Value::Boolean(y)) => match op {
-                        BinaryOp::Eq => x == y,
-                        BinaryOp::Ne => x != y,
-                        _ => false,
-                    },
-                    // ADR-0013: NULL equals only NULL; ordering a NULL stays an error.
-                    (Value::Null, Value::Null) => match op {
-                        BinaryOp::Eq => true,
-                        BinaryOp::Ne => false,
-                        _ => return Err(Error::new("Comparison of incompatible types", None)),
-                    },
-                    _ => match op {
-                        BinaryOp::Eq => false,
-                        BinaryOp::Ne => true,
-                        _ => return Err(Error::new("Comparison of incompatible types", None)),
-                    },
-                };
-                Ok(Value::Boolean(result))
-            }
+            | BinaryOp::Ge => crate::runtime::comparison::compare(op, a, b),
             BinaryOp::And | BinaryOp::Or => {
                 let ab = a
                     .as_bool()

@@ -743,6 +743,8 @@ fn binary_op(tok: &Token) -> Option<(Option<BinaryOp>, u8)> {
         Token::And | Token::AndAnd => (BinaryOp::And, 2),
         Token::EqEq => (BinaryOp::Eq, 3),
         Token::NotEq => (BinaryOp::Ne, 3),
+        Token::StrictEq => (BinaryOp::StrictEq, 3),
+        Token::StrictNe => (BinaryOp::StrictNe, 3),
         Token::Greater => (BinaryOp::Gt, 4),
         Token::Less => (BinaryOp::Lt, 4),
         Token::Ge => (BinaryOp::Ge, 4),

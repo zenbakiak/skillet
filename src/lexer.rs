@@ -35,6 +35,10 @@ pub enum Token {
     Le,
     EqEq,
     NotEq,
+    /// `===`
+    StrictEq,
+    /// `!==`
+    StrictNe,
     And,
     Or,
     AndAnd,
@@ -316,7 +320,12 @@ impl<'a> Lexer<'a> {
             b'!' => {
                 if matches!(self.peek(), Some(b'=')) {
                     self.bump();
-                    Token::NotEq
+                    if matches!(self.peek(), Some(b'=')) {
+                        self.bump();
+                        Token::StrictNe
+                    } else {
+                        Token::NotEq
+                    }
                 } else {
                     Token::Bang
                 }
@@ -357,10 +366,16 @@ impl<'a> Lexer<'a> {
                 }
             }
             b'=' => {
-                // Both '=' and '==' are valid for equality (leading '=' is stripped earlier)
+                // Both '=' and '==' are valid for equality (leading '=' is stripped earlier);
+                // '===' is strict equality.
                 if matches!(self.peek(), Some(b'=')) {
                     self.bump();
-                    Token::EqEq
+                    if matches!(self.peek(), Some(b'=')) {
+                        self.bump();
+                        Token::StrictEq
+                    } else {
+                        Token::EqEq
+                    }
                 } else {
                     Token::EqEq
                 }
@@ -426,6 +441,9 @@ impl<'a> Lexer<'a> {
                 | Token::SafeNavigation
         ) {
             self.last_start = self.pos - 2;
+            self.last_end = self.pos;
+        } else if matches!(tok, Token::StrictEq | Token::StrictNe) {
+            self.last_start = self.pos - 3;
             self.last_end = self.pos;
         }
         Ok(tok)
