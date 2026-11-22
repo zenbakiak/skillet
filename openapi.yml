@@ -644,6 +644,9 @@ paths:
       description: |
         Reload all JavaScript functions from the hooks directory.
         This refreshes the function registry without restarting the server.
+        Afterwards the registry holds exactly the hooks that load from disk: a function whose
+        file was deleted (or no longer loads) is removed, and the result cache is cleared. If
+        the hooks directory cannot be read, the answer is 500 and nothing changes.
         A file whose `@name` is a builtin name (any case) is skipped with a warning on the
         server's stderr and is not counted in `functions_loaded` (ADR-0024).
       security:
@@ -780,7 +783,10 @@ components:
           example: ":x + :y * 2"
         arguments:
           type: object
-          description: Variables to use in the expression
+          description: >-
+            Variables to use in the expression. The whole object is also available as
+            `:arguments` (for `JQ`); a key named `arguments` does not replace it and is read
+            as `:arguments.arguments`.
           additionalProperties: true
           example:
             x: 10

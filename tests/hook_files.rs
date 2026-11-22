@@ -1,6 +1,7 @@
 //! JS function management on `sk_http_server` only touches plain `.js` names directly inside
 //! the hooks directory, and listing/loading stays inside it. Hooks may not use a builtin's
-//! name (ADR-0024): loading skips them with a warning, upload and update reject them.
+//! name (ADR-0024): loading skips them with a warning, upload and update reject them. Reload
+//! makes the registry match the hooks on disk (BL-077).
 //! Servers run on 127.0.0.1 with a temporary hooks directory.
 #![cfg(feature = "plugins")]
 
@@ -239,4 +240,88 @@ fn update_rejects_a_builtin_name_in_any_case() {
         std::fs::read_to_string(hooks.join("mine.js")).unwrap(),
         HOOK
     );
+}
+
+fn hook_returning(name: &str, value: u32) -> String {
+    format!("// @name: {name}\n// @min_args: 0\nfunction execute(args) {{ return {value}; }}\n")
+}
+
+fn eval(server: &Server, expression: &str) -> String {
+    let body = serde_json::json!({ "expression": expression }).to_string();
+    server.request("POST", "/eval", &body)
+}
+
+/// BL-077: reload drops a hook whose file is gone, even one whose result is cached.
+#[test]
+fn reload_hooks_drops_a_hook_whose_file_was_deleted() {
+    let (_base, hooks, _outside) = layout();
+    std::fs::write(hooks.join("gone.js"), hook_returning("GONEFN", 7)).unwrap();
+    std::fs::write(hooks.join("kept.js"), hook_returning("KEPTFN", 8)).unwrap();
+    let server = Server::start(&hooks);
+    let resp = eval(&server, "=GONEFN() + KEPTFN()");
+    assert!(resp.contains("\"result\":15"), "{resp}");
+
+    std::fs::remove_file(hooks.join("gone.js")).unwrap();
+    let resp = server.request("POST", "/reload-hooks", "");
+    assert_eq!(status(&resp), "200", "{resp}");
+    assert!(resp.contains("\"functions_loaded\":1"), "{resp}");
+
+    let resp = eval(&server, "=GONEFN() + KEPTFN()");
+    assert_eq!(status(&resp), "400", "{resp}");
+    assert!(resp.contains("Unknown function: GONEFN"), "{resp}");
+    let resp = eval(&server, "=KEPTFN()");
+    assert!(resp.contains("\"result\":8"), "{resp}");
+}
+
+/// BL-077: a hook deleted through the API is gone after the next reload.
+#[test]
+fn reload_hooks_after_delete_js_removes_the_function() {
+    let (_base, hooks, _outside) = layout();
+    let server = Server::start(&hooks);
+    let resp = server.with_filename("POST", "/upload-js", "ok.js");
+    assert_eq!(status(&resp), "200", "{resp}");
+    let resp = server.request("POST", "/reload-hooks", "");
+    assert!(resp.contains("\"functions_loaded\":1"), "{resp}");
+    assert!(eval(&server, "=HOOKFILESOK()").contains("\"result\":1"));
+
+    let body = serde_json::json!({ "filename": "ok.js" }).to_string();
+    let resp = server.request("DELETE", "/delete-js", &body);
+    assert_eq!(status(&resp), "200", "{resp}");
+    let resp = server.request("POST", "/reload-hooks", "");
+    assert!(resp.contains("\"functions_loaded\":0"), "{resp}");
+    let resp = eval(&server, "=HOOKFILESOK()");
+    assert!(resp.contains("Unknown function: HOOKFILESOK"), "{resp}");
+}
+
+/// A changed hook is used after reload, not a result cached from the old version.
+#[test]
+fn reload_hooks_replaces_a_changed_hook_and_its_cached_results() {
+    let (_base, hooks, _outside) = layout();
+    std::fs::write(hooks.join("mine.js"), hook_returning("MINEFN", 7)).unwrap();
+    let server = Server::start(&hooks);
+    assert!(eval(&server, "=MINEFN()").contains("\"result\":7"));
+
+    std::fs::write(hooks.join("mine.js"), hook_returning("MINEFN", 9)).unwrap();
+    let resp = server.request("POST", "/reload-hooks", "");
+    assert_eq!(status(&resp), "200", "{resp}");
+    let resp = eval(&server, "=MINEFN()");
+    assert!(resp.contains("\"result\":9"), "{resp}");
+}
+
+/// A reload that cannot read the hooks directory fails and keeps every loaded hook.
+#[test]
+fn failed_reload_hooks_keeps_the_loaded_hooks() {
+    let (_base, hooks, _outside) = layout();
+    std::fs::write(hooks.join("mine.js"), hook_returning("MINEFN", 7)).unwrap();
+    let server = Server::start(&hooks);
+    assert!(eval(&server, "=MINEFN()").contains("\"result\":7"));
+
+    // The hooks path is now a file, so reading it as a directory fails.
+    std::fs::remove_dir_all(&hooks).unwrap();
+    std::fs::write(&hooks, "not a directory").unwrap();
+    let resp = server.request("POST", "/reload-hooks", "");
+    assert_eq!(status(&resp), "500", "{resp}");
+    assert!(resp.contains("\"success\":false"), "{resp}");
+    let resp = eval(&server, "=MINEFN() + 1");
+    assert!(resp.contains("\"result\":8"), "{resp}");
 }

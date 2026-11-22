@@ -7,24 +7,6 @@ use super::cache::{get_pooled_buffer, return_pooled_buffer};
 use super::cors;
 use super::request_limits::{DeadlineReader, DeadlineWriter, MAX_REQUEST_SIZE};
 
-pub fn sanitize_json_key(key: &str) -> String {
-    // Fast path: if key is already valid, return as-is (no allocation)
-    if key.chars().all(|c| c.is_alphanumeric() || c == '_') {
-        return key.to_string();
-    }
-
-    // Slow path: sanitize invalid characters
-    key.chars()
-        .map(|c| {
-            if c.is_alphanumeric() || c == '_' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect()
-}
-
 /// A request over `MAX_REQUEST_SIZE`; `ErrorKind::FileTooLarge` marks it so the caller can
 /// answer 413 without matching on the message.
 fn too_large(message: &str) -> std::io::Error {

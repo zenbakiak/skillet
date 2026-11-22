@@ -54,11 +54,21 @@ fn incompatible() -> Error {
     Error::new("Comparison of incompatible types", None)
 }
 
-/// `==`: same type, same value. `Number` and `Currency` are different types.
+/// The amount of a Number or a Currency; `None` for every other value.
+fn amount(v: &Value) -> Option<f64> {
+    match v {
+        Value::Number(n) | Value::Currency(n) => Some(*n),
+        _ => None,
+    }
+}
+
+/// `==`: same type, same value. Number and Currency compare by amount (ADR-0027 Amendment 1).
 fn equal(a: &Value, b: &Value) -> Result<bool, Error> {
+    if let (Some(x), Some(y)) = (amount(a), amount(b)) {
+        return Ok(x == y);
+    }
     Ok(match (a, b) {
         (Value::Null, Value::Null) => true,
-        (Value::Number(x), Value::Number(y)) | (Value::Currency(x), Value::Currency(y)) => x == y,
         (Value::String(x), Value::String(y)) => x == y,
         (Value::Boolean(x), Value::Boolean(y)) => x == y,
         (Value::DateTime(x), Value::DateTime(y)) => x == y,
@@ -129,12 +139,12 @@ fn json_tree_eq(a: &serde_json::Value, b: &serde_json::Value) -> Result<bool, Er
     }
 }
 
-/// `<`, `<=`, `>`, `>=` on two values of the same orderable type.
+/// `<`, `<=`, `>`, `>=` on two values of the same orderable type (Number and Currency are one).
 fn order(a: &Value, b: &Value) -> Result<Ordering, Error> {
+    if let (Some(x), Some(y)) = (amount(a), amount(b)) {
+        return x.partial_cmp(&y).ok_or_else(incompatible);
+    }
     match (a, b) {
-        (Value::Number(x), Value::Number(y)) | (Value::Currency(x), Value::Currency(y)) => {
-            x.partial_cmp(y).ok_or_else(incompatible)
-        }
         (Value::String(x), Value::String(y)) => Ok(x.cmp(y)),
         (Value::Boolean(x), Value::Boolean(y)) => Ok(x.cmp(y)),
         (Value::DateTime(x), Value::DateTime(y)) => Ok(x.cmp(y)),

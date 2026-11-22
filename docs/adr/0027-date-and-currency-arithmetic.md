@@ -1,5 +1,40 @@
 # 0027. Date and currency arithmetic
 
+> **Amendment 1 (maintainer, 2026-11-22, BL-082):** the comparison operators `==`, `!=`, `<`,
+> `<=`, `>`, `>=` compare a Currency with a Number **by amount**, in either order. Two Currency
+> values already compared by amount. This replaces the last bullet of decision 2 ("Comparisons do
+> not change") and amends ADR-0023 §1, §2 and §4, which said that Number and Currency are
+> different types, that `1 == 1::Currency` is `false` and that ordering them is an error. Reason
+> (audit LANG-1): ADR-0031 made `SUM` and the other aggregates return Currency when any value is
+> Currency, so the most common check on a total, `SUM(:lines) > :limit`, became an error and
+> `SUM(…) == n` silently `false`, while `COUNTIF`/`SUMIF` text criteria already compared Currency
+> as a number. ADR-0003 says Currency "is accepted wherever numbers are". Everything else in
+> ADR-0023 stays: no other pair converts (text, booleans, `NULL`, DateTimes), `"a" == "A"` is
+> `false`, and a Currency against any non-number keeps its old result. Arrays compare item by
+> item with the same rule, and lambdas (`filter`, `find`, `FILTER`, lambda criteria in
+> `COUNTIF`/`SUMIF`/`AVERAGEIF`) use these operators, so they follow. One function decides it
+> (`src/runtime/comparison.rs`); the `Number op Number` fast path is unchanged.
+>
+> | Expression | Before | After |
+> |---|---|---|
+> | `SUM(10::Currency, 5) > 10` | `Error: Comparison of incompatible types` | `true` |
+> | `SUM(10::Currency, 5) == 15`, `15 == 15::Currency` | `false` | `true` |
+> | `MAX(1, 3::Currency) == 3`, `(10::Currency * 2) > 15` | `false`, `Error` | `true`, `true` |
+> | `1::Currency < 2`, `2 >= 2::Currency` | `Error` | `true`, `true` |
+> | `1 != 1::Currency`, `1 != 2::Currency` | `true`, `true` | `false`, `true` |
+> | `[1::Currency, 2] == [1, 2::Currency]` | `false` | `true` |
+> | `[10::Currency, 5].filter(:x > 6)` | `Error` | `[Currency(10)]` |
+> | `SUMIF([1, 2::Currency], :x > 1)`, `COUNTIF([1, 2::Currency], :x > 1)` | `Error` | `2`, `1` |
+> | `COUNTIF([10::Currency, 5], ">6")`, `SUMIF([10::Currency, 5], ">6")` | `1`, `10` | unchanged (criteria text already compared by amount) |
+> | `MIN(2::Currency, 1)`, `MAX(…)` | `Currency(1)` | unchanged (they compare amounts as `f64`, not with the operators) |
+> | `SORT([3, 1::Currency, 2])` | `[Currency(1), 2, 3]` | unchanged (`SORT` already orders Currency with the numbers) |
+> | `[1::Currency, 2].sort()` | `Error: sort expects numeric array` | unchanged (methods stay strict, decision 3) |
+> | `15::Currency == "15"`, `1::Currency == TRUE`, `0::Currency == NULL`, `1::Currency == DATE(2026,1,1)` | `false` | unchanged |
+> | `1::Currency < "2"`, `1::Currency < TRUE`, `1::Currency < NULL`, `1::Currency < DATE(2026,1,1)` | `Error` | unchanged |
+> | `CONTAINS([1::Currency], 1)`, `IN(…)`, `[1::Currency].includes(1)`, `UNIQUE([1, 1::Currency])` | `false`, `false`, `false`, both kept | unchanged (membership and `UNIQUE` keep type-strict matching; not part of this decision) |
+>
+> NaN behaves as for numbers: `==` is `false` and ordering is an error.
+
 - Status: Accepted
 - Date: 2026-11-21
 - Deciders: Maintainer
@@ -66,7 +101,8 @@ With a Currency operand (and no DateTime), the other operand converts as a Numbe
   division or `%` by 0 and `0 ^` a negative number are `Division by zero (#DIV/0!)`, `0 ^ 0` is
   `#NUM!`, and a non-finite result is `Result is not a finite number (#NUM!)`.
 - Comparisons do not change (ADR-0023 decision 2): `1 == 1::Currency` stays `false`, and
-  ordering a Currency against a Number stays an error.
+  ordering a Currency against a Number stays an error. *Replaced by Amendment 1: they compare
+  by amount.*
 
 ### 3. Lowercase methods are unchanged
 `[1, "2"].sum()` stays an error, and `DATEADD` intervals stay strict. The BL-070 text that said
