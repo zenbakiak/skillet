@@ -6,9 +6,9 @@ goes over a limit returns an ordinary `Error`; it never crashes the process or t
 | Limit | Value | Applies to | Error text |
 |---|---|---|---|
 | Nesting depth | 128 (`skillet::MAX_NESTING_DEPTH`) | library, CLI, servers | `Expression nested too deeply (max 128)` |
-| Evaluation budget | 256 MiB of values created (`skillet::MAX_EVAL_BYTES`) | library, CLI, servers | `Evaluation budget exceeded (max 256 MB)` |
-| Deadline | 10 s per request | servers only | `Evaluation timed out (max 10 s)` |
-| Response size | serialized result must fit the 256 MiB budget | servers only | `Evaluation budget exceeded (max 256 MB)` |
+| Evaluation budget | 256 MiB of values created (`skillet::MAX_EVAL_BYTES`); the servers use the same default and can change it with `--max-eval-bytes` or `SKILLET_MAX_EVAL_BYTES` | library, CLI, servers | `Evaluation budget exceeded (max 256 MB)` (servers: the configured value) |
+| Deadline | 20 s per request by default, set with `--eval-timeout` or `SKILLET_EVAL_TIMEOUT` | servers only | `Evaluation timed out (max 20 s)` (or the configured value) |
+| Response size | serialized result must fit the server's budget | servers only | `Evaluation budget exceeded (max 256 MB)` (or the configured value) |
 | Request size | 1 MB (1,048,576 bytes) | both servers | HTTP 413 `Request body too large (max 1MB)` / `Request too large (max 1MB)` (`sk_server`) |
 | Request read time | 30 s for the whole request | both servers | HTTP 408 `Request read timed out (max 30 s)` / the same message (`sk_server`) |
 | Response write | 10 s for the whole response | both servers | none (the response is cut short and the connection closed) |
@@ -16,7 +16,7 @@ goes over a limit returns an ordinary `Error`; it never crashes the process or t
 | Cache entry | 64 KiB | `sk_http_server` result cache | none (bigger results are just not cached) |
 | Parse cache | 256 expressions, 128 KiB of text, 32 KiB per expression, per worker thread | both servers | none (longer expressions are parsed on every request) |
 | JS plugin heap | 64 MiB per call | library, CLI, servers (`plugins` feature) | `JS function NAME ran out of memory (max 64 MB)` |
-| JS plugin time | 10 s per call, or the request deadline if sooner | library, CLI, servers (`plugins` feature) | `JS function NAME timed out (max 10 s)` / `Evaluation timed out (max 10 s)` |
+| JS plugin time | 10 s per call, or the request deadline if sooner | library, CLI, servers (`plugins` feature) | `JS function NAME timed out (max 10 s)` / `Evaluation timed out (max N s)` |
 | JS plugin stack | 256 KiB | library, CLI, servers (`plugins` feature) | `JS function NAME failed: RangeError: Maximum call stack size exceeded` |
 
 Request limits are described in [Server request limits](#server-request-limits-1-mb-30-s-10-s).
@@ -77,7 +77,9 @@ threads.
 
 ## Evaluation budget (256 MiB)
 
-Each evaluation has a budget of 256 MiB (`MAX_EVAL_BYTES = 268435456`). Every value the evaluator
+Each evaluation has a budget of 256 MiB (`MAX_EVAL_BYTES = 268435456`). The servers use the same
+default, and can be given another value at start-up (see
+[Server limits are configurable](#server-limits-are-configurable)). Every value the evaluator
 creates is charged against it, at a fixed cost:
 
 ```
@@ -195,12 +197,13 @@ Number(4999.499999999991)
 
 Hoisting is still the better habit: the method form recomputes the sum for every item.
 
-## Server deadline (10 s)
+## Server deadline (20 s by default)
 
-`sk_http_server` and `sk_server` run every evaluation with a 10 s deadline. The evaluator reads the
-clock every 256 charges or ticks, so a request stops shortly after 10 s and the worker thread is
-free for the next request. There is no flag or environment variable to change it. The library and
-the `sk` CLI have no deadline unless you set one (see [Library API](#library-api-evallimits-and-with_limits)).
+`sk_http_server` and `sk_server` run every evaluation with a deadline, 20 s unless set with
+`--eval-timeout` or `SKILLET_EVAL_TIMEOUT` (see [below](#server-limits-are-configurable)). The
+evaluator reads the clock every 256 charges or ticks, so a request stops shortly after the deadline
+and the worker thread is free for the next request. The library and the `sk` CLI have no deadline
+unless you set one (see [Library API](#library-api-evallimits-and-with_limits)).
 
 The deadline is checked between operations, and inside the builtins that loop over many items
 without charging each one: `SORT`, `UNIQUE`, `JOIN`, `TEXTJOIN` and `.sort()`, `.unique()`,
@@ -209,8 +212,8 @@ without charging each one: `SORT`, `UNIQUE`, `JOIN`, `TEXTJOIN` and `.sort()`, `
 1.1 s in a release build). The sort step itself (one standard-library sort) still runs to the end;
 it takes about 0.06 s for 3M numbers. A custom function's own code is not interrupted either.
 
-Example (HTTP, one worker; the expression does 1M × 4 comparisons of two 400 KB strings passed as
-`arguments`):
+Example (HTTP, one worker, started with `--eval-timeout 10`; the expression does 1M × 4
+comparisons of two 400 KB strings passed as `arguments`):
 
 ```console
 POST /eval {"expression": "[1×1000].map([1×1000].map(((:s == :t) == (:t == :s)) == ((:s == :t) == (:t == :s))).length()).sum()", "arguments": {"s": "x…(400,000)", "t": "x…(400,000)"}}
@@ -220,10 +223,34 @@ POST /eval {"expression": "2 + 3"}
 200 {"success":true,"result":5.0,"error":null,"execution_time_ms":0.015708,"request_id":1}
 ```
 
+### Server limits are configurable
+
+Since ADR-0011 amendment 4 both servers take the deadline and the budget at start-up. The flag
+wins over the environment variable, as for the tokens and the connection limit, and `0`, an empty
+value or an invalid number stops start-up with exit code 1 and a message naming the setting.
+
+| Setting | Value | Default |
+|---|---|---|
+| `--eval-timeout <seconds>` / `SKILLET_EVAL_TIMEOUT` | whole seconds, 1 to 86400 | `20` |
+| `--max-eval-bytes <bytes>` / `SKILLET_MAX_EVAL_BYTES` | whole bytes, or with `K`, `M`, `G` (KiB, MiB, GiB, either case) | `256M` (the library's `MAX_EVAL_BYTES`) |
+
+The error texts show the configured values: `Evaluation timed out (max 20 s)` and
+`Evaluation budget exceeded (max 256 MB)` with the defaults (whole MiB are shown as `MB`, as in the
+library). The start-up banner prints both. The library's `MAX_EVAL_BYTES` (256 MiB) and the CLI do
+not change, and neither has a deadline by default (ADR-0011 §2). The servers' budget default is
+that same constant; only the option to change it is new.
+
+These limits do not change with the deadline: the request read deadline stays 30 s, the
+response write deadline 10 s, and a JavaScript plugin call is still capped at 10 s or the
+evaluation deadline, whichever is sooner ([ADR-0017](../adr/0017-quickjs-resource-limits.md) §3).
+A looping plugin therefore stops at 10 s with `JS function NAME timed out (max 10 s)`, before the
+20 s request deadline.
+
 ## Server errors and response size
 
 Limit errors are ordinary evaluation errors. `sk_http_server` answers HTTP **400** with
 `success: false` and the error text; `sk_server` answers `success: false` with the same text.
+The examples below were captured with the default 256 MiB budget.
 
 ```console
 POST /eval {"expression": "(((…129 levels…1)))"}
@@ -246,7 +273,7 @@ POST /eval {"expression": "SUBSTITUTE(SUBSTITUTE(\"aaaaaaaaaa\", \"a\", :h), \"a
 400 {"success":false,"result":null,"error":"Evaluation budget exceeded (max 256 MB)","execution_time_ms":13.677583,"request_id":3}
 ```
 
-The 46 MB string fits the budget, but its escaped JSON (276 MB) does not.
+The 46 MB string fits the 256 MiB budget, but its escaped JSON (276 MB) does not.
 
 ### Result cache
 
@@ -265,11 +292,15 @@ nesting-depth error, are never cached. Details: [servers](servers.md#parse-cache
 
 ### Sizing a server
 
-Live memory per evaluation is at most about twice the budget (the budget plus the value that crossed
-it), so plan for roughly `threads × 512 MB` in the worst case and set `--threads` with that in mind.
+Every worker thread can run one evaluation at the full budget at the same time, so the values the
+budget counts can reach `threads × max-eval-bytes`: **8 threads × 256 MiB = 2 GiB** with the
+default budget. Live memory per evaluation is at most about twice the budget (the budget plus the
+value that crossed it), so the heap can peak near `threads × 2 × max-eval-bytes`. Size the host for
+that, or lower `--threads` or `--max-eval-bytes`. The Docker image runs 4 threads by default
+(`SK_THREADS`): 4 × 256 MiB = 1 GiB counted, about 2 GiB live.
 
 A JavaScript plugin adds at most 64 MiB per call on top of that (see the next section), so the
-worst case is about `threads × (512 MB + 64 MB)`.
+worst case is about `threads × (2 × max-eval-bytes + 64 MB)`.
 
 ## JavaScript plugins (64 MiB, 10 s, 256 KiB)
 
@@ -282,7 +313,7 @@ changed.
 |---|---|---|
 | Heap | 64 MiB per call (arguments converted into JS count too) | `JS function NAME ran out of memory (max 64 MB)` |
 | Time | 10 s per call | `JS function NAME timed out (max 10 s)` |
-| Time, inside a server request | the 10 s request deadline, if it comes first | `Evaluation timed out (max 10 s)` |
+| Time, inside a server request | the evaluation deadline, if it comes first (only with `--eval-timeout` below 10) | `Evaluation timed out (max N s)` |
 | Stack | 256 KiB | `JS function NAME failed: RangeError: Maximum call stack size exceeded` |
 | Result depth | 128 nested arrays; cyclic arrays hit it too | `Expression nested too deeply (max 128)` |
 
@@ -397,11 +428,12 @@ sk_server, same expression, 1 MB/s:      9310234 bytes in 11.0s, ends with newli
 The slow client received more than 10 MB because the operating system's socket buffers hold data
 the server already wrote.
 
-What this means for sizing: a response can be as large as the 256 MiB evaluation budget, and
-sending 256 MiB within 10 s needs about 25 MB/s. Clients on slower links, or results in the tens of
-megabytes over a WAN, can hit the deadline. Check that a response is complete (HTTP: body length
-equals `Content-Length`; `sk_server`: the line ends with `\n`) and keep large results small, for
-example by returning `.length()`, a sum or `LEFT(text, n)` instead of the whole value.
+What this means for sizing: a response can be as large as the evaluation budget (256 MiB by
+default), and sending 256 MiB within 10 s needs about 25 MB/s (a 1 GiB budget: about 100 MB/s).
+Clients on slower links, or results in the tens of megabytes over a WAN, can hit the deadline.
+Check that a response is complete (HTTP: body length equals `Content-Length`; `sk_server`: the
+line ends with `\n`) and keep large results small, for example by returning `.length()`, a sum or
+`LEFT(text, n)` instead of the whole value.
 
 ## Library API: `EvalLimits` and `with_limits`
 
@@ -412,7 +444,7 @@ evaluation inside `with_limits`:
 use std::time::Duration;
 use skillet::{evaluate, evaluate_with_json, with_limits, EvalLimits};
 
-// What the servers do: default budget plus a 10 s deadline.
+// A deadline, as the servers use (they default to 20 s and this budget).
 let mut limits = EvalLimits::default(); // max_bytes = MAX_EVAL_BYTES, timeout = None
 limits.timeout = Some(Duration::from_secs(10));
 let r = with_limits(limits, || evaluate_with_json(":nums.sum()", r#"{"nums": [1, 2, 3]}"#));
@@ -449,7 +481,7 @@ Notes (all checked against the code):
   `recv_timeout` on a channel instead of `join`).
 - A custom function's own Rust code is not metered either, on any thread. Only the values it
   returns are charged, and the deadline is checked only after it returns (same as a long builtin,
-  see [Server deadline](#server-deadline-10-s)).
+  see [Server deadline](#server-deadline-60-s-by-default)).
 - A limit error is reported even if the formula swallowed it (for example inside `SUMIF`).
 
 ## Changes in 0.7.0
@@ -459,5 +491,6 @@ Notes (all checked against the code):
   they could crash the process with a stack overflow).
 - Changed: quadratic `reduce(MERGE(:acc, [:x]), [])` fails above about 2,800 items, and copying a
   large variable once per item (`:rows.map(SUM(:rows))`) can hit the budget; hoist it.
-- Changed (servers): 10 s deadline per evaluation, oversized responses are rejected with the budget
+- Changed (servers): a deadline per evaluation (20 s by default, `--eval-timeout`), a configurable
+  budget (`--max-eval-bytes`, 256 MiB by default), oversized responses are rejected with the budget
   error, and cache entries are capped at 64 KiB.

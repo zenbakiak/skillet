@@ -50,9 +50,11 @@ curl http://127.0.0.1:8080/health
 | `SKILLET_ADMIN_TOKEN` | Bearer token for JS function management and `DELETE /cache` | _(none)_ | **Yes** |
 | `PORT` | Port inside the container | `8080` | No |
 | `HOST` | Bind address inside the container | `0.0.0.0` | No |
-| `SK_THREADS` | Worker threads | `2` | No |
+| `SK_THREADS` | Worker threads | `4` | No |
 | `SKILLET_HOOKS_DIR` | JS functions directory | `/app/hooks` | No |
 | `SKILLET_MAX_CONNECTIONS_PER_IP` | Open connections allowed from one IP address; more get HTTP 429. Passed through to `sk_http_server` as is; `0` or an empty value stops start-up | _(no limit)_ | No |
+| `SKILLET_EVAL_TIMEOUT` | Wall-clock limit for one evaluation, whole seconds (1 to 86400). Passed through as is; `0`, empty or invalid stops start-up | `20` | No |
+| `SKILLET_MAX_EVAL_BYTES` | Budget of values one evaluation may create, in bytes; `K`, `M`, `G` mean KiB, MiB, GiB. Passed through as is; `0`, empty or invalid stops start-up | `256M` | No |
 | `DOCKER_PORT` | Host port (Compose only) | `8080` | No |
 | `SKILLET_PUBLISH_ADDR` | Host address the port is published on (Compose only) | `127.0.0.1` | No |
 
@@ -60,9 +62,17 @@ The entrypoint (`docker/entrypoint.sh`) passes the tokens to `sk_http_server` th
 environment only. They are never put on the command line (where `ps` and `docker inspect` would
 show them) and never written to the container log.
 
-`SKILLET_MAX_CONNECTIONS_PER_IP` is not in `docker-compose.yml`; add it under `environment:`
-(or pass `-e` to `docker run`) to turn the limit on. Behind a reverse proxy every client has the
-proxy's address, so set the limit at the proxy instead (ADR-0025).
+`SKILLET_MAX_CONNECTIONS_PER_IP`, `SKILLET_EVAL_TIMEOUT` and `SKILLET_MAX_EVAL_BYTES` are not in
+`docker-compose.yml`; add them under `environment:` (or pass `-e` to `docker run`) to set them. The
+entrypoint does not read them; `sk_http_server` inherits the container environment and reads them
+itself, and the start-up log shows the values in use. Behind a reverse proxy every client has the
+proxy's address, so set the connection limit at the proxy instead (ADR-0025).
+
+Memory: every worker thread can run one evaluation at the full budget, so plan for about
+`SK_THREADS × SKILLET_MAX_EVAL_BYTES`: 4 × 256 MiB = 1 GiB counted with the image defaults, and
+about 2 GiB live (see [limits](../guide/limits.md#sizing-a-server)). The image and
+`docker-compose.yml` default to 4 threads (it was 2 before BL-075); give the container at least
+that much memory, or lower the budget or the thread count.
 
 ### Network exposure
 

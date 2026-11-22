@@ -96,14 +96,10 @@ mod daemon;
 #[cfg(unix)]
 use daemon::daemonize;
 
-/// Wall-clock limit for one evaluation (ADR-0011), same as `sk_http_server`. No flag or env var.
-const SERVER_EVAL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
-
-fn server_limits() -> skillet::EvalLimits {
-    let mut limits = skillet::EvalLimits::default();
-    limits.timeout = Some(SERVER_EVAL_TIMEOUT);
-    limits
-}
+// Deadline and budget flags, defaults and the configured value, shared with `sk_http_server`.
+#[path = "http_server/eval_limits.rs"]
+mod eval_limits;
+use eval_limits::server_limits;
 
 /// One request line read from a connection.
 enum Line {
@@ -286,9 +282,12 @@ fn process_request(req: EvalRequest, request_id: u64) -> EvalResponse {
 
     // Size the response before building it: escaping can make it up to 6x the value.
     let result = result.and_then(|val| {
-        response_size::check(response_size::json_size(&val, true))
-            .map(|()| val)
-            .map_err(|e| skillet::Error::new(e, None))
+        response_size::check(
+            response_size::json_size(&val, true),
+            server_limits().max_bytes,
+        )
+        .map(|()| val)
+        .map_err(|e| skillet::Error::new(e, None))
     });
 
     match result {
@@ -413,6 +412,21 @@ fn setup_signal_handlers() -> Arc<AtomicBool> {
     running
 }
 
+/// Start-up lines for the configured evaluation limits and the worst-case memory they allow.
+fn print_eval_limits(num_threads: usize) {
+    let limits = server_limits();
+    eprintln!(
+        "⏱️  Eval timeout: {} (--eval-timeout or SKILLET_EVAL_TIMEOUT)",
+        eval_limits::describe_timeout(&limits)
+    );
+    eprintln!(
+        "💾 Eval budget: {} per evaluation, up to about {} with {} threads (--max-eval-bytes or SKILLET_MAX_EVAL_BYTES)",
+        eval_limits::describe_bytes(limits.max_bytes),
+        eval_limits::describe_bytes(limits.max_bytes.saturating_mul(num_threads as u64)),
+        num_threads
+    );
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
@@ -429,6 +443,18 @@ fn main() {
         eprintln!("                       Open connections allowed from one IP address; more get");
         eprintln!("                       an error line (or set SKILLET_MAX_CONNECTIONS_PER_IP;");
         eprintln!("                       the flag wins). Default: no limit");
+        eprintln!(
+            "  --eval-timeout <s>   Wall-clock limit for one evaluation, in whole seconds (or"
+        );
+        eprintln!("                       set SKILLET_EVAL_TIMEOUT; the flag wins). Default: 20");
+        eprintln!(
+            "  --max-eval-bytes <n> Budget of values one evaluation may create, in bytes; K,"
+        );
+        eprintln!("                       M, G mean KiB, MiB, GiB (or set SKILLET_MAX_EVAL_BYTES;");
+        eprintln!(
+            "                       the flag wins). Default: 256M. Worst-case memory is about"
+        );
+        eprintln!("                       threads x this");
         eprintln!();
         eprintln!("Examples:");
         eprintln!("  sk_server 8080              # Start server on port 8080");
@@ -457,6 +483,8 @@ fn main() {
     let mut pid_file = "skillet-server.pid".to_string();
     let mut _log_file: Option<String> = None;
     let mut max_conns_flag: Option<String> = None;
+    let mut timeout_flag: Option<String> = None;
+    let mut bytes_flag: Option<String> = None;
     let mut i = 2;
 
     while i < args.len() {
@@ -509,6 +537,18 @@ fn main() {
                     std::process::exit(1);
                 }
             }
+            eval_limits::TIMEOUT_FLAG | eval_limits::BYTES_FLAG => {
+                let Some(value) = args.get(i + 1) else {
+                    eprintln!("Error: {} requires a value", args[i]);
+                    std::process::exit(1);
+                };
+                if args[i] == eval_limits::TIMEOUT_FLAG {
+                    timeout_flag = Some(value.clone());
+                } else {
+                    bytes_flag = Some(value.clone());
+                }
+                i += 1;
+            }
             arg => {
                 // Try to parse as thread count if it's a number
                 if let Ok(threads) = arg.parse::<usize>() {
@@ -536,6 +576,14 @@ fn main() {
     });
     let limiter = max_conns_per_ip.map(ConnLimiter::new);
 
+    // Same rules for the evaluation limits (ADR-0011 amendment 4).
+    let limits = eval_limits::resolve(timeout_flag.as_deref(), bytes_flag.as_deref())
+        .unwrap_or_else(|e| {
+            eprintln!("Error: {e}");
+            std::process::exit(1);
+        });
+    eval_limits::install(limits);
+
     // Handle daemon mode before any output
     if daemon_mode {
         #[cfg(unix)]
@@ -546,6 +594,7 @@ fn main() {
                 "Port: {}, Threads: {}, PID file: {}",
                 port, num_threads, pid_file
             );
+            print_eval_limits(num_threads);
 
             if let Err(e) = daemonize() {
                 eprintln!("Failed to daemonize: {}", e);
@@ -611,6 +660,7 @@ fn main() {
         if let Some(max) = max_conns_per_ip {
             eprintln!("🚦 Max connections per IP: {}", max);
         }
+        print_eval_limits(num_threads);
         eprintln!("🔧 Ready for high-throughput expression evaluation");
         eprintln!();
     }

@@ -102,6 +102,10 @@ struct Server {
 
 impl Server {
     fn start(hooks: &Path) -> Server {
+        Server::start_with(hooks, &[])
+    }
+
+    fn start_with(hooks: &Path, extra: &[&str]) -> Server {
         let port = std::net::TcpListener::bind("127.0.0.1:0")
             .unwrap()
             .local_addr()
@@ -109,6 +113,8 @@ impl Server {
             .port();
         let child = std::process::Command::new(env!("CARGO_BIN_EXE_sk_http_server"))
             .args([&port.to_string(), "--threads", "1", "--admin-token", ADMIN])
+            .args(extra)
+            .env_remove("SKILLET_EVAL_TIMEOUT")
             .env("SKILLET_HOOKS_DIR", hooks)
             .env("SKILLET_BIND_HOST", "127.0.0.1")
             .env_remove("SKILLET_AUTH_TOKEN")
@@ -156,16 +162,17 @@ fn status(resp: &str) -> &str {
     resp.split_whitespace().nth(1).unwrap_or("")
 }
 
-/// The one test here that waits for the real 10 s server deadline.
+/// A server deadline shorter than the 10 s per-call cap stops the hook first (ADR-0017 §3).
+/// The default deadline (20 s) is longer, so it is set to 2 s here.
 #[test]
 fn server_deadline_stops_a_looping_hook_and_frees_the_worker() {
     let hooks = hooks_dir();
-    let server = Server::start(hooks.path());
+    let server = Server::start_with(hooks.path(), &["--eval-timeout", "2"]);
     let (resp, took) = server.eval("=JSLIMITSLOOP()");
     assert_eq!(status(&resp), "400", "{resp}");
-    assert!(resp.contains("Evaluation timed out (max 10 s)"), "{resp}");
+    assert!(resp.contains("Evaluation timed out (max 2 s)"), "{resp}");
     assert!(
-        took >= Duration::from_secs(9) && took < Duration::from_secs(20),
+        took >= Duration::from_secs(2) && took < Duration::from_secs(20),
         "{took:?}"
     );
     // The single worker is free again, and hostile results did not abort the process.
@@ -177,6 +184,26 @@ fn server_deadline_stops_a_looping_hook_and_frees_the_worker() {
             "{expr}: {resp}"
         );
     }
+    let (resp, _) = server.eval("=2 + 3");
+    assert_eq!(status(&resp), "200", "{resp}");
+}
+
+/// With the default 20 s deadline the 10 s per-call cap comes first, and the worker is free
+/// again after it (ADR-0017 §3: the request deadline or 10 s, whichever is sooner).
+#[test]
+fn per_call_cap_stops_a_looping_hook_before_the_default_deadline() {
+    let hooks = hooks_dir();
+    let server = Server::start(hooks.path());
+    let (resp, took) = server.eval("=JSLIMITSLOOP()");
+    assert_eq!(status(&resp), "400", "{resp}");
+    assert!(
+        resp.contains("JS function JSLIMITSLOOP timed out (max 10 s)"),
+        "{resp}"
+    );
+    assert!(
+        took >= Duration::from_secs(9) && took < Duration::from_secs(40),
+        "{took:?}"
+    );
     let (resp, _) = server.eval("=2 + 3");
     assert_eq!(status(&resp), "200", "{resp}");
 }

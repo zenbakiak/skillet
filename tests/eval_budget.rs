@@ -458,6 +458,9 @@ fn defaults_and_scope_reset() {
 
 // ---------------------------------------------------------------- servers (127.0.0.1 only)
 
+/// Server flags for the limits the server tests below were written for.
+const LIBRARY_LIMITS: [&str; 4] = ["--eval-timeout", "10", "--max-eval-bytes", "256M"];
+
 /// A server binary on a free 127.0.0.1 port, killed on drop.
 struct Server {
     child: std::process::Child,
@@ -492,17 +495,23 @@ impl Server {
         Server { child, port }
     }
 
-    /// `sk_http_server` with one worker.
+    /// `sk_http_server` with one worker, a 10 s deadline and the library's 256 MiB budget
+    /// (the server default deadline is 20 s since ADR-0011 amendment 4; the budget default is
+    /// the same 256 MiB, set explicitly so the tests do not depend on it).
     fn http() -> Server {
         Server::spawn(env!("CARGO_BIN_EXE_sk_http_server"), |port| {
-            vec![port.to_string(), "--threads".into(), "1".into()]
+            let mut args = vec![port.to_string(), "--threads".into(), "1".into()];
+            args.extend(LIBRARY_LIMITS.map(String::from));
+            args
         })
     }
 
-    /// `sk_server` with one worker.
+    /// `sk_server` with one worker and the same limits as [`Server::http`].
     fn line() -> Server {
         Server::spawn(env!("CARGO_BIN_EXE_sk_server"), |port| {
-            vec![port.to_string(), "1".into()]
+            let mut args = vec![port.to_string(), "1".into()];
+            args.extend(LIBRARY_LIMITS.map(String::from));
+            args
         })
     }
 
