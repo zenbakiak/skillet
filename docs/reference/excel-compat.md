@@ -197,7 +197,7 @@ result as the builtin of the same name. The pairs that differ:
 | Pair | Function | Method | Status |
 |---|---|---|---|
 | `INT` / `.int()` | `INT(-3.7)` → `-4` | `(-3.7).int()` → `-3` | **deliberate** (ADR-0018): `.int()` truncates like Ruby's `to_i` |
-| `ROUND` / `.round()` | `ROUND(1234.567,-2)` → `1200` | `(1234.567).round(-2)` → `1200` | same result since #84 |
+| `ROUND` / `.round()` | `ROUND(1.005,2)` → `1.01` | `1.005.round(2)` → `1.01` | the same function since BL-088 (it was `1.0`: `f64` scaling) |
 | `MAX`/`MIN` on empty | `MAX([])` → `0` | `[].max()` → `Null`, `[].min()` → `Null` | **deliberate** (ADR-0018 methods rule) |
 | `SUM` with text | `SUM([1,"2",3])` → `4` | `[1,"2",3].sum()` → `Error: sum method expects numeric array` | **deliberate** (ADR-0018 methods rule; BL-070 lists methods staying strict) |
 | `UNIQUE` | `UNIQUE(["a","a",1])` → `[1]` | `["a","a",1].unique()` → `["a",1]` | open: the function is wrong (B-7) |

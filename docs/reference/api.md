@@ -1148,7 +1148,9 @@ Round up/down.
 ```
 
 #### `.round([digits])`
-Round to decimal places.
+The same function as `ROUND(number, [digits])`: halves round away from zero on the number's
+15-significant-digit decimal form (`1.005.round(2)` is `1.01`), and negative digits round left of
+the decimal point.
 ```bash
 (3.14159).round()            # 3
 (3.14159).round(2)           # 3.14

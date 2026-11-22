@@ -95,3 +95,7 @@ harness = false
 [[bench]]
 name = "parser_stack"
 harness = false
+
+[[bench]]
+name = "per_item"
+harness = false

@@ -77,13 +77,27 @@ pub(crate) fn ifs_no_match() -> Error {
     Error::new("IFS: no condition is TRUE (#N/A)", None)
 }
 
-/// The logical values of `AND`/`OR`/`XOR` arguments, Excel style (ADR-0029): booleans, and
-/// numbers as non-zero. Arrays are flattened and their text, NULL and other non-logical items
+/// Counts the logical values of `AND`/`OR`/`XOR` arguments, Excel style (ADR-0029): booleans,
+/// and numbers as non-zero. Arrays are flattened and their text, NULL and other non-logical items
 /// are ignored, like a range's text and empty cells. A NULL argument is ignored too (a blank
 /// cell). Text or another type passed directly is `#VALUE!`, and so is having no logical value.
+/// Every argument is read (no short-circuit), so the first error wins. Returns
+/// `(values, trues)` without collecting them (PERF-2, BL-088).
 #[allow(deprecated)] // `Value::Currency` is read as a Number (ADR-0033)
-fn logical_values(name: &str, args: &[Value]) -> Result<Vec<bool>, Error> {
-    fn from_array(name: &str, items: &[Value], out: &mut Vec<bool>) -> Result<(), Error> {
+fn logical_counts(name: &str, args: &[Value]) -> Result<(usize, usize), Error> {
+    #[derive(Default)]
+    struct Counts {
+        values: usize,
+        trues: usize,
+    }
+    impl Counts {
+        #[inline]
+        fn push(&mut self, b: bool) {
+            self.values += 1;
+            self.trues += usize::from(b);
+        }
+    }
+    fn from_array(name: &str, items: &[Value], out: &mut Counts) -> Result<(), Error> {
         for item in items {
             match item {
                 Value::Boolean(b) => out.push(*b),
@@ -97,7 +111,7 @@ fn logical_values(name: &str, args: &[Value]) -> Result<Vec<bool>, Error> {
         }
         Ok(())
     }
-    let mut out = Vec::with_capacity(args.len());
+    let mut out = Counts::default();
     for arg in args {
         match arg {
             Value::Boolean(b) => out.push(*b),
@@ -116,13 +130,13 @@ fn logical_values(name: &str, args: &[Value]) -> Result<Vec<bool>, Error> {
             }
         }
     }
-    if out.is_empty() {
+    if out.values == 0 {
         return Err(Error::new(
             format!("{name}: no logical values (#VALUE!)"),
             None,
         ));
     }
-    Ok(out)
+    Ok((out.values, out.trues))
 }
 
 #[allow(deprecated)] // `Value::Currency` is read as a Number (ADR-0033)
@@ -141,21 +155,13 @@ pub fn exec_logical(name: &str, args: &[Value]) -> Result<Value, Error> {
             })
         }
         // Excel evaluates every argument (no short-circuit, unlike the `AND`/`OR` operators).
-        "AND" => Ok(Value::Boolean(
-            logical_values(name, args)?.into_iter().all(|b| b),
-        )),
-        "OR" => Ok(Value::Boolean(
-            logical_values(name, args)?.into_iter().any(|b| b),
-        )),
+        "AND" => {
+            let (values, trues) = logical_counts(name, args)?;
+            Ok(Value::Boolean(trues == values))
+        }
+        "OR" => Ok(Value::Boolean(logical_counts(name, args)?.1 > 0)),
         // TRUE when an odd number of the values are TRUE.
-        "XOR" => Ok(Value::Boolean(
-            logical_values(name, args)?
-                .into_iter()
-                .filter(|b| *b)
-                .count()
-                % 2
-                == 1,
-        )),
+        "XOR" => Ok(Value::Boolean(logical_counts(name, args)?.1 % 2 == 1)),
         "NOT" => {
             let [v] = args else {
                 return Err(Error::new("NOT expects 1 argument", None));
@@ -226,6 +232,59 @@ mod tests {
         assert_eq!(
             pick(n(f64::NAN)).unwrap_err().message,
             "Ternary condition is not a number (#NUM!)"
+        );
+    }
+
+    /// AND/OR/XOR read every argument (no short-circuit), flatten nested arrays, skip NULL and
+    /// text inside arrays, and report the first error in argument order.
+    #[test]
+    fn and_or_xor_count_every_logical_value() {
+        let b = Value::Boolean;
+        let n = Value::Number;
+        let arr = Value::Array;
+        let run = |f: &str, args: Vec<Value>| exec_logical(f, &args);
+        let nested = arr(vec![
+            b(true),
+            Value::Null,
+            Value::String("x".into()),
+            arr(vec![n(2.0), b(true)]),
+        ]);
+        assert_eq!(
+            run("AND", vec![nested.clone(), Value::Null]).unwrap(),
+            b(true)
+        );
+        assert_eq!(run("XOR", vec![nested.clone()]).unwrap(), b(true));
+        assert_eq!(
+            run("XOR", vec![nested.clone(), n(0.0), b(true)]).unwrap(),
+            b(false)
+        );
+        assert_eq!(
+            run("OR", vec![n(0.0), arr(vec![b(false)])]).unwrap(),
+            b(false)
+        );
+        assert_eq!(
+            run("OR", vec![b(true), Value::String("a".into())])
+                .unwrap_err()
+                .message,
+            "OR expects logical values, got string (#VALUE!)"
+        );
+        assert_eq!(
+            run(
+                "AND",
+                vec![b(false), arr(vec![n(f64::NAN)]), Value::String("a".into())]
+            )
+            .unwrap_err()
+            .message,
+            "AND condition is not a number (#NUM!)"
+        );
+        assert_eq!(
+            run(
+                "AND",
+                vec![Value::Null, arr(vec![Value::String("a".into())])]
+            )
+            .unwrap_err()
+            .message,
+            "AND: no logical values (#VALUE!)"
         );
     }
 }
