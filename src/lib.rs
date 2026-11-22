@@ -66,7 +66,7 @@ pub use error::Error;
 pub use js_plugin::{JSPluginLoader, JavaScriptFunction};
 pub use limits::{with_limits, EvalLimits, MAX_EVAL_BYTES, MAX_NESTING_DEPTH};
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, LazyLock, RwLock};
 pub use types::Value;
 
 /// Sanitize JSON keys by replacing special characters with underscores
@@ -105,9 +105,8 @@ fn json_vars_to_map(json_vars: &str) -> Result<HashMap<String, Value>, Error> {
 }
 
 // Global function registry
-lazy_static::lazy_static! {
-    static ref GLOBAL_REGISTRY: Arc<RwLock<FunctionRegistry>> = Arc::new(RwLock::new(FunctionRegistry::new()));
-}
+static GLOBAL_REGISTRY: LazyLock<Arc<RwLock<FunctionRegistry>>> =
+    LazyLock::new(|| Arc::new(RwLock::new(FunctionRegistry::new())));
 
 /// Parse a Skillet expression into an [`Expr`] tree without evaluating it.
 ///
