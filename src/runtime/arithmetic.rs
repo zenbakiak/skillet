@@ -4,7 +4,7 @@
 
 use crate::ast::BinaryOp;
 use crate::error::Error;
-use crate::runtime::utils::{number_arg, optional_number_arg};
+use crate::runtime::utils::{not_a_number_text, number_arg, numeric_text, optional_number_arg};
 use crate::types::Value;
 
 pub fn exec_arithmetic(name: &str, args: &[Value]) -> Result<Value, Error> {
@@ -35,21 +35,91 @@ pub fn exec_arithmetic(name: &str, args: &[Value]) -> Result<Value, Error> {
     }
 }
 
-/// Visit every number in the arguments, flattening arrays. Other values are ignored, as Excel
-/// ignores text and logical values in a range (excel-compat X-3). A deprecated `Currency` is a
-/// number (ADR-0033). A DateTime is an error: `name` does arithmetic on numbers, and Skillet has
-/// no date serial numbers (ADR-0031 amendment 2, B2).
+/// One value of an aggregate's data: a number, or a DateTime (which only `MIN`/`MAX` accept).
+#[derive(Clone, Copy)]
+pub(crate) enum Datum {
+    Number(f64),
+    Date(i64),
+}
+
+/// Reads the data of an aggregate (ADR-0029 amendment 2, B2), left to right, arrays depth
+/// first, and passes each number or DateTime to `f`; the first error stops the walk.
+///
+/// A **direct argument** (one value of the call, also one produced by a spread) is read as a
+/// value: number text and booleans convert (ADR-0023 §6, `<name>: cannot convert …` otherwise),
+/// `NULL` is skipped and a JSON object is `#VALUE!`. An **array item** is range data: only
+/// Numbers and DateTimes are read, every other value is skipped (excel-compat X-3). A deprecated
+/// `Currency` is a number (ADR-0033). NaN is passed on: `f` decides (see `finite`).
 #[allow(deprecated)]
-fn for_each_number(name: &str, args: &[Value], f: &mut impl FnMut(f64)) -> Result<(), Error> {
+pub(crate) fn for_each_datum(
+    name: &str,
+    args: &[Value],
+    f: &mut impl FnMut(Datum) -> Result<(), Error>,
+) -> Result<(), Error> {
     for a in args {
         match a {
-            Value::Number(n) | Value::Currency(n) => f(*n),
-            Value::Array(items) => for_each_number(name, items, f)?,
-            Value::DateTime(_) => return Err(dates_not_accepted(name)),
+            Value::Number(n) | Value::Currency(n) => f(Datum::Number(*n))?,
+            Value::Array(items) => for_each_item(items, f)?,
+            Value::DateTime(t) => f(Datum::Date(*t))?,
+            Value::Boolean(b) => f(Datum::Number(if *b { 1.0 } else { 0.0 }))?,
+            Value::String(s) => match numeric_text(s) {
+                Some(n) => f(Datum::Number(n))?,
+                None => return Err(not_a_number_text(s, &format!("{name}: "))),
+            },
+            Value::Json(_) => {
+                return Err(Error::new(
+                    format!("{name} expects numbers, got json (#VALUE!)"),
+                    None,
+                ));
+            }
+            Value::Null => {}
+        }
+    }
+    Ok(())
+}
+
+/// The array-item half of `for_each_datum`: Numbers and DateTimes, nested arrays flattened.
+#[allow(deprecated)]
+fn for_each_item(
+    items: &[Value],
+    f: &mut impl FnMut(Datum) -> Result<(), Error>,
+) -> Result<(), Error> {
+    for v in items {
+        match v {
+            Value::Number(n) | Value::Currency(n) => f(Datum::Number(*n))?,
+            Value::DateTime(t) => f(Datum::Date(*t))?,
+            Value::Array(inner) => for_each_item(inner, f)?,
             _ => {}
         }
     }
     Ok(())
+}
+
+/// Visits every number of an aggregate that does arithmetic: a DateTime is
+/// `<name> does not accept dates` (ADR-0031 amendment 2, B2) and a NaN is `#NUM!`.
+fn for_each_number(name: &str, args: &[Value], f: &mut impl FnMut(f64)) -> Result<(), Error> {
+    for_each_datum(name, args, &mut |d| {
+        f(finite(name, d)?);
+        Ok(())
+    })
+}
+
+/// The number of a datum of an aggregate that does arithmetic: a DateTime is
+/// `<name> does not accept dates (#VALUE!)` and a NaN is `<name> value is not a number (#NUM!)`
+/// (ADR-0029 amendment 2, B2). `name` is the canonical name.
+#[inline]
+pub(crate) fn finite(name: &str, d: Datum) -> Result<f64, Error> {
+    match d {
+        Datum::Number(n) if !n.is_nan() => Ok(n),
+        Datum::Number(_) => Err(nan_data(name)),
+        Datum::Date(_) => Err(dates_not_accepted(name)),
+    }
+}
+
+/// `<name> value is not a number (#NUM!)`: a NaN in an aggregate's data (ADR-0029 amendment 2).
+#[cold]
+pub(crate) fn nan_data(name: &str) -> Error {
+    Error::new(format!("{name} value is not a number (#NUM!)"), None)
 }
 
 fn fold_numbers(
@@ -75,36 +145,24 @@ fn average(args: &[Value]) -> Result<Value, Error> {
     Ok(Value::Number(sum / count as f64))
 }
 
-/// `MIN`/`MAX` over the Numbers and DateTimes in the arguments, arrays flattened; other values
-/// are ignored. Only DateTimes → the earliest/latest DateTime; both kinds → `#VALUE!`; none →
-/// 0, as in Excel (ADR-0031 amendment 2, B1).
-#[allow(deprecated)] // `Value::Currency` is read as a Number (ADR-0033)
+/// `MIN`/`MAX` over the data read by `for_each_datum`. Only DateTimes → the earliest/latest
+/// DateTime; both kinds → `#VALUE!`; none → 0, as in Excel (ADR-0031 amendment 2, B1). A NaN is
+/// `#NUM!` (ADR-0029 amendment 2).
 fn extreme(
     name: &str,
     args: &[Value],
     pick: fn(f64, f64) -> f64,
     pick_date: fn(i64, i64) -> i64,
 ) -> Result<Value, Error> {
-    fn visit(
-        args: &[Value],
-        num: &mut Option<f64>,
-        date: &mut Option<i64>,
-        pick: fn(f64, f64) -> f64,
-        pick_date: fn(i64, i64) -> i64,
-    ) {
-        for a in args {
-            match a {
-                Value::Number(n) | Value::Currency(n) => {
-                    *num = Some(num.map_or(*n, |c| pick(c, *n)))
-                }
-                Value::DateTime(t) => *date = Some(date.map_or(*t, |c| pick_date(c, *t))),
-                Value::Array(items) => visit(items, num, date, pick, pick_date),
-                _ => {}
-            }
+    let (mut num, mut date): (Option<f64>, Option<i64>) = (None, None);
+    for_each_datum(name, args, &mut |d| {
+        match d {
+            Datum::Number(n) if n.is_nan() => return Err(nan_data(name)),
+            Datum::Number(n) => num = Some(num.map_or(n, |c| pick(c, n))),
+            Datum::Date(t) => date = Some(date.map_or(t, |c| pick_date(c, t))),
         }
-    }
-    let (mut num, mut date) = (None, None);
-    visit(args, &mut num, &mut date, pick, pick_date);
+        Ok(())
+    })?;
     match (num, date) {
         (Some(_), Some(_)) => Err(Error::new(
             format!("{name} cannot compare dates with numbers (#VALUE!)"),

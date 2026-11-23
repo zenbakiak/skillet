@@ -172,7 +172,11 @@ fn sum_with_currency_is_a_number() {
     );
     assert_eq!(eval("SUM(10, 5)"), Value::Number(15.0));
     assert_eq!(eval("SUM()"), Value::Number(0.0));
-    assert_eq!(eval("SUM('a', TRUE)"), Value::Number(0.0));
+    // ADR-0029 amendment 2 (BL-107): direct text converts or is #VALUE!, it is not skipped.
+    assert_eq!(
+        err("SUM('a', TRUE)"),
+        "SUM: cannot convert \"a\" to a number (#VALUE!)"
+    );
 }
 
 #[test]
@@ -200,7 +204,13 @@ fn average_min_max_with_currency_are_numbers() {
     assert_eq!(eval("MAX(1, 3::Currency)"), Value::Number(3.0));
     assert_eq!(eval("MIN(1, 3)"), Value::Number(1.0));
     assert_eq!(eval("MAX()"), Value::Number(0.0));
-    assert_eq!(err("AVERAGE('a')"), "AVERAGE of no numbers (#DIV/0!)");
+    // ADR-0029 amendment 2 (BL-107): direct text converts or is #VALUE!; in an array it is
+    // still skipped.
+    assert_eq!(
+        err("AVERAGE('a')"),
+        "AVERAGE: cannot convert \"a\" to a number (#VALUE!)"
+    );
+    assert_eq!(err("AVERAGE(['a'])"), "AVERAGE of no numbers (#DIV/0!)");
 }
 
 #[test]
