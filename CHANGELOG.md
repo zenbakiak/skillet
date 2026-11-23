@@ -55,6 +55,8 @@ Each item is marked **BREAKING** in the sections below. In short:
   deprecated ([Rust API](https://github.com/zenbakiak/skillet/blob/develop/docs/guide/migration-0.7.md#rust-api)).
 
 ### Added
+- Spread `...` in array literals: `[0, ...:xs, 4]`, with the same rules as spread in argument
+  lists; a non-array operand is `Spread expects array` (ADR-0005 amendment 1, BL-106, #137).
 - `Value::from_json_text` and `Value::to_json_text` read and write JSON text the way the
   `evaluate_with_json*` entry points and `.to_json()` do; `Value::as_str`, `Value::as_array`;
   `From<String | &str | Vec<Value> | f64 | bool> for Value`; `impl serde::Serialize for Value`
@@ -113,6 +115,15 @@ Each item is marked **BREAKING** in the sections below. In short:
 ### Changed
 BREAKING changes first, newest first; then the other changes, newest first.
 
+- **BREAKING:** the aggregates (`SUM`, `PRODUCT`, `AVERAGE`, `MIN`, `MAX`, `COUNT`, `MEDIAN`,
+  `MODE.SNGL`, `STDEV.*`, `VAR.*`, `PERCENTILE.INC`, `QUARTILE.INC`) read a direct argument as a
+  value, as Excel does: number text and booleans count (`SUM(1, "2", TRUE)` is 4, was 1), other
+  text and a JSON object are `#VALUE!` (`COUNT` skips them), `NULL` is skipped. A variable and each
+  spread value are direct arguments; items inside an array are still skipped. A NaN in their data
+  is `#NUM!`. Errors name the canonical function for every alias (ADR-0029 amendment 2, BL-107).
+- **BREAKING:** `::Array` on a string splits it into characters, as `.to_a()` does:
+  `"hello"::Array` is `["h","e","l","l","o"]` (was `["hello"]`), `""::Array` is `[]`;
+  `NULL::Array` stays `[NULL]` (ADR-0006 amendment, BL-105, #136).
 - **BREAKING** (Rust API): `Value`, `lexer::Token`, `ast::Expr`, `ast::BinaryOp`, `ast::UnaryOp`
   and `ast::TypeName` are `#[non_exhaustive]`, so a `match` on them outside the crate needs a `_`
   arm; later variants (`Value::Object` in 0.8.0) will not break (BL-092, #131). Earlier in 0.7.0,
