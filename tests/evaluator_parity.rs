@@ -492,6 +492,17 @@ const BUILTINS: &[&str] = &[
     // nested builtins
     "ROUND(AVG(SUM(1, 2), MAX(4, 5)), 1)",
     "UPPER(CONCAT('a', LOWER('B')))",
+    // Aggregates: direct arguments convert, array items are skipped (ADR-0029 am. 2, BL-107)
+    "SUM(1, \"2\", TRUE)",
+    "SUM([1, \"2\", TRUE])",
+    "SUM(...[1, \"2\", TRUE])",
+    "SUM([...[1, \"2\", TRUE]])",
+    "SUM(1, \"x\")",
+    "SUM({\"a\": 1}, 2)",
+    "AVERAGE(1, \"2\")",
+    "MAX(-1, \"5\")",
+    "COUNT(1, \"2\", TRUE, \"x\")",
+    "MEDIAN(1, \"9\", \"8\")",
 ];
 
 #[test]
@@ -601,6 +612,9 @@ const WITH_VARIABLES: &[&str] = &[
     "DIG({\"a\": {\"b\": 1}}, ['a', 'b'])",
     // Null handling
     "SUM(:nil, 1)",
+    "SUM(:num_text, :flag)",
+    "SUM(:s, 1)",
+    "SUM([:num_text, :flag, 1])",
     ":nil == NULL",
     ":nil + 1",
     "CONCAT(:nil, 'x')",
