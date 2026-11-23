@@ -1,6 +1,6 @@
 [package]
 name = "skillet"
-version = "0.6.3"
+version = "0.7.0"
 edition = "2024"
 rust-version = "1.85"
 description = "Skillet: micro expression language (arithmetic, logical, functions, arrays, conditionals, excel formulas) made in Rust bin cli and server"

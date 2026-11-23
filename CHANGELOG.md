@@ -14,11 +14,11 @@ commit messages, so they are brief.
 
 ## [Unreleased]
 
-## [0.7.0] - YYYY-MM-DD
+## [0.7.0] - 2026-11-22
 
 0.7.0 makes the UPPERCASE builtins and the operators follow Excel, and it breaks behaviour in
 many places. The
-[migration guide](https://github.com/zenbakiak/skillet/blob/develop/docs/guide/migration-0.7.md)
+[migration guide](https://github.com/zenbakiak/skillet/blob/v0.7.0/docs/guide/migration-0.7.md)
 lists every breaking change with the old and the new result; read its "Check these first" list
 before you upgrade.
 
@@ -27,32 +27,32 @@ Each item is marked **BREAKING** in the sections below. In short:
 
 - **Operators**: Excel precedence (`-2^2` is 4, `2^3^2` is 64); `%` before `+`/`-` is a percent;
   `1e3` is 1000; parsing requires the end of the input; the `AND`/`OR` operators work
-  ([operators](https://github.com/zenbakiak/skillet/blob/develop/docs/guide/migration-0.7.md#operators-adr-0018-d-10),
-  [parsing](https://github.com/zenbakiak/skillet/blob/develop/docs/guide/migration-0.7.md#parsing-requires-the-end-of-input-bl-069-93)).
+  ([operators](https://github.com/zenbakiak/skillet/blob/v0.7.0/docs/guide/migration-0.7.md#operators-adr-0018-d-10),
+  [parsing](https://github.com/zenbakiak/skillet/blob/v0.7.0/docs/guide/migration-0.7.md#parsing-requires-the-end-of-input-bl-069-93)).
 - **Builtins follow Excel**: `COUNT`, `MOD`, `TRIM`, `ROUND`, `CEILING`/`FLOOR`, `TIME`, `IPMT`,
   `DB`, `SUBSTITUTE`, `SORT`, criteria in `COUNTIF`/`SUMIF`, `LEFT`/`MID`/`REPLACE`, `DATE`
   rollover; errors instead of 0, NaN or infinity; `.round()` is `ROUND`
-  ([builtins](https://github.com/zenbakiak/skillet/blob/develop/docs/guide/migration-0.7.md#builtins-that-now-match-excel-adr-0018),
-  [errors](https://github.com/zenbakiak/skillet/blob/develop/docs/guide/migration-0.7.md#errors-instead-of-numbers-adr-0018-d-1)).
+  ([builtins](https://github.com/zenbakiak/skillet/blob/v0.7.0/docs/guide/migration-0.7.md#builtins-that-now-match-excel-adr-0018),
+  [errors](https://github.com/zenbakiak/skillet/blob/v0.7.0/docs/guide/migration-0.7.md#errors-instead-of-numbers-adr-0018-d-1)).
 - **Comparisons and conditions**: `==` compares arrays, objects and dates by value, `NULL == NULL`
   is true, and one condition rule (`IF`'s) for every form
-  ([comparisons](https://github.com/zenbakiak/skillet/blob/develop/docs/guide/migration-0.7.md#comparisons-adr-0023-88),
-  [logical functions](https://github.com/zenbakiak/skillet/blob/develop/docs/guide/migration-0.7.md#logical-functions-and-operators-adr-0018-d-8-adr-0029)).
+  ([comparisons](https://github.com/zenbakiak/skillet/blob/v0.7.0/docs/guide/migration-0.7.md#comparisons-adr-0023-88),
+  [logical functions](https://github.com/zenbakiak/skillet/blob/v0.7.0/docs/guide/migration-0.7.md#logical-functions-and-operators-adr-0018-d-8-adr-0029)).
 - **Types and text**: one number type (`::Currency` is a conversion); one text form per value
   type; dates as ISO 8601 text; dates in aggregates, sorting and criteria; VBA date unit codes
-  ([currency](https://github.com/zenbakiak/skillet/blob/develop/docs/guide/migration-0.7.md#currency-is-a-conversion-adr-0033),
-  [values as text](https://github.com/zenbakiak/skillet/blob/develop/docs/guide/migration-0.7.md#values-as-text-adr-0034),
-  [date units](https://github.com/zenbakiak/skillet/blob/develop/docs/guide/migration-0.7.md#date-units-follow-excel-b-15)).
+  ([currency](https://github.com/zenbakiak/skillet/blob/v0.7.0/docs/guide/migration-0.7.md#currency-is-a-conversion-adr-0033),
+  [values as text](https://github.com/zenbakiak/skillet/blob/v0.7.0/docs/guide/migration-0.7.md#values-as-text-adr-0034),
+  [date units](https://github.com/zenbakiak/skillet/blob/v0.7.0/docs/guide/migration-0.7.md#date-units-follow-excel-b-15)).
 - **Servers, JSON variables and plugins**: `Content-Type: application/json` required, CORS off in
   development mode, the Docker image needs both tokens, 408/413 status codes, JSON variables are
   charged to the budget, `:arguments` is always the whole object, hooks cannot use builtin names,
   `httpGet` is gone
-  ([servers](https://github.com/zenbakiak/skillet/blob/develop/docs/guide/migration-0.7.md#servers),
-  [JSON variables](https://github.com/zenbakiak/skillet/blob/develop/docs/guide/migration-0.7.md#json-variables-bl-077),
-  [JavaScript plugins](https://github.com/zenbakiak/skillet/blob/develop/docs/guide/migration-0.7.md#javascript-plugins-adr-0017)).
+  ([servers](https://github.com/zenbakiak/skillet/blob/v0.7.0/docs/guide/migration-0.7.md#servers),
+  [JSON variables](https://github.com/zenbakiak/skillet/blob/v0.7.0/docs/guide/migration-0.7.md#json-variables-bl-077),
+  [JavaScript plugins](https://github.com/zenbakiak/skillet/blob/v0.7.0/docs/guide/migration-0.7.md#javascript-plugins-adr-0017)).
 - **Rust API**: `Value` and the AST and token enums are `#[non_exhaustive]`, `&` is
   `BinaryOp::Concat`, dead modules are removed, `Value::Json` and `Value::Currency` are
-  deprecated ([Rust API](https://github.com/zenbakiak/skillet/blob/develop/docs/guide/migration-0.7.md#rust-api)).
+  deprecated ([Rust API](https://github.com/zenbakiak/skillet/blob/v0.7.0/docs/guide/migration-0.7.md#rust-api)).
 
 ### Added
 - Spread `...` in array literals: `[0, ...:xs, 4]`, with the same rules as spread in argument
