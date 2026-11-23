@@ -37,6 +37,10 @@ Check these first. They change results without an error:
    descending, and `DB` rounds the rate to 3 decimals.
 16. **`::Array` on a string** splits it into characters, as `.to_a()` (BL-105): `"ab"::Array` is
    `["a","b"]` (was `["ab"]`). Write `[:s]` for a one-item array.
+17. **Aggregates with direct text or boolean arguments** (ADR-0029 amendment 2, BL-107):
+   `SUM(1, "2", TRUE)` is `4` (was `1`), `AVERAGE(1, "2")` is `1.5` (was `1`), `MIN(TRUE, 5)` is
+   `1` (was `5`), `COUNT(1, "2")` is `2` (was `1`). This includes variables and spread values
+   (`SUM(:a, :b)`, `SUM(...:xs)`). Arrays are unchanged; see the table below.
 
 ## Expressions
 
@@ -67,8 +71,9 @@ extra token. This also exposed `AND`/`OR`, which were never parsed as operators 
 ### Numbers and coercion (BL-066, BL-058)
 Like Excel, the arithmetic operators and the scalar math builtins now convert numeric text and
 booleans to numbers, and the operators read `NULL` as `0`. Text that is not a number is a
-`#VALUE!` error. Scientific notation is a number literal. Aggregates over arrays (`SUM`,
-`AVERAGE`, …) still skip text. Date operands follow ADR-0027, and `::Currency` is a
+`#VALUE!` error. Scientific notation is a number literal. Aggregates (`SUM`, `AVERAGE`, …)
+still skip text inside arrays; a direct argument converts (see
+[Aggregates read direct arguments as values](#aggregates-read-direct-arguments-as-values-adr-0029-amendment-2-bl-107)). Date operands follow ADR-0027, and `::Currency` is a
 conversion to a Number (ADR-0033); both are below.
 
 | Expression | 0.6 | 0.7 |
@@ -322,6 +327,62 @@ for `::DateTime`; build the criterion with `DATE`. Text items in that ISO form c
 | `COUNTIF(["2026-01-01t00:00:00z"], "=2026-01-01T00:00:00Z")` | `1` (text match) | `0` (lowercase text is not a date) |
 
 For a mean date, average the day counts: `DATE(1970, 1, 1) + AVERAGE(MAP(:dates, :x - DATE(1970, 1, 1)))`.
+
+### Aggregates read direct arguments as values (ADR-0029 amendment 2, BL-107)
+`SUM`, `PRODUCT`, `AVERAGE`, `MIN`, `MAX`, `COUNT`, `MEDIAN`, `MODE.SNGL`, `STDEV.*`, `VAR.*`,
+`PERCENTILE.INC` and `QUARTILE.INC` now tell a direct argument from an item inside an array, as
+Excel and the `AND`/`OR`/`XOR` builtins do. A direct argument (a literal, a variable, any
+sub-expression, or one value of a spread `...`) is read as a value: number text and booleans
+count, other text and a JSON object are `#VALUE!` errors (`COUNT` skips them), `NULL` is skipped.
+Array items are unchanged: only numbers (and dates for `MIN`/`MAX`) are read. A NaN from the host
+is now `#NUM!`, direct or in an array. Error messages use the canonical name (`AVG` → `AVERAGE`).
+
+Unlike Excel, a variable is a direct argument too. To keep skipping text from host data, pass
+the values in an array: `SUM([:a, :b])` instead of `SUM(:a, :b)`, `SUM(:xs)` instead of
+`SUM(...:xs)`. Methods (`.sum()`, `.max()`, …) are unchanged.
+
+The left column is the result before BL-107. 0.6 also skipped direct text and booleans, so it
+gives the same result, except for the rows with a date (dates were skipped in 0.6, see above).
+Silent changes first:
+
+| Expression | Before | 0.7 |
+|---|---|---|
+| `SUM(1, "2", TRUE)`, `SUM(...[1, "2", TRUE])` | `1` | `4` |
+| `SUM("2")` | `0` | `2` |
+| `SUM(" 3 ", "1e2")` | `0` | `103` |
+| `SUM(1 == 1, 2 == 2)` | `0` | `2` |
+| `PRODUCT("2", 3)`, `MULTIPLY("2", 3)` | `3` | `6` |
+| `PRODUCT(FALSE, 5)` | `5` | `0` |
+| `AVERAGE(1, "2")`, `AVG(1, "2")` | `1` | `1.5` |
+| `MAX(-1, "5")` | `-1` | `5` |
+| `MIN(TRUE, 5)` | `5` | `1` |
+| `COUNT(1, "2", TRUE)` | `1` | `3` |
+| `COUNT(...[1, "2"])` | `1` | `2` |
+| `[["2", 3]].map(SUM(...:x))` | `[3]` | `[5]` |
+| `MEDIAN(1, "9", "8")` | `1` | `8` |
+| `PERCENTILE_INC(1, "3", 0.5)` | `1` | `2` |
+| `QUARTILE_INC(1, "5", 1)` | `1` | `2` |
+| `AVERAGE(TRUE)` | `Error: AVERAGE of no numbers (#DIV/0!)` | `1` |
+| `MODE_SNGL(TRUE, 1)` | `Error: MODE.SNGL: no value repeats (#N/A)` | `1` |
+| `STDEV_P("2", "4")` | `Error: STDEV.P of no numbers (#DIV/0!)` | `1` |
+| `VAR_S(TRUE, FALSE)` | `Error: VAR_S needs at least two numbers` | `0.5` |
+| `SUM(1, "x")`, `SUM(:a, 1)` with `:a` = `"x"` | `1` | `Error: SUM: cannot convert "x" to a number (#VALUE!)` |
+| `SUM(1, "")` | `1` | `Error: SUM: cannot convert "" to a number (#VALUE!)` |
+| `SUM("TRUE")` | `0` | `Error: SUM: cannot convert "TRUE" to a number (#VALUE!)` |
+| `SUM('a', TRUE)` | `0` | `Error: SUM: cannot convert "a" to a number (#VALUE!)` |
+| `SUM({"a": 1}, 2)` | `2` | `Error: SUM expects numbers, got json (#VALUE!)` |
+| `MIN("x")` | `0` | `Error: MIN: cannot convert "x" to a number (#VALUE!)` |
+| `AVERAGE("x")` | `Error: AVERAGE of no numbers (#DIV/0!)` | `Error: AVERAGE: cannot convert "x" to a number (#VALUE!)` |
+| `VAR.S('a', 1)` | `Error: VAR.S needs at least two numbers` | `Error: VAR.S: cannot convert "a" to a number (#VALUE!)` |
+| `MAX(DATE(2026,1,1), TRUE)`, `MAX(DATE(2026,1,1), "5")` | the date | `Error: MAX cannot compare dates with numbers (#VALUE!)` |
+| `MAX(DATE(2026,1,1), "2027-01-01")` | the date | `Error: MAX: cannot convert "2027-01-01" to a number (#VALUE!)` |
+| `SUM(:n, 1)`, `SUM([:n])` with `:n` = NaN | `NaN` | `Error: SUM value is not a number (#NUM!)` (also `PRODUCT`, `AVERAGE`, `MODE.SNGL`, `STDEV.*`, `VAR.*`) |
+| `MAX(:n, 1)`, `MIN([:n, 1])` with `:n` = NaN | `1` | `Error: MAX value is not a number (#NUM!)` (`MIN`) |
+
+Unchanged: `SUM([1, "2", TRUE, NULL])` (`1`), `SUM(:xs)` with `:xs` = `[1, "2", TRUE]` (`1`),
+`SUM([...:xs])` (`1`, spread inside an array literal), `SUM(NULL, 2)` (`2`), `SUM()` (`0`),
+`AVERAGE(NULL)` (`#DIV/0!`), `COUNT(1, "x")` (`1`), `MEDIAN(:n)` (`Cannot sort NaN values`),
+`NPV(0.1, "100", TRUE, 100)`, `SUMIF(["1", 2], ">0")` (`2`), `[1, "2", TRUE].sum()` (an error).
 
 ### Date units follow Excel (B-15)
 `DATEADD` and `DATEDIFF` read the unit codes of VBA's `DateAdd`/`DateDiff`, case-insensitively.
