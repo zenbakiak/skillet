@@ -1471,3 +1471,10 @@ and golden file.
 
 Also confirmed (no item): `&.` short-circuits only its own step, so `:x&.date&.to_s().length()`
 errors when `date` is NULL (maintainer, 2026-11-22; matches ADR-0006).
+
+### BL-108 · `--version` on the binaries · P3 · `todo` · rust-engineer
+Found in the 0.7.0 release smoke test. `sk --version` parses `--version` as an expression and
+fails with `Unexpected identifier (expected function call) at position 2`. Add `--version` (and
+`-V`) to `sk`, `sk_server`, `sk_client` and `sk_http_server`, printing `<bin> <CARGO_PKG_VERSION>`
+and exiting 0, before any other argument handling. Check `--help` text and docs/guide CLI pages
+mention it; one test per binary.
