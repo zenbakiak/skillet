@@ -4,7 +4,8 @@ on:
   push:
     branches: [ "main", "develop" ]
   pull_request:
-    branches: [ "main", "develop" ]
+    # release/* and hotfix/* PRs need the checks the "development branches" ruleset requires.
+    branches: [ "main", "develop", "release/**", "hotfix/**" ]
   workflow_dispatch:
 
 permissions:
