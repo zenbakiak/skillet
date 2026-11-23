@@ -55,7 +55,7 @@ fn sample_functions_match_excel() {
 
 #[test]
 fn sample_functions_need_two_numbers() {
-    for src in ["STDEV.S()", "STDEV.S(5)", "VAR.S([7])", "VAR.S('a', 1)"] {
+    for src in ["STDEV.S()", "STDEV.S(5)", "VAR.S([7])", "VAR.S(['a'], 1)"] {
         let err = evaluate(src).expect_err(src);
         assert!(
             err.message.contains("at least two numbers"),
@@ -63,6 +63,13 @@ fn sample_functions_need_two_numbers() {
             err.message
         );
     }
+    // ADR-0029 amendment 2 (BL-107): direct text is read as a value, so it is #VALUE! first.
+    assert_eq!(
+        evaluate("VAR.S('a', 1)")
+            .expect_err("VAR.S('a', 1)")
+            .message,
+        "VAR.S: cannot convert \"a\" to a number (#VALUE!)"
+    );
 }
 
 #[test]

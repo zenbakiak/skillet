@@ -1453,17 +1453,17 @@ Wire format, needs a decision. `sk.rs`, `sk_server.rs` and `http_server/response
 nested array in JSON output with `Debug` (ADR-0034 "Out of scope"). Recommendation: the ADR-0034
 JSON text form. Migration-guide row under Servers if it changes.
 
-### BL-105 · `::Array` on a string splits into characters · P2 · `todo` · rust-engineer
+### BL-105 · `::Array` on a string splits into characters · P2 · `done` (PR #136) · rust-engineer
 Found by BL-084. `"hello"::Array` is `["hello"]`, while `"hello".to_a()` is `["h","e","l","l","o"]`.
 Decision (maintainer, 2026-11-22): the cast splits, like `.to_a()` (one shared helper, by character,
 not byte). Behaviour change: migration-guide row, golden update, ADR-0006 note.
 
-### BL-106 · Spread `...` in array literals · P2 · `todo` · language-designer → rust-engineer
+### BL-106 · Spread `...` in array literals · P2 · `done` (PR #137, ADR-0005 amendment 1) · language-designer → rust-engineer
 Found by BL-084. `...` works in argument lists but `[0, ...:xs, 4]` is a parse error.
 Decision (maintainer, 2026-11-22): a missing feature; add it. Spec first (ADR amendment: what a
 non-array spread does, nesting, budget charge), then parser and evaluator, then the user guide.
 
-### BL-107 · Aggregates follow the ADR-0029 condition/argument rule (X-3) · P2 · `todo` · language-designer → rust-engineer
+### BL-107 · Aggregates follow the ADR-0029 condition/argument rule (X-3) · P2 · `review` (ADR-0029 amendment 2) · language-designer → rust-engineer
 Found by BL-084 (LANG-10). Decision (maintainer, 2026-11-22): the aggregates follow ADR-0029, not
 today's special case. Language-designer writes the ADR-0029 amendment with the exact before/after
 for `SUM`/`AVERAGE`/`MIN`/`MAX`/`COUNT*`; then implement, update excel-compat X-3, migration guide

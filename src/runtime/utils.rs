@@ -53,7 +53,7 @@ pub(crate) fn coerce_to_number(v: &Value, context: &str) -> Result<Option<f64>, 
 
 /// `Cannot convert "abc" to a number (#VALUE!)`, with long text cut to 32 characters.
 #[cold]
-fn not_a_number_text(s: &str, context: &str) -> Error {
+pub(crate) fn not_a_number_text(s: &str, context: &str) -> Error {
     const SHOW: usize = 32;
     let shown: String = s.chars().take(SHOW).collect();
     let more = if s.chars().nth(SHOW).is_some() {

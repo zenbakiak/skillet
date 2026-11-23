@@ -15,10 +15,10 @@ Methods (`:arr.sum()`), operators and the rest of the language: [api.md](api.md)
 
 | Function | Signature | Arity | Summary | Example | Result |
 |---|---|---|---|---|---|
-| `SUM` | `SUM(values…)` | 0+ | Sum of numbers; arrays are flattened, other values ignored; a date is an error (`#VALUE!`). | `SUM(1, 2, [3, 4])` | `10` |
-| `AVG`<br>alias `AVERAGE` | `AVG(values…)` | 0+ | Mean of numbers (arrays flattened); error when there are none (Excel `#DIV/0!`) or for a date (`#VALUE!`). | `AVG(2, 4, 6)` | `4` |
-| `MIN` | `MIN(values…)` | 0+ | Smallest number, or earliest date when there are only dates (arrays flattened); 0 when there are none; numbers and dates together are an error (`#VALUE!`). | `MIN(3, 1, 2)` | `1` |
-| `MAX` | `MAX(values…)` | 0+ | Largest number, or latest date when there are only dates (arrays flattened); 0 when there are none; numbers and dates together are an error (`#VALUE!`). | `MAX([3, 9, 2])` | `9` |
+| `SUM` | `SUM(values…)` | 0+ | Sum of numbers. A direct number text or boolean counts (`SUM(1, "2", TRUE)` is 4), other direct text is `#VALUE!`; in an array only numbers count. A date is `#VALUE!`, a NaN `#NUM!`. | `SUM(1, 2, [3, 4])` | `10` |
+| `AVG`<br>alias `AVERAGE` | `AVG(values…)` | 0+ | Mean of numbers; direct number text and booleans count, other direct text is `#VALUE!`, array items that are not numbers are skipped. Error when there are none (Excel `#DIV/0!`), for a date (`#VALUE!`) or a NaN (`#NUM!`). | `AVG(2, 4, 6)` | `4` |
+| `MIN` | `MIN(values…)` | 0+ | Smallest number, or earliest date when there are only dates; direct number text and booleans count, other direct text is `#VALUE!`, other array items are skipped. 0 when there are none; numbers and dates together are `#VALUE!`, a NaN `#NUM!`. | `MIN(3, 1, 2)` | `1` |
+| `MAX` | `MAX(values…)` | 0+ | Largest number, or latest date when there are only dates; direct number text and booleans count, other direct text is `#VALUE!`, other array items are skipped. 0 when there are none; numbers and dates together are `#VALUE!`, a NaN `#NUM!`. | `MAX([3, 9, 2])` | `9` |
 | `ROUND` | `ROUND(number, [digits])` | 1-2 | Round half away from zero to `digits` decimals (default 0); negative `digits` round left of the point. | `ROUND(1234.567, -2)` | `1200` |
 | `CEILING`<br>alias `CEIL` | `CEILING(number, [significance])` | 1-2 | Round up to a multiple of `significance` (default 1), Excel rules for negatives. | `CEILING(2.1, 0.5)` | `2.5` |
 | `FLOOR` | `FLOOR(number, [significance])` | 1-2 | Round down to a multiple of `significance` (default 1), Excel rules for negatives. | `FLOOR(7, 5)` | `5` |
@@ -27,7 +27,7 @@ Methods (`:arr.sum()`), operators and the rest of the language: [api.md](api.md)
 | `POW`<br>alias `POWER` | `POW(base, exponent)` | 2 | `base` raised to `exponent`; error for `0^0`, `0` to a negative power, or a non-real result. | `POW(2, 10)` | `1024` |
 | `MOD` | `MOD(number, divisor)` | 2 | Remainder of `number / divisor`; the sign follows the divisor (Excel). Error for 0. | `MOD(-10, 3)` | `2` |
 | `INT` | `INT(number)` | 1 | Round down to an integer: `INT(-3.9)` is -4. | `INT(5.9)` | `5` |
-| `PRODUCT`<br>alias `MULTIPLY` | `PRODUCT(values…)` | 0+ | Product of numbers (arrays flattened); 1 when there are none; a date is an error (`#VALUE!`). | `PRODUCT(2, 3, 4)` | `24` |
+| `PRODUCT`<br>alias `MULTIPLY` | `PRODUCT(values…)` | 0+ | Product of numbers; direct number text and booleans count, other direct text is `#VALUE!`, array items that are not numbers are skipped. 1 when there are none; a date is `#VALUE!`, a NaN `#NUM!`. | `PRODUCT(2, 3, 4)` | `24` |
 | `SUMIF` † | `SUMIF(range, criteria, [sum_range])` | 2-3 | Sum of items meeting an Excel criteria (`">2"`, `5`, `"a*"`, a date or ISO date text) or a lambda over `:x`; a matched date to sum is an error (`#VALUE!`). | `SUMIF([1, -2, 3], ">0")` | `4` |
 
 ## Logical
@@ -76,7 +76,7 @@ Methods (`:arr.sum()`), operators and the rest of the language: [api.md](api.md)
 | `LAST` | `LAST(array)` | 1 | Last item; error on an empty array. | `LAST([9, 8, 7])` | `7` |
 | `CONTAINS` | `CONTAINS(array, value)` | 2 | TRUE when the array has an item equal to `value`. | `CONTAINS([1, 2, 3], 2)` | `TRUE` |
 | `IN` | `IN(array, value)` | 2 | Same as `CONTAINS`, with an exact argument count. | `IN([1, 2, 3], 4)` | `FALSE` |
-| `COUNT` | `COUNT(values…)` | 1+ | How many numbers (and datetimes) there are; arrays flattened, other values ignored (Excel). | `COUNT([1, 'a', TRUE], 2)` | `2` |
+| `COUNT` | `COUNT(values…)` | 1+ | How many numbers (and datetimes) there are; a direct number text or boolean counts too, array items only when they are numbers or dates. Never an error (Excel). | `COUNT([1, 'a', TRUE], 2)` | `2` |
 | `COUNTA` | `COUNTA(values…)` | 1+ | How many values are not NULL; arrays flattened (Excel). | `COUNTA([1, 'a', NULL], '')` | `3` |
 | `UNIQUE` | `UNIQUE(array)` | 1 | Distinct values in first-seen order (`==` equality: same type and value, text case-sensitive). | `UNIQUE([1, 'a', 1, 'a'])` | `[1, "a"]` |
 | `SORT` | `SORT(array, [order])` | 1-2 | Sorted ascending (Excel: numbers or dates < text < booleans, dates by instant, text ignores case), or descending with order `-1` or `'DESC'`; numbers with dates, and other values, are an error. | `SORT(['b', 2, 'A', 1])` | `[1, 2, "A", "b"]` |
@@ -119,14 +119,14 @@ Methods (`:arr.sum()`), operators and the rest of the language: [api.md](api.md)
 
 | Function | Signature | Arity | Summary | Example | Result |
 |---|---|---|---|---|---|
-| `MEDIAN` | `MEDIAN(values…)` | 0+ | Median of numbers (arrays flattened); error when there are none or for a date. | `MEDIAN(1, 3, 2, 4)` | `2.5` |
-| `MODE_SNGL`<br>alias `MODESNGL`, `MODE.SNGL`, `MODE` | `MODE_SNGL(values…)` | 0+ | Most frequent number (first seen wins a tie); error when no number repeats or for a date. | `MODE_SNGL(1, 2, 2, 3)` | `2` |
-| `STDEV_P`<br>alias `STDEVP`, `STDEV.P` | `STDEV_P(values…)` | 0+ | Population standard deviation; error when there are no numbers or for a date. | `STDEV_P(2, 4, 4, 4, 5, 5, 7, 9)` | `2` |
-| `VAR_P`<br>alias `VARP`, `VAR.P` | `VAR_P(values…)` | 0+ | Population variance; error when there are no numbers or for a date. | `VAR_P(1, 2, 3, 4)` | `1.25` |
-| `STDEV_S`<br>alias `STDEV.S`, `STDEV` | `STDEV_S(values…)` | 1+ | Sample standard deviation (divides by n - 1); error with fewer than two numbers or for a date. | `STDEV_S(2, 4, 4, 4, 5, 5, 7, 9)` | `2.138089935299395` |
-| `VAR_S`<br>alias `VAR.S`, `VAR` | `VAR_S(values…)` | 1+ | Sample variance (divides by n - 1); error with fewer than two numbers or for a date. | `VAR_S(1, 2, 3, 4)` | `1.6666666666666667` |
-| `PERCENTILE_INC`<br>alias `PERCENTILEINC`, `PERCENTILE.INC`, `PERCENTILE` | `PERCENTILE_INC(values…, k)` | 2+ | Inclusive percentile `k` (0-1) of the values, interpolated; a date is an error. | `PERCENTILE_INC([1, 2, 3, 4], 0.5)` | `2.5` |
-| `QUARTILE_INC`<br>alias `QUARTILEINC`, `QUARTILE.INC`, `QUARTILE` | `QUARTILE_INC(values…, quart)` | 2+ | Inclusive quartile `quart` (0-4) of the values; a date is an error. | `QUARTILE_INC([1, 2, 3, 4, 5], 1)` | `2` |
+| `MEDIAN` | `MEDIAN(values…)` | 0+ | Median of numbers (direct number text and booleans count, other direct text is `#VALUE!`, other array items skipped); error when there are none, for a date or a NaN. | `MEDIAN(1, 3, 2, 4)` | `2.5` |
+| `MODE_SNGL`<br>alias `MODESNGL`, `MODE.SNGL`, `MODE` | `MODE_SNGL(values…)` | 0+ | Most frequent number (first seen wins a tie); data read as in `SUM`. Error when no number repeats, for a date or a NaN. | `MODE_SNGL(1, 2, 2, 3)` | `2` |
+| `STDEV_P`<br>alias `STDEVP`, `STDEV.P` | `STDEV_P(values…)` | 0+ | Population standard deviation; data read as in `SUM`. Error when there are no numbers, for a date or a NaN. | `STDEV_P(2, 4, 4, 4, 5, 5, 7, 9)` | `2` |
+| `VAR_P`<br>alias `VARP`, `VAR.P` | `VAR_P(values…)` | 0+ | Population variance; data read as in `SUM`. Error when there are no numbers, for a date or a NaN. | `VAR_P(1, 2, 3, 4)` | `1.25` |
+| `STDEV_S`<br>alias `STDEV.S`, `STDEV` | `STDEV_S(values…)` | 1+ | Sample standard deviation (divides by n - 1); data read as in `SUM`. Error with fewer than two numbers, for a date or a NaN. | `STDEV_S(2, 4, 4, 4, 5, 5, 7, 9)` | `2.138089935299395` |
+| `VAR_S`<br>alias `VAR.S`, `VAR` | `VAR_S(values…)` | 1+ | Sample variance (divides by n - 1); data read as in `SUM`. Error with fewer than two numbers, for a date or a NaN. | `VAR_S(1, 2, 3, 4)` | `1.6666666666666667` |
+| `PERCENTILE_INC`<br>alias `PERCENTILEINC`, `PERCENTILE.INC`, `PERCENTILE` | `PERCENTILE_INC(values…, k)` | 2+ | Inclusive percentile `k` (0-1, a number) of the values, interpolated; values read as in `SUM`; a date or a NaN is an error. | `PERCENTILE_INC([1, 2, 3, 4], 0.5)` | `2.5` |
+| `QUARTILE_INC`<br>alias `QUARTILEINC`, `QUARTILE.INC`, `QUARTILE` | `QUARTILE_INC(values…, quart)` | 2+ | Inclusive quartile `quart` (0-4, a number) of the values; values read as in `SUM`; a date or a NaN is an error. | `QUARTILE_INC([1, 2, 3, 4, 5], 1)` | `2` |
 | `AVERAGEIF` †<br>alias `AVGIF` | `AVERAGEIF(range, criteria, [average_range])` | 2-3 | Mean of items meeting an Excel criteria (as `SUMIF`) or a lambda over `:x`; error when none match or a matched date is to be averaged. | `AVERAGEIF([1, 3, 5, -1], ">0")` | `3` |
 | `COUNTIF` † | `COUNTIF(range, criteria)` | 2 | Number of items meeting an Excel criteria (`">2"`, `"<>a"`, `"a*"`, `">" & DATE(2026, 1, 1)`) or a lambda over `:x`; dates compare by instant. | `COUNTIF([1, 2, 3, 4], ">2")` | `2` |
 

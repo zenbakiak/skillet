@@ -62,18 +62,14 @@ pub fn exec_array(name: &str, args: &[Value]) -> Result<Value, Error> {
                 Err(Error::new("IN expects array as first argument", None))
             }
         }
-        // Excel COUNT: how many numbers (datetimes count too); arrays are flattened
-        // and every other value is ignored. COUNTA: how many values are not NULL.
+        // Excel COUNT: how many numbers (datetimes count too); arrays are flattened. A direct
+        // argument also counts when it is number text or a boolean; array items do not
+        // (ADR-0029 amendment 2, B3). COUNTA: how many values are not NULL.
         "COUNT" | "COUNTA" if args.is_empty() => Err(Error::new(
             format!("{name} expects at least 1 argument"),
             None,
         )),
-        "COUNT" => Ok(Value::Number(count_where(args, &|v| {
-            matches!(
-                v,
-                Value::Number(_) | Value::Currency(_) | Value::DateTime(_)
-            )
-        }) as f64)),
+        "COUNT" => Ok(Value::Number(count(args) as f64)),
         "COUNTA" => Ok(Value::Number(
             count_where(args, &|v| !matches!(v, Value::Null)) as f64,
         )),
@@ -132,6 +128,26 @@ pub fn exec_array(name: &str, args: &[Value]) -> Result<Value, Error> {
 }
 
 /// Count the values in `args` (arrays flattened) for which `keep` holds.
+/// Excel `COUNT` (ADR-0029 amendment 2, B3): Numbers (NaN too) and DateTimes count, direct or
+/// in an array; a direct number text or boolean counts as well. Nothing is an error.
+#[allow(deprecated)] // `Value::Currency` is read as a Number (ADR-0033)
+fn count(args: &[Value]) -> usize {
+    let is_number = |v: &Value| {
+        matches!(
+            v,
+            Value::Number(_) | Value::Currency(_) | Value::DateTime(_)
+        )
+    };
+    args.iter()
+        .map(|a| match a {
+            Value::Array(items) => count_where(items, &is_number),
+            Value::Boolean(_) => 1,
+            Value::String(s) => usize::from(crate::runtime::utils::numeric_text(s).is_some()),
+            other => usize::from(is_number(other)),
+        })
+        .sum()
+}
+
 fn count_where(args: &[Value], keep: &dyn Fn(&Value) -> bool) -> usize {
     args.iter()
         .map(|a| match a {

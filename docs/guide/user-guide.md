@@ -838,6 +838,7 @@ sk "=1 + NULL"                     # 1 (NULL is a blank cell: 0)
 sk "=ABS(\"-3\")"                   # 3
 sk "=\"abc\" + 1"                   # Error: Cannot convert "abc" to a number (#VALUE!)
 sk "=SUM([1, \"2\", TRUE])"         # 1 (aggregates still skip text in arrays)
+sk "=SUM(1, \"2\", TRUE)"           # 4 (a direct argument converts, ADR-0029 amendment 2)
 
 # With variables
 sk "=:price * (1 + :tax)" price=100 tax=0.08    # 108

@@ -45,9 +45,19 @@ fn min_and_max_of_dates_are_dates() {
 #[test]
 fn min_and_max_ignore_what_they_ignored_before() {
     check("MAX(DATE(2026,1,1), NULL)", d(2026, 1, 1));
-    check(r#"MAX(DATE(2026,1,1), "x", TRUE)"#, d(2026, 1, 1));
     check("MAX(DATE(2026,1,1), [])", d(2026, 1, 1));
-    check(r#"MIN(DATE(2026,1,1), "5")"#, d(2026, 1, 1));
+    // Array items other than numbers and dates are still skipped.
+    check(r#"MAX(DATE(2026,1,1), ["x", TRUE])"#, d(2026, 1, 1));
+    check(r#"MIN(DATE(2026,1,1), ["5"])"#, d(2026, 1, 1));
+    // ADR-0029 amendment 2 (BL-107): a direct text or boolean is read as a value, not skipped.
+    err(
+        r#"MAX(DATE(2026,1,1), "x", TRUE)"#,
+        r#"MAX: cannot convert "x" to a number (#VALUE!)"#,
+    );
+    err(
+        r#"MIN(DATE(2026,1,1), "5")"#,
+        "MIN cannot compare dates with numbers (#VALUE!)",
+    );
 }
 
 #[test]

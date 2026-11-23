@@ -3,7 +3,7 @@
 //! is an error, NaN data in an order statistic is an error, and nothing panics.
 
 use crate::error::Error;
-use crate::runtime::arithmetic::dates_not_accepted;
+use crate::runtime::arithmetic::{dates_not_accepted, finite, for_each_datum, Datum};
 use crate::types::Value;
 use std::collections::HashMap;
 
@@ -30,28 +30,35 @@ pub fn exec_statistical(name: &str, args: &[Value]) -> Result<Value, Error> {
     }
 }
 
-/// Every number in the arguments, arrays flattened; other values are ignored. A DateTime is
-/// an error naming `name`, the canonical function name (ADR-0031 amendment 2, B2).
-#[allow(deprecated)] // `Value::Currency` is read as a Number (ADR-0033)
+/// Every number of the data, read with ADR-0029 amendment 2 (`for_each_datum`): direct number
+/// text and booleans convert, array items other than numbers are skipped. A DateTime is an error
+/// naming `name`, the canonical function name (ADR-0031 amendment 2, B2), and so is a NaN
+/// (`#NUM!`).
 fn numbers(name: &str, args: &[Value]) -> Result<Vec<f64>, Error> {
-    fn collect(name: &str, args: &[Value], out: &mut Vec<f64>) -> Result<(), Error> {
-        for v in args {
-            match v {
-                Value::Number(n) | Value::Currency(n) => out.push(*n),
-                Value::Array(items) => collect(name, items, out)?,
-                Value::DateTime(_) => return Err(dates_not_accepted(name)),
-                _ => {}
-            }
-        }
-        Ok(())
-    }
     let mut out = Vec::new();
-    collect(name, args, &mut out)?;
+    for_each_datum(name, args, &mut |d| {
+        out.push(finite(name, d)?);
+        Ok(())
+    })?;
+    Ok(out)
+}
+
+/// `numbers` for the order statistics (`MEDIAN`, `PERCENTILE.INC`, `QUARTILE.INC`): a NaN is
+/// kept, so sorting rejects it with `Cannot sort NaN values` (ADR-0015, unchanged).
+fn sortable_numbers(name: &str, args: &[Value]) -> Result<Vec<f64>, Error> {
+    let mut out = Vec::new();
+    for_each_datum(name, args, &mut |d| match d {
+        Datum::Number(n) => {
+            out.push(n);
+            Ok(())
+        }
+        Datum::Date(_) => Err(dates_not_accepted(name)),
+    })?;
     Ok(out)
 }
 
 fn median(args: &[Value]) -> Result<Value, Error> {
-    let mut nums = numbers("MEDIAN", args)?;
+    let mut nums = sortable_numbers("MEDIAN", args)?;
     if nums.is_empty() {
         return Err(Error::new("MEDIAN of no numbers (#NUM!)", None));
     }
@@ -135,7 +142,11 @@ fn percentile(args: &[Value]) -> Result<Value, Error> {
             None,
         ));
     }
-    interpolate(numbers("PERCENTILE.INC", data)?, p, "PERCENTILE.INC")
+    interpolate(
+        sortable_numbers("PERCENTILE.INC", data)?,
+        p,
+        "PERCENTILE.INC",
+    )
 }
 
 fn quartile(args: &[Value]) -> Result<Value, Error> {
@@ -145,7 +156,7 @@ fn quartile(args: &[Value]) -> Result<Value, Error> {
         return Err(Error::new("Quartile must be 0-4 (#NUM!)", None));
     }
     interpolate(
-        numbers("QUARTILE.INC", data)?,
+        sortable_numbers("QUARTILE.INC", data)?,
         q.trunc() / 4.0,
         "QUARTILE.INC",
     )

@@ -88,9 +88,10 @@ The scalar math builtins convert numeric text and booleans the same way: `ABS`, 
 `ABS("-3")` is `3`, `ABS(TRUE)` is `1`, `DATE("2026", 1, 1)` works. Text that is not a number is
 `#VALUE!` with the function name: `ABS("x")` is `Error: ABS: cannot convert "x" to a number
 (#VALUE!)`. `NULL` in a required argument stays an error (`ABS(NULL)`); an optional argument
-that is `NULL` takes its default. Aggregates over arrays (`SUM`, `AVERAGE`, `MAX`, `NPV`'s
-values, …) still skip text and booleans inside arrays, as Excel skips them in a range:
-`SUM([1, "2", TRUE])` is `1`.
+that is `NULL` takes its default. The aggregates (`SUM`, `AVERAGE`, `MAX`, …) convert a direct
+argument the same way (`SUM(1, "2", TRUE)` is `4`) but skip text and booleans inside arrays, as
+Excel skips them in a range: `SUM([1, "2", TRUE])` is `1`. See
+[Direct arguments and array items](#direct-arguments-and-array-items) below.
 
 Dates work with `+` and `-` in days, like Excel:
 
@@ -324,6 +325,41 @@ UPPERCASE builtins follow Excel's documented behaviour (BL-054). Where Excel ret
 A wrong-typed or missing argument is an error, never a silent 0. Inside arrays, text, booleans
 and `NULL` are ignored by the aggregates, as Excel ignores them in a range.
 
+##### Direct arguments and array items
+
+The aggregates (`SUM`, `PRODUCT`, `AVERAGE`, `MIN`, `MAX`, `COUNT`, `MEDIAN`, `MODE.SNGL`,
+`STDEV.*`, `VAR.*`, and the data of `PERCENTILE.INC` and `QUARTILE.INC`) read a value differently
+depending on where it is ([ADR-0029 amendment 2](../adr/0029-logic-operators.md#amendment-2-maintainer-2026-11-22-bl-107)):
+
+- A **direct argument** (a literal, a variable, any sub-expression, or one value of a spread
+  `...`) is read as a value, as Excel reads a value typed into the formula. Number text and
+  `TRUE`/`FALSE` count as numbers (`"2"` is 2, `TRUE` is 1). Other text is an error:
+  `SUM(1, "x")` is `Error: SUM: cannot convert "x" to a number (#VALUE!)`. A JSON object is
+  `Error: SUM expects numbers, got json (#VALUE!)`. `NULL` is skipped, like an empty cell.
+- An **array item** (a value inside an array argument, at any depth) is range data: only numbers
+  (and dates for `MIN`/`MAX`) are read, everything else is skipped.
+- `COUNT` never errors: it counts numbers and dates, and also direct number text and booleans.
+- A NaN from the host is `Error: SUM value is not a number (#NUM!)`, direct or in an array.
+  `MEDIAN`, `PERCENTILE.INC` and `QUARTILE.INC` keep `Cannot sort NaN values`.
+- Messages name the function's canonical name, whichever alias was called (`AVG` → `AVERAGE`,
+  `STDEV_P` → `STDEV.P`). The first error from the left is the result.
+
+Unlike Excel, a variable is a direct argument too, so host text passed as its own argument is
+read as a value. To skip text from host data, pass it in an array:
+
+```bash
+SUM(1, "2", TRUE)            # 4
+SUM([1, "2", TRUE])          # 1 (array items: only numbers)
+SUM(:a, 1)                   # Error: SUM: cannot convert "x" to a number (#VALUE!), when :a is "x"
+SUM([:a, 1])                 # 1
+SUM(...[1, "2"])             # 3 (each spread value is a direct argument)
+SUM([...[1, "2"]])           # 1 (spread inside an array literal: array items)
+COUNT(1, "2", TRUE, "x")     # 3
+SUM(NULL, 2)                 # 2
+```
+
+Methods keep their own rule: `[1, "2"].sum()` is an error.
+
 Dates (ADR-0031 amendment 2): `MIN` and `MAX` of dates return a date. The aggregates that do
 arithmetic (`SUM`, `PRODUCT`, `AVERAGE`, `MEDIAN`, `MODE.SNGL`, `STDEV.*`, `VAR.*`,
 `PERCENTILE.INC`, `QUARTILE.INC`) return `Error: <NAME> does not accept dates (#VALUE!)` when a
@@ -336,15 +372,18 @@ Average of the numbers in the arguments. No numbers is an error (Excel `#DIV/0!`
 AVERAGE(1, 2, 3, 4, 5)       # 3.0
 AVG(10, 20, 30)              # 20.0 (alias)
 AVERAGE([1, "x", TRUE])      # 1 (text and booleans in arrays are ignored)
+AVERAGE(1, "2")              # 1.5 (direct number text counts)
 AVERAGE(10::Currency, 20)    # 15
 AVERAGE([])                  # Error: AVERAGE of no numbers (#DIV/0!)
 ```
 
 #### `MAX(...)`, `MIN(...)`
 Maximum/minimum value from arguments. As in Excel, no numbers gives 0. With only dates (and
-ignored values), the latest/earliest date; dates mixed with numbers are an error.
+ignored values), the latest/earliest date; dates mixed with numbers are an error, also a direct
+number text or boolean (`MAX(DATE(2026,1,1), TRUE)`).
 ```bash
 MAX(1, 5, 3, 9, 2)           # 9
+MAX(-1, "5")                 # 5 (direct number text counts)
 MIN([1, 5, 3, 9, 2])         # 1 (works with arrays too)
 MIN(1, 3::Currency)          # 1
 MAX()                        # 0
@@ -354,12 +393,13 @@ SUM(DATE(2026,1,1))          # Error: SUM does not accept dates (#VALUE!)
 ```
 
 #### `COUNT(...)`, `COUNTA(...)`
-`COUNT` counts the numbers (and datetime values) in its arguments; arrays are
-flattened and other values are ignored. `COUNTA` counts every value that is not `NULL`, including
+`COUNT` counts the numbers (and datetime values) in its arguments, and a direct number text or
+boolean; arrays are flattened and inside them only numbers and dates count. It never errors. `COUNTA` counts every value that is not `NULL`, including
 empty text. Both need at least one argument. For the length of an array use `.length()`.
 ```bash
 COUNT(1, "hello", 3, 4)      # 3
 COUNT([1, "a", TRUE, NULL])  # 1
+COUNT(1, "2", TRUE)          # 3
 COUNT([1, 2, 3, 4, 5])       # 5
 COUNTA([1, "a", TRUE, NULL]) # 3
 COUNTA("", NULL)             # 1
