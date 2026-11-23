@@ -218,6 +218,9 @@ BREAKING changes first, newest first; then the other changes, newest first.
 - **BREAKING** (`skillet::runtime::method_calls`, public but not documented API): the
   `exec_filter`/`exec_map`/`exec_find`/`exec_reduce`, `exec_string_method` and
   `exec_array_method` handlers take `&dyn EvaluationContext` (#45).
+- Performance against 0.6.3: library evaluation up to ~37% faster on the baseline set; lambdas
+  that read the outer array are no longer quadratic (10k rows: 2.2 s → 3.6 ms); one `sk` call is
+  ~1.1 ms faster. `benches/BASELINE.md` is re-measured on the 0.7.0 code (BL-084).
 - `release.yml` runs as a dry run on pull requests into `main` (every binary target, `cargo
   package`, `cargo publish --dry-run`); publishing to crates.io waits for approval in the
   protected `crates-io` environment (ADR-0022 amendment, BL-083).

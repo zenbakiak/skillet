@@ -1296,7 +1296,7 @@ Settings for the maintainer (GitHub → Settings → Rules → Rulesets, and Set
 5. After 0.7.0 is tagged: the back-merge `main` → `develop` PR must use "Create a merge commit".
    It is the only PR into `develop` that must not be squashed.
 
-### BL-084 · Docs catch up with what merged · P2 · `todo` · docs-engineer
+### BL-084 · Docs catch up with what merged · P2 · `done` (PR #133; baseline refresh in this PR) · docs-engineer
 - REL-3: migration guide misses silent changes: `[1,2]==[1,2]` false→true (also objects, Currency,
   dates), `FALSE<TRUE` false→true, `SUBSTITUTE` with an instance, `CONCAT` with Currency, `DB`,
   `SORT(…,-1)`, hooks can't use builtin names (#86). Mark #88 BREAKING.
@@ -1463,7 +1463,7 @@ Found by BL-084. `...` works in argument lists but `[0, ...:xs, 4]` is a parse e
 Decision (maintainer, 2026-11-22): a missing feature; add it. Spec first (ADR amendment: what a
 non-array spread does, nesting, budget charge), then parser and evaluator, then the user guide.
 
-### BL-107 · Aggregates follow the ADR-0029 condition/argument rule (X-3) · P2 · `review` (ADR-0029 amendment 2) · language-designer → rust-engineer
+### BL-107 · Aggregates follow the ADR-0029 condition/argument rule (X-3) · P2 · `done` (PR #138, ADR-0029 amendment 2) · language-designer → rust-engineer
 Found by BL-084 (LANG-10). Decision (maintainer, 2026-11-22): the aggregates follow ADR-0029, not
 today's special case. Language-designer writes the ADR-0029 amendment with the exact before/after
 for `SUM`/`AVERAGE`/`MIN`/`MAX`/`COUNT*`; then implement, update excel-compat X-3, migration guide
