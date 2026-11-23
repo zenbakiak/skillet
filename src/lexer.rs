@@ -1,6 +1,9 @@
 use crate::error::Error;
 
+/// A lexer token. `#[non_exhaustive]` (since 0.7.0): new syntax adds variants (`Ampersand` in
+/// 0.7.0), so a `match` outside this crate needs a `_` arm.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum Token {
     Number(f64),
     Identifier(String),
@@ -17,6 +20,8 @@ pub enum Token {
     Bang,
     Dot,
     SafeNavigation, // &.
+    /// `&` text concatenation (Excel).
+    Ampersand,
     Ellipsis,
     LParen,
     RParen,
@@ -118,7 +123,7 @@ impl<'a> Lexer<'a> {
                     // Only consume the dot if it's followed by a digit (for decimals like 1.23)
                     // Don't consume it if it's followed by a letter (for method calls like 1.abs)
                     if let Some(&next) = self.input.get(self.pos + 1) {
-                        if matches!(next, b'0'..=b'9') {
+                        if next.is_ascii_digit() {
                             has_dot = true;
                             end += 1;
                             self.pos += 1;
@@ -136,8 +141,20 @@ impl<'a> Lexer<'a> {
                 _ => break,
             }
         }
+        // Scientific notation (BL-058): `1e3`, `2.5E-4`, `1e+2`. The exponent needs a digit.
+        let exp_end = self.exponent_end();
+        if let Some(e) = exp_end {
+            self.pos = e;
+            end = e;
+        }
+        let has_exp = exp_end.is_some();
+        // A number that runs into a letter is not a literal (`1x`, `1e`, `2ex`): an error, not
+        // the number with the rest silently dropped.
+        if matches!(self.peek(), Some(b'a'..=b'z' | b'A'..=b'Z' | b'_')) {
+            return Err(Error::new("Invalid number literal", Some(start)));
+        }
         // Avoid UTF-8 conversion - parse directly from bytes for common numbers
-        let n = if end - start <= 10 && !has_dot {
+        let n = if end - start <= 10 && !has_dot && !has_exp {
             // Fast path for small integers
             let mut result = 0.0;
             for i in start..end {
@@ -156,6 +173,24 @@ impl<'a> Lexer<'a> {
         Ok(Token::Number(n))
     }
 
+    /// With the mantissa just read: the end of an exponent part (`e`/`E`, an optional sign, at
+    /// least one digit) starting at the current position, if there is one.
+    fn exponent_end(&self) -> Option<usize> {
+        let mut k = self.pos;
+        if !matches!(self.input.get(k), Some(b'e' | b'E')) {
+            return None;
+        }
+        k += 1;
+        if matches!(self.input.get(k), Some(b'+' | b'-')) {
+            k += 1;
+        }
+        let digits_start = k;
+        while matches!(self.input.get(k), Some(b'0'..=b'9')) {
+            k += 1;
+        }
+        (k > digits_start).then_some(k)
+    }
+
     fn identifier(&mut self, _first: u8) -> Result<Token, Error> {
         let start = self.pos - 1;
         let mut end = self.pos;
@@ -170,11 +205,11 @@ impl<'a> Lexer<'a> {
         }
         self.last_start = start;
         self.last_end = end;
-        
+
         // Fast path for common keywords - avoid string allocation
         let len = end - start;
         let bytes = &self.input[start..end];
-        
+
         // Check common keywords by length first, then bytes
         let token = match len {
             4 => {
@@ -208,7 +243,7 @@ impl<'a> Lexer<'a> {
                 Token::Identifier(s)
             }
         };
-        
+
         Ok(token)
     }
 
@@ -371,7 +406,7 @@ impl<'a> Lexer<'a> {
                     self.bump();
                     Token::SafeNavigation
                 } else {
-                    return Err(Error::new("Unexpected '&'", Some(self.pos - 1)));
+                    Token::Ampersand
                 }
             }
             b'|' => {
@@ -407,6 +442,7 @@ impl<'a> Lexer<'a> {
                 | Token::Greater
                 | Token::Less
                 | Token::Semicolon
+                | Token::Ampersand
         ) {
             self.last_start = self.pos - 1;
             self.last_end = self.pos;
@@ -422,7 +458,7 @@ impl<'a> Lexer<'a> {
                 | Token::OrOr
                 | Token::SafeNavigation
         ) {
-            self.last_start = self.pos - 2;
+            self.last_start = self.pos.saturating_sub(2); // a lone '=' is EqEq too (fuzz, BL-019)
             self.last_end = self.pos;
         }
         Ok(tok)

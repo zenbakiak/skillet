@@ -1,0 +1,12 @@
+# cross configuration for the release workflow (.github/workflows/release.yml, ADR-0022).
+#
+# cross installed from git uses the floating `:main` image tags, so the images are pinned by
+# digest here. These are the `:main` digests resolved on 2026-11-21, for cross commit
+# a9301e91f72bba3850460512685f6b16062015ff (CROSS_REV in release.yml). Bump both together:
+#   docker buildx imagetools inspect ghcr.io/cross-rs/<target>:main
+
+[target.x86_64-unknown-linux-musl]
+image = "ghcr.io/cross-rs/x86_64-unknown-linux-musl@sha256:de9ccd1ae2d7068f7a91d737a4a1b5464ee5ab06f9d22624f61c4ff0f754a8ac"
+
+[target.aarch64-unknown-linux-musl]
+image = "ghcr.io/cross-rs/aarch64-unknown-linux-musl@sha256:db510fe1196e43156e0fdffbe5e5e42a2c95e72b4e5471d48a4916770e6f370b"

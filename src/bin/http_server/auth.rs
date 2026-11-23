@@ -1,5 +1,7 @@
 use serde_json;
 
+use super::token_eq::tokens_match;
+
 pub fn extract_auth_header(request: &str) -> Option<String> {
     // Look for Authorization header in request
     for line in request.lines() {
@@ -20,7 +22,7 @@ pub fn check_authentication(request: &str, server_token: &Option<String>) -> Opt
     if let Some(cfg_token) = server_token {
         let auth_token = extract_auth_header(request);
         let supplied = auth_token.as_deref().unwrap_or("");
-        if supplied != cfg_token {
+        if !tokens_match(supplied, cfg_token) {
             let error_response = serde_json::json!({
                 "success": false,
                 "error": "Unauthorized: invalid token"
@@ -31,11 +33,14 @@ pub fn check_authentication(request: &str, server_token: &Option<String>) -> Opt
     None
 }
 
-pub fn check_admin_authentication(request: &str, server_admin_token: &Option<String>) -> Option<String> {
+pub fn check_admin_authentication(
+    request: &str,
+    server_admin_token: &Option<String>,
+) -> Option<String> {
     if let Some(cfg_admin_token) = server_admin_token {
         let auth_token = extract_auth_header(request);
         let supplied = auth_token.as_deref().unwrap_or("");
-        if supplied != cfg_admin_token {
+        if !tokens_match(supplied, cfg_admin_token) {
             let error_response = serde_json::json!({
                 "success": false,
                 "error": "Unauthorized: invalid admin token. JavaScript function management requires admin authentication."

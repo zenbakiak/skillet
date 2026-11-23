@@ -10,6 +10,110 @@ pub fn is_blank(v: &Value) -> bool {
     }
 }
 
+/// The type name used in error messages.
+#[allow(deprecated)] // `Value::Currency` is read as a Number (ADR-0033)
+pub(crate) fn type_name(v: &Value) -> &'static str {
+    match v {
+        Value::Number(_) | Value::Currency(_) => "number",
+        Value::Array(_) => "array",
+        Value::Boolean(_) => "boolean",
+        Value::String(_) => "string",
+        Value::Null => "null",
+        Value::DateTime(_) => "datetime",
+        Value::Json(_) => "json",
+    }
+}
+
+/// Text that reads as a number, Excel style (BL-066): decimal or scientific notation after
+/// trimming (`"-3"`, `" 4 "`, `"2.5"`, `"1e3"`). Empty text, other characters (`"inf"`,
+/// `"1,000"`) and values out of range are not numbers.
+pub(crate) fn numeric_text(s: &str) -> Option<f64> {
+    let t = s.trim();
+    let allowed = |b: u8| b.is_ascii_digit() || matches!(b, b'.' | b'e' | b'E' | b'+' | b'-');
+    if t.is_empty() || !t.bytes().all(allowed) {
+        return None;
+    }
+    t.parse::<f64>().ok().filter(|n| n.is_finite())
+}
+
+/// Excel's coercion of text and booleans to a number (BL-066): numeric text, `TRUE` = 1 and
+/// `FALSE` = 0. `Ok(None)` for every other type (the caller decides: NULL is 0 in the operators
+/// and stays an error in builtins). Text that is not a number is `#VALUE!`; `context` prefixes
+/// that message (`"ABS: "`).
+pub(crate) fn coerce_to_number(v: &Value, context: &str) -> Result<Option<f64>, Error> {
+    match v {
+        Value::String(s) => match numeric_text(s) {
+            Some(n) => Ok(Some(n)),
+            None => Err(not_a_number_text(s, context)),
+        },
+        Value::Boolean(b) => Ok(Some(if *b { 1.0 } else { 0.0 })),
+        _ => Ok(None),
+    }
+}
+
+/// `Cannot convert "abc" to a number (#VALUE!)`, with long text cut to 32 characters.
+#[cold]
+pub(crate) fn not_a_number_text(s: &str, context: &str) -> Error {
+    const SHOW: usize = 32;
+    let shown: String = s.chars().take(SHOW).collect();
+    let more = if s.chars().nth(SHOW).is_some() {
+        "…"
+    } else {
+        ""
+    };
+    let verb = if context.is_empty() {
+        "Cannot"
+    } else {
+        "cannot"
+    };
+    Error::new(
+        format!("{context}{verb} convert {shown:?}{more} to a number (#VALUE!)"),
+        None,
+    )
+}
+
+/// A numeric argument of a builtin: a number, or text or a boolean that Excel
+/// converts to one (see `coerce_to_number`). Anything else, or a missing
+/// argument, is an error (Excel `#VALUE!`), never a silent default.
+#[allow(deprecated)] // `Value::Currency` is read as a Number (ADR-0033)
+pub(crate) fn number_arg(name: &str, args: &[Value], i: usize, what: &str) -> Result<f64, Error> {
+    match args.get(i) {
+        Some(Value::Number(n) | Value::Currency(n)) => Ok(*n),
+        Some(other) => {
+            let context = if what == "number" {
+                format!("{name}: ")
+            } else {
+                format!("{name} {what}: ")
+            };
+            if let Some(n) = coerce_to_number(other, &context)? {
+                return Ok(n);
+            }
+            let got = type_name(other);
+            let message = if what == "number" {
+                format!("{name} expects number, got {got}")
+            } else {
+                format!("{name} {what} must be a number, got {got}")
+            };
+            Err(Error::new(message, None))
+        }
+        None => Err(Error::new(format!("{name} expects {what}"), None)),
+    }
+}
+
+/// An optional numeric argument: `default` when missing or NULL, an error for other types.
+pub(crate) fn optional_number_arg(
+    name: &str,
+    args: &[Value],
+    i: usize,
+    what: &str,
+    default: f64,
+) -> Result<f64, Error> {
+    match args.get(i) {
+        None | Some(Value::Null) => Ok(default),
+        Some(_) => number_arg(name, args, i, what),
+    }
+}
+
 pub fn clamp_index(len: usize, idx: isize) -> Option<usize> {
     if idx >= 0 {
         let i = idx as usize;
@@ -19,7 +123,7 @@ pub fn clamp_index(len: usize, idx: isize) -> Option<usize> {
             None
         }
     } else {
-        let neg = (-idx) as usize; // idx is negative
+        let neg = idx.unsigned_abs(); // `-idx` overflows for isize::MIN (`[1][-1e300]`)
         if neg <= len {
             Some(len - neg)
         } else {
@@ -37,6 +141,15 @@ pub fn index_array(items: Vec<Value>, idx: isize) -> Result<Value, Error> {
 
 pub fn slice_array(
     items: Vec<Value>,
+    start: Option<Value>,
+    end: Option<Value>,
+) -> Result<Value, Error> {
+    slice_items(&items, start, end)
+}
+
+/// `slice_array` over borrowed items (the evaluator slices variables without copying them).
+pub(crate) fn slice_items(
+    items: &[Value],
     start: Option<Value>,
     end: Option<Value>,
 ) -> Result<Value, Error> {
@@ -61,10 +174,12 @@ pub fn slice_array(
     Ok(Value::Array(items[s_idx..e_idx].to_vec()))
 }
 
+#[allow(deprecated)] // `Value::Currency` is read as a Number (ADR-0033)
 pub fn values_equal(a: &Value, b: &Value) -> bool {
+    if let (Some(x), Some(y)) = (a.as_number(), b.as_number()) {
+        return x == y;
+    }
     match (a, b) {
-        (Value::Number(x), Value::Number(y)) => x == y,
-        (Value::Currency(x), Value::Currency(y)) => x == y,
         (Value::Boolean(x), Value::Boolean(y)) => x == y,
         (Value::String(x), Value::String(y)) => x == y,
         (Value::DateTime(x), Value::DateTime(y)) => x == y,
@@ -76,4 +191,20 @@ pub fn values_equal(a: &Value, b: &Value) -> bool {
         }
         _ => false,
     }
+}
+
+/// Sorts numbers ascending (`descending` flips the comparator), or returns an error if any is
+/// NaN. NaN has no order, so sorting it either panics or gives an arbitrary result. For NaN-free
+/// data the comparator is `partial_cmp` as before, so equal values (`-0.0`, `0.0`) keep their order.
+pub(crate) fn sort_numbers(nums: &mut [f64], descending: bool) -> Result<(), Error> {
+    if nums.iter().any(|n| n.is_nan()) {
+        return Err(Error::new("Cannot sort NaN values", None));
+    }
+    let cmp = |a: &f64, b: &f64| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal);
+    if descending {
+        nums.sort_by(|a, b| cmp(b, a));
+    } else {
+        nums.sort_by(cmp);
+    }
+    Ok(())
 }

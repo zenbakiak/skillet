@@ -1,21 +1,42 @@
 use crate::ast::{BinaryOp, Expr, TypeName, UnaryOp};
 use crate::error::Error;
 use crate::lexer::{Lexer, Token};
+use crate::limits::{nesting_error, MAX_NESTING_DEPTH};
 use std::rc::Rc;
+
+/// A parsed sub-expression and the depth of its AST (leaves are 0, a node is one more
+/// than its deepest child). Tracking depth while building keeps every accepted AST within
+/// `MAX_NESTING_DEPTH`, so evaluation and `Drop` of it can't exhaust the stack (BL-017).
+type Parsed = Result<(Expr, usize), Error>;
 
 pub struct Parser<'a> {
     lexer: Lexer<'a>,
     lookahead: Token,
     lookahead2: Option<Token>,
     look_pos: usize,
+    /// Current recursion level of `parse_expr` / unary operands (bounds the parser's stack;
+    /// parentheses add recursion without adding AST nodes).
+    nesting: usize,
+    /// A lexer error on the first token, reported by `parse` (`new` cannot fail).
+    first_error: Option<Error>,
 }
 
 impl<'a> Parser<'a> {
     pub fn new(input: &'a str) -> Self {
         let mut lexer = Lexer::new(input);
-        let lookahead = lexer.next_token().unwrap_or(Token::Eof);
+        let (lookahead, first_error) = match lexer.next_token() {
+            Ok(tok) => (tok, None),
+            Err(e) => (Token::Eof, Some(e)),
+        };
         let look_pos = lexer.last_start();
-        Self { lexer, lookahead, lookahead2: None, look_pos }
+        Self {
+            lexer,
+            lookahead,
+            lookahead2: None,
+            look_pos,
+            nesting: 0,
+            first_error,
+        }
     }
 
     fn bump(&mut self) -> Result<(), Error> {
@@ -27,7 +48,7 @@ impl<'a> Parser<'a> {
         self.look_pos = self.lexer.last_start();
         Ok(())
     }
-    
+
     fn peek_ahead2(&mut self) -> Result<(Token, Token), Error> {
         // Use a temporary lexer clone for deeper lookahead since we need 3 tokens
         let mut temp_lexer = self.lexer.clone();
@@ -45,496 +66,824 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn err_here<T>(&self, msg: &str) -> Result<T, Error> { Err(Error::new(msg, Some(self.look_pos))) }
+    fn err_here<T>(&self, msg: &str) -> Result<T, Error> {
+        Err(Error::new(msg, Some(self.look_pos)))
+    }
+
+    /// Depth of a node whose deepest child has depth `max_child` (`None`: no children).
+    fn node_depth(&self, max_child: Option<usize>) -> Result<usize, Error> {
+        match max_child {
+            None => Ok(0),
+            Some(d) if d >= MAX_NESTING_DEPTH => Err(nesting_error(Some(self.look_pos))),
+            Some(d) => Ok(d + 1),
+        }
+    }
+
+    /// Go one recursion level deeper, failing once `MAX_NESTING_DEPTH` is exceeded. The
+    /// caller decrements `nesting` when it returns.
+    fn enter(&mut self) -> Result<(), Error> {
+        if self.nesting >= MAX_NESTING_DEPTH {
+            return Err(nesting_error(Some(self.look_pos)));
+        }
+        self.nesting += 1;
+        Ok(())
+    }
 
     pub fn parse(&mut self) -> Result<Expr, Error> {
+        if let Some(e) = self.first_error.take() {
+            return Err(e);
+        }
         let mut exprs = Vec::new();
-        
-        // Parse first expression
-        exprs.push(self.parse_expr()?);
-        
+        let mut max_depth = 0;
+
+        // Parse first expression (top level: not counted as nesting)
+        let (first, d) = self.parse_assignment()?;
+        exprs.push(first);
+        max_depth = max_depth.max(d);
+
         // Parse semicolon-separated expressions
         while matches!(self.lookahead, Token::Semicolon) {
             self.bump()?; // consume ';'
             if matches!(self.lookahead, Token::Eof) {
                 break; // Allow trailing semicolon
             }
-            exprs.push(self.parse_expr()?);
+            let (e, d) = self.parse_assignment()?;
+            exprs.push(e);
+            max_depth = max_depth.max(d);
         }
-        
+
+        // Everything must be consumed: `1 2` is an error, not `1` (BL-069).
+        if !matches!(self.lookahead, Token::Eof) {
+            return self.err_here("Unexpected token after end of expression");
+        }
+
         // If only one expression, return it directly; otherwise wrap in sequence
         if exprs.len() == 1 {
-            exprs.into_iter().next()
+            exprs
+                .into_iter()
+                .next()
                 .ok_or_else(|| Error::new("Expected expression but none found", None))
         } else {
+            self.node_depth(Some(max_depth))?;
             Ok(Expr::Sequence(exprs))
         }
     }
 
-    fn parse_expr(&mut self) -> Result<Expr, Error> {
-        self.parse_assignment()
+    // Stack use (BL-029): every nesting level of the input runs the functions on the path
+    // parse_expr -> parse_assignment -> parse_ternary -> parse_binary -> parse_unary ->
+    // parse_postfix -> parse_atom -> (parse_paren | literal | call) -> parse_expr. Keep those
+    // frames small: the branches a level does not always take live in `#[inline(never)]`
+    // helpers, so their locals are not reserved on every level (debug builds give every
+    // local its own stack slot).
+
+    /// A nested expression (inside parentheses, brackets, arguments, ternary branches).
+    fn parse_expr(&mut self) -> Parsed {
+        self.enter()?;
+        let result = self.parse_assignment();
+        self.nesting -= 1;
+        result
     }
-    
-    fn parse_assignment(&mut self) -> Result<Expr, Error> {
+
+    fn parse_assignment(&mut self) -> Parsed {
         // Check for assignment pattern: :variable_name := expression
-        if matches!(self.lookahead, Token::Colon) {
-            // Look ahead to see if this is an assignment - use efficient 2-token lookahead
-            let (next1, next2) = self.peek_ahead2()?;
-            
-            if matches!((next1, next2), (Token::Identifier(_), Token::ColonEquals)) {
-                // This is an assignment
-                self.bump()?; // consume ':'
-                if let Token::Identifier(var_name) = &self.lookahead.clone() {
-                    let var_name = var_name.clone();
-                    self.bump()?; // consume identifier
-                    if matches!(self.lookahead, Token::ColonEquals) {
-                        self.bump()?; // consume ':='
-                        let value = self.parse_ternary()?;
-                        return Ok(Expr::Assignment { variable: var_name, value: Rc::new(value) });
-                    }
-                }
-                return self.err_here("Invalid assignment syntax");
-            }
+        if matches!(self.lookahead, Token::Colon) && self.at_assignment()? {
+            return self.parse_assignment_tail();
         }
-        
         self.parse_ternary()
     }
 
-    fn parse_ternary(&mut self) -> Result<Expr, Error> {
-        let cond = self.parse_or()?;
+    /// True when the tokens after the current `:` are `identifier :=`.
+    #[inline(never)]
+    fn at_assignment(&mut self) -> Result<bool, Error> {
+        // Look ahead to see if this is an assignment - use efficient 2-token lookahead
+        let (next1, next2) = self.peek_ahead2()?;
+        Ok(matches!(
+            (next1, next2),
+            (Token::Identifier(_), Token::ColonEquals)
+        ))
+    }
+
+    /// `:name := value`, starting at the `:`.
+    #[inline(never)]
+    fn parse_assignment_tail(&mut self) -> Parsed {
+        self.bump()?; // consume ':'
+        if let Token::Identifier(var_name) = &self.lookahead.clone() {
+            let var_name = var_name.clone();
+            self.bump()?; // consume identifier
+            if matches!(self.lookahead, Token::ColonEquals) {
+                self.bump()?; // consume ':='
+                let (value, d) = self.parse_ternary()?;
+                let depth = self.node_depth(Some(d))?;
+                return Ok((
+                    Expr::Assignment {
+                        variable: var_name,
+                        value: Rc::new(value),
+                    },
+                    depth,
+                ));
+            }
+        }
+        self.err_here("Invalid assignment syntax")
+    }
+
+    fn parse_ternary(&mut self) -> Parsed {
+        let cond = self.parse_binary(0)?;
         if let Token::QMark = self.lookahead {
-            self.bump()?; // '?'
-            let then_e = self.parse_expr()?;
-            match self.lookahead {
-                Token::Colon => {
-                    self.bump()?;
-                    let else_e = self.parse_expr()?;
-                    // Represent ternary as IF function for now: IF(cond, then, else) but we don't have IF.
-                    // We'll encode as Binary with Or? Instead, we can't, so we return a function call node.
-                    // Use a special function name handled in runtime: __TERNARY__.
-                    Ok(Expr::FunctionCall { name: "__TERNARY__".to_string(), args: vec![cond, then_e, else_e] })
-                }
-                _ => self.err_here("Expected ':' in ternary"),
-            }
-        } else {
-            Ok(cond)
+            return self.parse_ternary_tail(cond);
         }
+        Ok(cond)
     }
 
-    fn parse_or(&mut self) -> Result<Expr, Error> {
-        let mut node = self.parse_and()?;
-        loop {
-            match self.lookahead {
-                Token::Or | Token::OrOr => {
-                    self.bump()?;
-                    let rhs = self.parse_and()?;
-                    node = Expr::Binary(Rc::new(node), BinaryOp::Or, Rc::new(rhs));
-                }
-                _ => break,
-            }
-        }
-        Ok(node)
-    }
-
-    fn parse_and(&mut self) -> Result<Expr, Error> {
-        let mut node = self.parse_equality()?;
-        loop {
-            match self.lookahead {
-                Token::And | Token::AndAnd => {
-                    self.bump()?;
-                    let rhs = self.parse_equality()?;
-                    node = Expr::Binary(Rc::new(node), BinaryOp::And, Rc::new(rhs));
-                }
-                _ => break,
-            }
-        }
-        Ok(node)
-    }
-
-    fn parse_equality(&mut self) -> Result<Expr, Error> {
-        let mut node = self.parse_relational()?;
-        loop {
-            match self.lookahead {
-                Token::EqEq => { self.bump()?; let rhs = self.parse_relational()?; node = Expr::Binary(Rc::new(node), BinaryOp::Eq, Rc::new(rhs)); }
-                Token::NotEq => { self.bump()?; let rhs = self.parse_relational()?; node = Expr::Binary(Rc::new(node), BinaryOp::Ne, Rc::new(rhs)); }
-                _ => break,
-            }
-        }
-        Ok(node)
-    }
-
-    fn parse_relational(&mut self) -> Result<Expr, Error> {
-        let mut node = self.parse_additive()?;
-        loop {
-            match self.lookahead {
-                Token::Greater => { self.bump()?; let rhs = self.parse_additive()?; node = Expr::Binary(Rc::new(node), BinaryOp::Gt, Rc::new(rhs)); }
-                Token::Less => { self.bump()?; let rhs = self.parse_additive()?; node = Expr::Binary(Rc::new(node), BinaryOp::Lt, Rc::new(rhs)); }
-                Token::Ge => { self.bump()?; let rhs = self.parse_additive()?; node = Expr::Binary(Rc::new(node), BinaryOp::Ge, Rc::new(rhs)); }
-                Token::Le => { self.bump()?; let rhs = self.parse_additive()?; node = Expr::Binary(Rc::new(node), BinaryOp::Le, Rc::new(rhs)); }
-                _ => break,
-            }
-        }
-        Ok(node)
-    }
-
-    fn parse_additive(&mut self) -> Result<Expr, Error> {
-        let mut node = self.parse_multiplicative()?;
-        loop {
-            match self.lookahead {
-                Token::Plus => {
-                    self.bump()?;
-                    let rhs = self.parse_multiplicative()?;
-                    node = Expr::Binary(Rc::new(node), BinaryOp::Add, Rc::new(rhs));
-                }
-                Token::Minus => {
-                    self.bump()?;
-                    let rhs = self.parse_multiplicative()?;
-                    node = Expr::Binary(Rc::new(node), BinaryOp::Sub, Rc::new(rhs));
-                }
-                _ => break,
-            }
-        }
-        Ok(node)
-    }
-
-    fn parse_multiplicative(&mut self) -> Result<Expr, Error> {
-        let mut node = self.parse_unary()?;
-        loop {
-            match self.lookahead {
-                Token::Star => {
-                    self.bump()?;
-                    let rhs = self.parse_unary()?;
-                    node = Expr::Binary(Rc::new(node), BinaryOp::Mul, Rc::new(rhs));
-                }
-                Token::Slash => {
-                    self.bump()?;
-                    let rhs = self.parse_unary()?;
-                    node = Expr::Binary(Rc::new(node), BinaryOp::Div, Rc::new(rhs));
-                }
-                Token::Percent => {
-                    self.bump()?;
-                    let rhs = self.parse_unary()?;
-                    node = Expr::Binary(Rc::new(node), BinaryOp::Mod, Rc::new(rhs));
-                }
-                _ => break,
-            }
-        }
-        Ok(node)
-    }
-
-    fn parse_power(&mut self) -> Result<Expr, Error> {
-        // Right associative with higher precedence than unary
-        let left = self.parse_cast()?;
-        if let Token::Caret = self.lookahead {
-            self.bump()?;
-            let right = self.parse_unary()?; // exponent can be unary like -2
-            Ok(Expr::Binary(Rc::new(left), BinaryOp::Pow, Rc::new(right)))
-        } else {
-            Ok(left)
-        }
-    }
-
-    fn parse_unary(&mut self) -> Result<Expr, Error> {
+    /// `? then : else` after an already parsed condition.
+    #[inline(never)]
+    fn parse_ternary_tail(&mut self, (cond, dc): (Expr, usize)) -> Parsed {
+        self.bump()?; // '?'
+        let (then_e, dt) = self.parse_expr()?;
         match self.lookahead {
-            Token::Plus => {
+            Token::Colon => {
                 self.bump()?;
-                let expr = self.parse_unary()?;
-                Ok(Expr::Unary(UnaryOp::Plus, Rc::new(expr)))
+                let (else_e, de) = self.parse_expr()?;
+                let depth = self.node_depth(Some(dc.max(dt).max(de)))?;
+                // Ternary is encoded as a special function call handled in the runtime.
+                Ok((
+                    Expr::FunctionCall {
+                        name: "__TERNARY__".to_string(),
+                        args: vec![cond, then_e, else_e],
+                    },
+                    depth,
+                ))
             }
-            Token::Minus => {
-                self.bump()?;
-                let expr = self.parse_unary()?;
-                Ok(Expr::Unary(UnaryOp::Minus, Rc::new(expr)))
-            }
-            Token::Bang => {
-                self.bump()?;
-                let expr = self.parse_unary()?;
-                Ok(Expr::Unary(UnaryOp::Not, Rc::new(expr)))
-            }
-            _ => self.parse_power(),
+            _ => self.err_here("Expected ':' in ternary"),
         }
     }
 
-    fn parse_atom(&mut self) -> Result<Expr, Error> {
+    /// Left-associative binary operators by precedence climbing, loosest first:
+    /// `or` (1), `and` (2), prefix `NOT` (see `parse_not_keyword`), `== !=` (3),
+    /// `> < >= <=` (4), `&` (5), `+ -` (6), `* / %` (7).
+    /// Operands are `unary`, then postfix `%` and `^` (see `parse_power_rest`), so the full
+    /// Excel order is: negation > `%` > `^` > `* /` > `+ -` > `&` > comparisons (D-10).
+    /// Builds the same tree, in the same order, as one function per level would, but
+    /// with one frame instead of two per level on the path to an operand. Each operator
+    /// wraps the tree one level deeper, so chain length counts against the depth limit.
+    fn parse_binary(&mut self, min_prec: u8) -> Parsed {
+        // `NOT` starts an operand of `AND`/`OR` (the right one of `AND` is parsed at
+        // `AND_PREC + 1`), never an operand of a comparison or arithmetic.
+        let (mut node, mut depth) = if min_prec <= AND_PREC + 1 && self.at_not_keyword() {
+            self.parse_not_keyword()?
+        } else {
+            let mut parsed = self.parse_unary()?;
+            if matches!(self.lookahead, Token::Percent | Token::Caret) {
+                parsed = self.parse_power_rest(parsed)?;
+            }
+            parsed
+        };
+        while let Some((op, prec)) = binary_op(&self.lookahead) {
+            if prec < min_prec {
+                break;
+            }
+            self.bump()?;
+            let (rhs, dr) = self.parse_binary(prec + 1)?;
+            depth = self.node_depth(Some(depth.max(dr)))?;
+            node = Expr::Binary(Rc::new(node), op, Rc::new(rhs));
+        }
+        Ok((node, depth))
+    }
+
+    /// Prefix `-`, `+` and `!` bind tightest (Excel: `-2^2` is 4).
+    fn parse_unary(&mut self) -> Parsed {
+        let op = match self.lookahead {
+            Token::Plus => UnaryOp::Plus,
+            Token::Minus => UnaryOp::Minus,
+            Token::Bang => UnaryOp::Not,
+            _ => return self.parse_postfix(),
+        };
+        self.bump()?;
+        self.enter()?;
+        let operand = self.parse_unary();
+        self.nesting -= 1;
+        let (expr, d) = operand?;
+        let depth = self.node_depth(Some(d))?;
+        Ok((Expr::Unary(op, Rc::new(expr)), depth))
+    }
+
+    /// Is the lookahead the `NOT` keyword: a `NOT` name (any case) not followed directly by `(`
+    /// (`NOT(x)` with no space is the builtin call)?
+    fn at_not_keyword(&self) -> bool {
+        matches!(&self.lookahead, Token::Identifier(name) if name.eq_ignore_ascii_case("NOT"))
+            && !self.call_follows()
+    }
+
+    /// With a name as the lookahead: does `(` follow it directly, with no space?
+    #[inline(never)]
+    fn call_follows(&self) -> bool {
+        let end = self.lexer.last_end();
+        let mut next = self.lexer.clone();
+        matches!(next.next_token(), Ok(Token::LParen)) && next.last_start() == end
+    }
+
+    /// `NOT operand` (ADR-0029): the `NOT` builtin applied to the operand, so it gives the same
+    /// result as `NOT(operand)`. As in VB and SQL it binds looser than the comparisons and
+    /// tighter than `AND`: the operand is everything up to the next `AND`/`OR` (or `&&`/`||`),
+    /// so `NOT :x > 1` is `NOT (:x > 1)`. It starts an operand only where an `AND` operand
+    /// can start; elsewhere (`1 + NOT x`) it needs parentheses.
+    #[inline(never)]
+    fn parse_not_keyword(&mut self) -> Parsed {
+        self.bump()?; // 'NOT'
+        self.enter()?;
+        let operand = self.parse_binary(AND_PREC + 1);
+        self.nesting -= 1;
+        let (expr, d) = operand?;
+        let depth = self.node_depth(Some(d))?;
+        Ok((
+            Expr::FunctionCall {
+                name: "NOT".to_string(),
+                args: vec![expr],
+            },
+            depth,
+        ))
+    }
+
+    /// `atom link* cast*`: the postfix chain, then zero or more casts (ADR-0031 A1).
+    fn parse_postfix(&mut self) -> Parsed {
+        let atom = self.parse_atom()?;
+        match self.lookahead {
+            Token::Dot | Token::SafeNavigation | Token::LBracket | Token::DoubleColon => {
+                self.parse_postfix_rest(atom)
+            }
+            _ => Ok(atom),
+        }
+    }
+
+    /// The optional parts of `parse_postfix` after the atom.
+    #[inline(never)]
+    fn parse_postfix_rest(&mut self, mut parsed: (Expr, usize)) -> Parsed {
+        if matches!(
+            self.lookahead,
+            Token::Dot | Token::SafeNavigation | Token::LBracket
+        ) {
+            parsed = self.parse_postfix_chain(parsed)?;
+        }
+        while let Token::DoubleColon = self.lookahead {
+            parsed = self.parse_cast_tail(parsed)?;
+        }
+        Ok(parsed)
+    }
+
+    /// After a unary operand: postfix percent (`50%` is `50 / 100`), then a left-associative
+    /// `^` chain whose operands are unary operands with their own percent suffix
+    /// (`2^3^2` is 64, `2^50%` is `2^0.5`).
+    #[inline(never)]
+    fn parse_power_rest(&mut self, parsed: (Expr, usize)) -> Parsed {
+        let (mut node, mut depth) = self.parse_percent_suffix(parsed)?;
+        while let Token::Caret = self.lookahead {
+            self.bump()?;
+            self.enter()?;
+            let exponent = self.parse_unary();
+            self.nesting -= 1;
+            let (right, dr) = self.parse_percent_suffix(exponent?)?;
+            depth = self.node_depth(Some(depth.max(dr)))?;
+            node = Expr::Binary(Rc::new(node), BinaryOp::Pow, Rc::new(right));
+        }
+        Ok((node, depth))
+    }
+
+    /// Zero or more postfix `%` after an operand. A `%` directly followed by something that
+    /// starts an operand stays the binary modulo operator (`10 % 3`, `:a % :b`, `10 % (3)`);
+    /// before anything else, including `+` and `-`, it is the percent suffix (`10%-3` is -2.9,
+    /// BL-066).
+    fn parse_percent_suffix(&mut self, (mut node, mut depth): (Expr, usize)) -> Parsed {
+        while matches!(self.lookahead, Token::Percent) && !self.percent_is_modulo() {
+            self.bump()?;
+            depth = self.node_depth(Some(depth))?;
+            node = Expr::Binary(Rc::new(node), BinaryOp::Div, Rc::new(Expr::Number(100.0)));
+        }
+        Ok((node, depth))
+    }
+
+    /// With `%` as the lookahead: is the next token the start of a right operand? A `:` only
+    /// counts when a variable name follows it directly (`:x`), so `c ? 10% : 2` is a percent.
+    fn percent_is_modulo(&self) -> bool {
+        let mut next = self.lexer.clone();
+        match next.next_token() {
+            Ok(Token::Colon) => {
+                let colon_end = next.last_end();
+                matches!(next.next_token(), Ok(Token::Identifier(_)))
+                    && next.last_start() == colon_end
+            }
+            Ok(tok) => matches!(
+                tok,
+                Token::Number(_)
+                    | Token::String(_)
+                    | Token::Identifier(_)
+                    | Token::True
+                    | Token::False
+                    | Token::Null
+                    | Token::LParen
+                    | Token::LBracket
+                    | Token::LBrace
+                    | Token::Bang
+            ),
+            Err(_) => false,
+        }
+    }
+
+    /// Comma-separated arguments after an already consumed `(`, through the closing `)`.
+    /// Returns the arguments and the depth of the deepest one.
+    fn parse_call_args(&mut self, err: &str) -> Result<(Vec<Expr>, Option<usize>), Error> {
+        let mut args = Vec::new();
+        let mut max_child = None;
+        if !matches!(self.lookahead, Token::RParen) {
+            loop {
+                let (arg, d) = self.parse_element()?;
+                args.push(arg);
+                max_child = max_child.max(Some(d));
+                match self.lookahead {
+                    Token::Comma => {
+                        self.bump()?;
+                    }
+                    Token::RParen => break,
+                    _ => return self.err_here(err),
+                }
+            }
+        }
+        self.bump()?; // consume ')'
+        Ok((args, max_child))
+    }
+
+    /// One argument-list or array-literal element: `'...' expr | expr`.
+    fn parse_element(&mut self) -> Parsed {
+        if let Token::Ellipsis = self.lookahead {
+            self.parse_spread()
+        } else {
+            self.parse_expr()
+        }
+    }
+
+    /// `...expr` in an argument list or an array literal (ADR-0005 amendment 1).
+    #[inline(never)]
+    fn parse_spread(&mut self) -> Parsed {
+        self.bump()?;
+        let (inner, d) = self.parse_expr()?;
+        Ok((Expr::Spread(Rc::new(inner)), self.node_depth(Some(d))?))
+    }
+
+    fn parse_atom(&mut self) -> Parsed {
+        match self.lookahead {
+            Token::LParen => self.parse_paren(),
+            Token::LBracket => self.parse_array_literal(),
+            Token::LBrace => self.parse_object_literal(),
+            Token::Identifier(_) => self.parse_function_call(),
+            _ => self.parse_leaf(),
+        }
+    }
+
+    /// `( expr )`
+    fn parse_paren(&mut self) -> Parsed {
+        self.bump()?;
+        let parsed = self.parse_expr()?;
+        match self.lookahead {
+            Token::RParen => {
+                self.bump()?;
+                Ok(parsed)
+            }
+            _ => self.err_here("Expected ')'"),
+        }
+    }
+
+    /// Function call: `IDENT ('.' IDENT)* '(' args? ')'`. The dotted form is Excel's
+    /// (`STDEV.P(`); the parts must touch (no spaces around the dots). A bare identifier is
+    /// only ever a function name (variables start with `:`), so this cannot clash with
+    /// `:var.method()`.
+    #[inline(never)]
+    fn parse_function_call(&mut self) -> Parsed {
+        let mut name = match &self.lookahead {
+            Token::Identifier(name) => name.to_uppercase(),
+            _ => return self.parse_leaf(),
+        };
+        let mut end = self.lexer.last_end();
+        self.bump()?; // consume ident
+        while matches!(self.lookahead, Token::Dot) && self.look_pos == end {
+            let mut next = self.lexer.clone();
+            match next.next_token()? {
+                Token::Identifier(part) if next.last_start() == end + 1 => {
+                    name.push('.');
+                    name.push_str(&part.to_uppercase());
+                    end = next.last_end();
+                    self.bump()?; // '.'
+                    self.bump()?; // part
+                }
+                _ => break,
+            }
+        }
+        match self.lookahead {
+            Token::LParen => {
+                self.bump()?; // '('
+                let (args, max_child) =
+                    self.parse_call_args("Expected ',' or ')' in argument list")?;
+                let depth = self.node_depth(max_child)?;
+                Ok((Expr::FunctionCall { name, args }, depth))
+            }
+            _ if name == "NOT" => {
+                self.err_here("NOT binds looser than comparisons here; write (NOT x)")
+            }
+            _ => self.err_here("Unexpected identifier (expected function call)"),
+        }
+    }
+
+    /// Atoms that do not nest: literals and variables (and the unexpected-token error).
+    #[inline(never)]
+    fn parse_leaf(&mut self) -> Parsed {
         match self.lookahead.clone() {
             Token::Number(n) => {
                 self.bump()?;
-                Ok(Expr::Number(n))
+                Ok((Expr::Number(n), 0))
             }
-            Token::LParen => {
+            Token::String(s) => {
                 self.bump()?;
-                let expr = self.parse_expr()?;
-                match self.lookahead {
-                    Token::RParen => {
-                        self.bump()?;
-                        Ok(expr)
-                    }
-                    _ => self.err_here("Expected ')'"),
-                }
+                Ok((Expr::StringLit(s), 0))
             }
-            Token::String(s) => { self.bump()?; Ok(Expr::StringLit(s)) }
-            Token::Null => { self.bump()?; Ok(Expr::Null) }
+            Token::Null => {
+                self.bump()?;
+                Ok((Expr::Null, 0))
+            }
             Token::Colon => {
                 // Variable: ':' identifier (let postfix handle property chains and method calls)
                 self.bump()?; // consume ':'
                 match self.lookahead.clone() {
                     Token::Identifier(name) => {
                         self.bump()?;
-                        Ok(Expr::Variable(name))
+                        Ok((Expr::Variable(name), 0))
                     }
                     _ => self.err_here("Expected variable name after ':'"),
                 }
             }
-            Token::True => { self.bump()?; Ok(Expr::FunctionCall { name: "__CONST_TRUE__".to_string(), args: vec![] }) }
-            Token::False => { self.bump()?; Ok(Expr::FunctionCall { name: "__CONST_FALSE__".to_string(), args: vec![] }) }
-            Token::Identifier(name) => {
-                // Function call: IDENT '(' args? ')'
-                let func_name = name;
-                self.bump()?; // consume ident
-                match self.lookahead {
-                    Token::LParen => {
-                        self.bump()?; // '('
-                        let mut args = Vec::new();
-                        if let Token::RParen = self.lookahead {
-                            // empty args
-                        } else {
-                            loop {
-                                let arg = if let Token::Ellipsis = self.lookahead { self.bump()?; Expr::Spread(Rc::new(self.parse_expr()?)) } else { self.parse_expr()? };
-                                args.push(arg);
-                                match self.lookahead {
-                                    Token::Comma => { self.bump()?; }
-                                    Token::RParen => break,
-                                    _ => return self.err_here("Expected ',' or ')' in argument list"),
-                                }
-                            }
-                        }
-                        self.bump()?; // consume ')'
-                        let final_name = func_name.to_uppercase();
-                        Ok(Expr::FunctionCall { name: final_name, args })
-                    }
-                    _ => self.err_here("Unexpected identifier (expected function call)"),
-                }
+            Token::True => {
+                self.bump()?;
+                Ok((
+                    Expr::FunctionCall {
+                        name: "__CONST_TRUE__".to_string(),
+                        args: vec![],
+                    },
+                    0,
+                ))
             }
-            Token::LBracket => {
-                // Array literal: [ expr (, expr)* ]
-                self.bump()?; // consume '['
-                let mut items = Vec::new();
-                if let Token::RBracket = self.lookahead {
-                    // empty
-                } else {
-                    loop {
-                        let item = self.parse_expr()?;
-                        items.push(item);
-                        match self.lookahead {
-                            Token::Comma => { self.bump()?; }
-                            Token::RBracket => break,
-                            _ => return self.err_here("Expected ',' or ']' in array"),
-                        }
-                    }
-                }
-                self.bump()?; // consume ']'
-                Ok(Expr::Array(items))
+            Token::False => {
+                self.bump()?;
+                Ok((
+                    Expr::FunctionCall {
+                        name: "__CONST_FALSE__".to_string(),
+                        args: vec![],
+                    },
+                    0,
+                ))
             }
-            Token::LBrace => {
-                // Object literal: { key: value, ... }
-                self.bump()?; // consume '{'
-                let mut pairs = Vec::new();
-                if let Token::RBrace = self.lookahead {
-                    // empty object
-                } else {
-                    loop {
-                        // Parse key (can be identifier or string)
-                        let key = match self.lookahead.clone() {
-                            Token::Identifier(s) => {
-                                self.bump()?;
-                                s
-                            }
-                            Token::String(s) => {
-                                self.bump()?;
-                                s
-                            }
-                            _ => return self.err_here("Expected identifier or string key in object literal"),
-                        };
-                        
-                        // Expect colon
-                        if matches!(self.lookahead, Token::Colon) {
-                            self.bump()?; // consume ':'
-                        } else {
-                            return self.err_here("Expected ':' after object key");
-                        }
-                        
-                        // Parse value
-                        let value = self.parse_expr()?;
-                        pairs.push((key, value));
-                        
-                        match self.lookahead {
-                            Token::Comma => { 
-                                self.bump()?; 
-                                // Allow trailing comma
-                                if matches!(self.lookahead, Token::RBrace) {
-                                    break;
-                                }
-                            }
-                            Token::RBrace => break,
-                            _ => return self.err_here("Expected ',' or '}' in object literal"),
-                        }
-                    }
-                }
-                self.bump()?; // consume '}'
-                Ok(Expr::ObjectLiteral(pairs))
-            }
-            other => Err(Error::new(format!("Unexpected token: {:?}", other), Some(self.look_pos))),
+            other => Err(Error::new(
+                format!("Unexpected token: {:?}", other),
+                Some(self.look_pos),
+            )),
         }
     }
 
-    fn parse_cast(&mut self) -> Result<Expr, Error> {
-        let mut node = self.parse_postfix()?;
-        if let Token::DoubleColon = self.lookahead {
-            self.bump()?; // '::'
-            let tname = match self.lookahead.clone() {
-                Token::Identifier(s) => {
-                    self.bump()?;
-                    match s.to_lowercase().as_str() {
-                        "integer" | "int" => TypeName::Integer,
-                        "float" | "number" => TypeName::Float,
-                        "string" => TypeName::String,
-                        "boolean" | "bool" => TypeName::Boolean,
-                        "array" => TypeName::Array,
-                        "currency" => TypeName::Currency,
-                        "datetime" | "date" => TypeName::DateTime,
-                        "json" => TypeName::Json,
-                        _ => return Err(Error::new("Unknown cast type", None)),
+    /// Array literal: `[ expr (, expr)* ]`
+    fn parse_array_literal(&mut self) -> Parsed {
+        self.bump()?; // consume '['
+        let mut items = Vec::new();
+        let mut max_child = None;
+        if !matches!(self.lookahead, Token::RBracket) {
+            loop {
+                let (item, d) = self.parse_element()?;
+                items.push(item);
+                max_child = max_child.max(Some(d));
+                match self.lookahead {
+                    Token::Comma => {
+                        self.bump()?;
                     }
+                    Token::RBracket => break,
+                    _ => return self.err_here("Expected ',' or ']' in array"),
                 }
-                _ => return Err(Error::new("Expected type name after '::'", None)),
-            };
-            node = Expr::TypeCast { expr: Rc::new(node), ty: tname };
+            }
         }
-        Ok(node)
+        self.bump()?; // consume ']'
+        let depth = self.node_depth(max_child)?;
+        Ok((Expr::Array(items), depth))
     }
 
-    fn parse_postfix(&mut self) -> Result<Expr, Error> {
-        let mut node = self.parse_atom()?;
-        loop {
-            match self.lookahead {
-                Token::Dot => {
-                    self.bump()?; // '.'
-                    let name = match self.lookahead.clone() {
-                        Token::Identifier(s) => { self.bump()?; s }
-                        _ => return self.err_here("Expected property or method name after '.'"),
-                    };
-                    // Predicate style: name?
-                    if let Token::QMark = self.lookahead {
-                        self.bump()?; // consume '?'
-                        node = Expr::MethodCall { target: Rc::new(node), name: name.to_lowercase(), args: vec![], predicate: true };
-                        continue;
+    /// Object literal: `{ key: value, ... }`
+    fn parse_object_literal(&mut self) -> Parsed {
+        self.bump()?; // consume '{'
+        let mut pairs = Vec::new();
+        let mut max_child = None;
+        if !matches!(self.lookahead, Token::RBrace) {
+            loop {
+                // Parse key (can be identifier or string)
+                let key = match self.lookahead.clone() {
+                    Token::Identifier(s) | Token::String(s) => {
+                        self.bump()?;
+                        s
                     }
-                    // Check for method call: '(' args ')'
-                    match self.lookahead {
-                        Token::LParen => {
-                            self.bump()?; // '('
-                            let mut args = Vec::new();
-                            if let Token::RParen = self.lookahead {
-                                // empty
-                            } else {
-                                loop {
-                                    let arg = if let Token::Ellipsis = self.lookahead { self.bump()?; Expr::Spread(Rc::new(self.parse_expr()?)) } else { self.parse_expr()? };
-                                    args.push(arg);
-                                    match self.lookahead {
-                                        Token::Comma => { self.bump()?; }
-                                        Token::RParen => break,
-                                        _ => return self.err_here("Expected ',' or ')' in method args"),
-                                    }
-                                }
-                            }
-                            self.bump()?; // ')'
-                            node = Expr::MethodCall { target: Rc::new(node), name: name.to_lowercase(), args, predicate: false };
-                        }
-                        _ => {
-                            // No parentheses, treat as property access
-                            node = Expr::PropertyAccess { target: Rc::new(node), property: name };
-                        }
-                    }
-                }
-                Token::SafeNavigation => {
-                    self.bump()?; // '&.'
-                    let name = match self.lookahead.clone() {
-                        Token::Identifier(s) => { self.bump()?; s }
-                        _ => return self.err_here("Expected property name after '&.'"),
-                    };
-                    // Check for method call after safe navigation
-                    match self.lookahead {
-                        Token::LParen => {
-                            // Safe method call
-                            self.bump()?; // '('
-                            let mut args = Vec::new();
-                            if let Token::RParen = self.lookahead {
-                                // empty args
-                            } else {
-                                loop {
-                                    let arg = if let Token::Ellipsis = self.lookahead { 
-                                        self.bump()?; 
-                                        Expr::Spread(Rc::new(self.parse_expr()?))}
-                                    else { 
-                                        self.parse_expr()? 
-                                    };
-                                    args.push(arg);
-                                    match self.lookahead {
-                                        Token::Comma => { self.bump()?; }
-                                        Token::RParen => break,
-                                        _ => return self.err_here("Expected ',' or ')' in safe method args"),
-                                    }
-                                }
-                            }
-                            self.bump()?; // ')'
-                            node = Expr::SafeMethodCall { target: Rc::new(node), name: name.to_lowercase(), args };
-                        }
-                        _ => {
-                            // Safe property access
-                            node = Expr::SafePropertyAccess { target: Rc::new(node), property: name };
-                        }
-                    }
-                }
-            Token::LBracket => {
-                // Indexing or slicing
-                self.bump()?; // '['
-                // Cases: [expr], [start:end], [:end], [start:]
-                let mut start: Option<Expr> = None;
-                let mut end: Option<Expr> = None;
-                match self.lookahead {
-                    Token::RBracket => { self.bump()?; return self.err_here("Empty index '[]' not allowed"); }
-                    Token::Colon => { /* [:end] */ }
                     _ => {
-                        // parse first expr
-                        let first = self.parse_expr()?;
-                        match self.lookahead {
-                            Token::Colon => { start = Some(first); }
-                            Token::RBracket => {
-                                self.bump()?; // ']'
-                                node = Expr::Index { target: Rc::new(node), index: Rc::new(first) };
-                                continue;
-                            }
-                            _ => return self.err_here("Expected ':' or ']' in indexing"),
+                        return self.err_here("Expected identifier or string key in object literal")
+                    }
+                };
+
+                // Expect colon
+                if matches!(self.lookahead, Token::Colon) {
+                    self.bump()?; // consume ':'
+                } else {
+                    return self.err_here("Expected ':' after object key");
+                }
+
+                // Parse value
+                let (value, d) = self.parse_expr()?;
+                pairs.push((key, value));
+                max_child = max_child.max(Some(d));
+
+                match self.lookahead {
+                    Token::Comma => {
+                        self.bump()?;
+                        // Allow trailing comma
+                        if matches!(self.lookahead, Token::RBrace) {
+                            break;
                         }
                     }
+                    Token::RBrace => break,
+                    _ => return self.err_here("Expected ',' or '}' in object literal"),
                 }
-                // At this point, we saw ':' (slice)
-                if let Token::Colon = self.lookahead { self.bump()?; }
-                // Optional end expression
-                if let Token::RBracket = self.lookahead {
-                    // [start:]
-                } else {
-                    end = Some(self.parse_expr()?);
-                }
-                match self.lookahead {
-                    Token::RBracket => { self.bump()?; }
-                    _ => return self.err_here("Expected ']' to close slice"),
-                }
-                node = Expr::Slice { target: Rc::new(node), start: start.map(Rc::new), end: end.map(Rc::new) };
             }
-            _ => break,
+        }
+        self.bump()?; // consume '}'
+        let depth = self.node_depth(max_child)?;
+        Ok((Expr::ObjectLiteral(pairs), depth))
+    }
+
+    /// `:: type` after an already parsed operand. Both errors point at the token after `::`.
+    #[inline(never)]
+    fn parse_cast_tail(&mut self, (node, d): (Expr, usize)) -> Parsed {
+        self.bump()?; // '::'
+        let name_pos = self.look_pos;
+        let tname = match self.lookahead.clone() {
+            Token::Identifier(s) => {
+                self.bump()?;
+                match s.to_lowercase().as_str() {
+                    "integer" | "int" => TypeName::Integer,
+                    "float" | "number" => TypeName::Float,
+                    "string" => TypeName::String,
+                    "boolean" | "bool" => TypeName::Boolean,
+                    "array" => TypeName::Array,
+                    "currency" => TypeName::Currency,
+                    "datetime" | "date" => TypeName::DateTime,
+                    "json" => TypeName::Json,
+                    _ => return Err(Error::new("Unknown cast type", Some(name_pos))),
+                }
+            }
+            _ => return self.err_here("Expected type name after '::'"),
+        };
+        let depth = self.node_depth(Some(d))?;
+        Ok((
+            Expr::TypeCast {
+                expr: Rc::new(node),
+                ty: tname,
+            },
+            depth,
+        ))
+    }
+
+    /// Postfix chain: `.name`, `.name?`, `.name(args)`, `&.name`, `&.name(args)`, `[i]`,
+    /// `[a:b]`. Each link wraps the tree one level deeper and counts against the limit.
+    #[inline(never)]
+    fn parse_postfix_chain(&mut self, (mut node, mut depth): (Expr, usize)) -> Parsed {
+        loop {
+            let (next, max_child) = match self.lookahead {
+                Token::Dot => self.parse_dot_suffix(node, depth)?,
+                Token::SafeNavigation => self.parse_safe_nav_suffix(node, depth)?,
+                Token::LBracket => self.parse_index_suffix(node, depth)?,
+                _ => break,
+            };
+            depth = self.node_depth(Some(max_child))?;
+            node = next;
+        }
+        Ok((node, depth))
+    }
+
+    /// The name after `.` or `&.`.
+    fn parse_member_name(&mut self, err: &str) -> Result<String, Error> {
+        match self.lookahead.clone() {
+            Token::Identifier(s) => {
+                self.bump()?;
+                Ok(s)
+            }
+            _ => self.err_here(err),
         }
     }
-    Ok(node)
+
+    /// `.name`, `.name?` or `.name(args)`; returns the new node and its deepest child depth.
+    fn parse_dot_suffix(&mut self, target: Expr, dt: usize) -> Result<(Expr, usize), Error> {
+        self.bump()?; // '.'
+        let name = self.parse_member_name("Expected property or method name after '.'")?;
+        // Predicate style: name?
+        if let Token::QMark = self.lookahead {
+            self.bump()?; // consume '?'
+            let node = Expr::MethodCall {
+                target: Rc::new(target),
+                name: name.to_lowercase(),
+                args: vec![],
+                predicate: true,
+            };
+            return Ok((node, dt));
+        }
+        // Check for method call: '(' args ')'
+        if let Token::LParen = self.lookahead {
+            self.bump()?; // '('
+            let (args, max_child) = self.parse_call_args("Expected ',' or ')' in method args")?;
+            let node = Expr::MethodCall {
+                target: Rc::new(target),
+                name: name.to_lowercase(),
+                args,
+                predicate: false,
+            };
+            return Ok((node, dt.max(max_child.unwrap_or(0))));
+        }
+        // No parentheses, treat as property access
+        let node = Expr::PropertyAccess {
+            target: Rc::new(target),
+            property: name,
+        };
+        Ok((node, dt))
+    }
+
+    /// `&.name` or `&.name(args)`; returns the new node and its deepest child depth.
+    fn parse_safe_nav_suffix(&mut self, target: Expr, dt: usize) -> Result<(Expr, usize), Error> {
+        self.bump()?; // '&.'
+        let name = self.parse_member_name("Expected property name after '&.'")?;
+        // Check for method call after safe navigation
+        if let Token::LParen = self.lookahead {
+            self.bump()?; // '('
+            let (args, max_child) =
+                self.parse_call_args("Expected ',' or ')' in safe method args")?;
+            let node = Expr::SafeMethodCall {
+                target: Rc::new(target),
+                name: name.to_lowercase(),
+                args,
+            };
+            return Ok((node, dt.max(max_child.unwrap_or(0))));
+        }
+        let node = Expr::SafePropertyAccess {
+            target: Rc::new(target),
+            property: name,
+        };
+        Ok((node, dt))
+    }
+
+    /// `[expr]`, `[start:end]`, `[:end]` or `[start:]`; returns the new node and its deepest
+    /// child depth.
+    fn parse_index_suffix(&mut self, target: Expr, dt: usize) -> Result<(Expr, usize), Error> {
+        self.bump()?; // '['
+        let mut max_child = dt;
+        let mut start: Option<Expr> = None;
+        let mut end: Option<Expr> = None;
+        match self.lookahead {
+            Token::RBracket => {
+                self.bump()?;
+                return self.err_here("Empty index '[]' not allowed");
+            }
+            Token::Colon => { /* [:end] */ }
+            _ => {
+                // parse first expr
+                let (first, d) = self.parse_expr()?;
+                max_child = max_child.max(d);
+                match self.lookahead {
+                    Token::Colon => {
+                        start = Some(first);
+                    }
+                    Token::RBracket => {
+                        self.bump()?; // ']'
+                        let node = Expr::Index {
+                            target: Rc::new(target),
+                            index: Rc::new(first),
+                        };
+                        return Ok((node, max_child));
+                    }
+                    _ => return self.err_here("Expected ':' or ']' in indexing"),
+                }
+            }
+        }
+        // At this point, we saw ':' (slice)
+        if let Token::Colon = self.lookahead {
+            self.bump()?;
+        }
+        // Optional end expression
+        if !matches!(self.lookahead, Token::RBracket) {
+            let (e, d) = self.parse_expr()?;
+            max_child = max_child.max(d);
+            end = Some(e);
+        }
+        match self.lookahead {
+            Token::RBracket => {
+                self.bump()?;
+            }
+            _ => return self.err_here("Expected ']' to close slice"),
+        }
+        let node = Expr::Slice {
+            target: Rc::new(target),
+            start: start.map(Rc::new),
+            end: end.map(Rc::new),
+        };
+        Ok((node, max_child))
+    }
 }
+
+/// Precedence of `AND`/`&&`. The `NOT` keyword sits between it and the comparisons.
+const AND_PREC: u8 = 2;
+
+/// Binary operator and precedence (higher binds tighter) for a token, if it is one.
+fn binary_op(tok: &Token) -> Option<(BinaryOp, u8)> {
+    let (op, prec) = match tok {
+        Token::Or | Token::OrOr => (BinaryOp::Or, 1),
+        Token::And | Token::AndAnd => (BinaryOp::And, AND_PREC),
+        // The lexer reads `AND`/`OR` as names; after an operand they are the operators, before
+        // one they stay the `AND(...)`/`OR(...)` builtins.
+        Token::Identifier(name) if name.eq_ignore_ascii_case("OR") => (BinaryOp::Or, 1),
+        Token::Identifier(name) if name.eq_ignore_ascii_case("AND") => (BinaryOp::And, AND_PREC),
+        Token::EqEq => (BinaryOp::Eq, 3),
+        Token::NotEq => (BinaryOp::Ne, 3),
+        Token::Greater => (BinaryOp::Gt, 4),
+        Token::Less => (BinaryOp::Lt, 4),
+        Token::Ge => (BinaryOp::Ge, 4),
+        Token::Le => (BinaryOp::Le, 4),
+        Token::Ampersand => (BinaryOp::Concat, 5),
+        Token::Plus => (BinaryOp::Add, 6),
+        Token::Minus => (BinaryOp::Sub, 6),
+        Token::Star => (BinaryOp::Mul, 7),
+        Token::Slash => (BinaryOp::Div, 7),
+        Token::Percent => (BinaryOp::Mod, 7),
+        _ => return None,
+    };
+    Some((op, prec))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(s: &str) -> Result<Expr, Error> {
+        Parser::new(s).parse()
+    }
+
+    fn assert_too_deep(s: &str) {
+        let err = parse(s).expect_err("expected nesting error");
+        assert!(
+            err.message.contains("nested too deeply"),
+            "unexpected error: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn left_deep_chain_is_bounded_at_parse_time() {
+        let at_limit = format!("{}1", "1+".repeat(MAX_NESTING_DEPTH));
+        assert!(parse(&at_limit).is_ok());
+        assert_too_deep(&format!("{}1", "1+".repeat(MAX_NESTING_DEPTH + 1)));
+        assert_too_deep(&format!("{}1", "1+".repeat(100_000)));
+    }
+
+    #[test]
+    fn postfix_chain_is_bounded_at_parse_time() {
+        assert!(parse(&format!(":a{}", ".b".repeat(MAX_NESTING_DEPTH))).is_ok());
+        assert_too_deep(&format!(":a{}", ".b".repeat(MAX_NESTING_DEPTH + 1)));
+        assert_too_deep(&format!("[1]{}", "[0]".repeat(MAX_NESTING_DEPTH)));
+    }
+
+    #[test]
+    fn nested_chains_add_up() {
+        // A parenthesised chain used as the left operand of another chain: depths add.
+        let tail = "+1".repeat(64);
+        let two = format!("((1{tail}){tail})");
+        assert!(parse(&two).is_ok());
+        assert_too_deep(&format!("({two}{tail})"));
+    }
+
+    /// Debug parser frames are large (~20 KB per paren level), so this runs on a thread
+    /// with the same 16 MB stack the server workers use rather than the 2 MB test default.
+    #[test]
+    fn paren_recursion_is_bounded() {
+        std::thread::Builder::new()
+            .stack_size(16 * 1024 * 1024)
+            .spawn(|| {
+                let n = MAX_NESTING_DEPTH;
+                assert!(parse(&format!("{}1{}", "(".repeat(n), ")".repeat(n))).is_ok());
+                let n = MAX_NESTING_DEPTH + 1;
+                assert_too_deep(&format!("{}1{}", "(".repeat(n), ")".repeat(n)));
+                assert_too_deep(&format!("{}1", "(".repeat(100_000)));
+            })
+            .expect("spawn")
+            .join()
+            .expect("paren test thread panicked");
+    }
+
+    #[test]
+    fn error_message_and_position() {
+        let err = parse(&format!("{}1", "-".repeat(200))).expect_err("too deep");
+        assert_eq!(err.message, "Expression nested too deeply (max 128)");
+        assert!(err.position.is_some());
+    }
 }

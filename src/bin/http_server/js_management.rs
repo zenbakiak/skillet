@@ -1,13 +1,17 @@
+use skillet::js_plugin::JavaScriptFunction;
+use skillet::{CustomFunction, JSPluginLoader, Value};
+use std::collections::HashSet;
+use std::fs;
 use std::net::TcpStream;
 use std::sync::Arc;
-use std::fs;
-use skillet::{JSPluginLoader, CustomFunction, Value};
-use skillet::js_plugin::JavaScriptFunction;
 
 use super::auth::check_admin_authentication;
+use super::cache::clear_cache;
+use super::multipart::{
+    extract_boundary_from_content_type, is_multipart_request, parse_multipart_data,
+};
 use super::types::*;
-use super::utils::{send_http_response, send_http_error, parse_json_body};
-use super::multipart::{is_multipart_request, extract_boundary_from_content_type, parse_multipart_data};
+use super::utils::{parse_json_body, send_http_error, send_http_response};
 
 pub fn handle_list_js(
     stream: &mut TcpStream,
@@ -21,7 +25,7 @@ pub fn handle_list_js(
     }
 
     let hooks_dir = std::env::var("SKILLET_HOOKS_DIR").unwrap_or_else(|_| "hooks".to_string());
-    
+
     match list_js_functions(&hooks_dir) {
         Ok(functions) => {
             let response = ListJSResponse {
@@ -65,14 +69,13 @@ pub fn handle_update_js(
         }
     };
 
-    // Validate filename ends with .js
-    if !update_request.filename.ends_with(".js") {
+    if let Err((message, error)) = check_hook_filename(&update_request.filename) {
         let response = UpdateJSResponse {
             success: false,
-            message: "Filename must end with .js extension".to_string(),
+            message,
             function_name: None,
             validation_results: None,
-            error: Some("Invalid file extension".to_string()),
+            error: Some(error),
         };
         let json = serde_json::to_string(&response).unwrap_or_default();
         send_http_response(stream, 400, "application/json", &json);
@@ -80,7 +83,7 @@ pub fn handle_update_js(
     }
 
     let hooks_dir = std::env::var("SKILLET_HOOKS_DIR").unwrap_or_else(|_| "hooks".to_string());
-    
+
     // Check if file exists
     let file_path = std::path::Path::new(&hooks_dir).join(&update_request.filename);
     if !file_path.exists() {
@@ -97,7 +100,10 @@ pub fn handle_update_js(
     }
 
     // Extract JS code from either js_code field or file_content field
-    let js_code = match (update_request.js_code.as_ref(), update_request.file_content.as_ref()) {
+    let js_code = match (
+        update_request.js_code.as_ref(),
+        update_request.file_content.as_ref(),
+    ) {
         (Some(code), _) => code.clone(),
         (None, Some(content)) => content.clone(),
         (None, None) => {
@@ -122,7 +128,10 @@ pub fn handle_update_js(
                 Ok(_) => {
                     let response = UpdateJSResponse {
                         success: true,
-                        message: format!("JavaScript function '{}' updated successfully", js_func.name()),
+                        message: format!(
+                            "JavaScript function '{}' updated successfully",
+                            js_func.name()
+                        ),
                         function_name: Some(js_func.name().to_string()),
                         validation_results: Some(validation_results),
                         error: None,
@@ -143,13 +152,13 @@ pub fn handle_update_js(
                 }
             }
         }
-        Err(e) => {
+        Err((message, error)) => {
             let response = UpdateJSResponse {
                 success: false,
-                message: "JavaScript function validation failed".to_string(),
+                message,
                 function_name: None,
                 validation_results: None,
-                error: Some(e),
+                error: Some(error),
             };
             let json = serde_json::to_string(&response).unwrap_or_default();
             send_http_response(stream, 400, "application/json", &json);
@@ -176,12 +185,11 @@ pub fn handle_delete_js(
         }
     };
 
-    // Validate filename ends with .js
-    if !delete_request.filename.ends_with(".js") {
+    if let Err((message, error)) = check_hook_filename(&delete_request.filename) {
         let response = DeleteJSResponse {
             success: false,
-            message: "Filename must end with .js extension".to_string(),
-            error: Some("Invalid file extension".to_string()),
+            message,
+            error: Some(error),
         };
         let json = serde_json::to_string(&response).unwrap_or_default();
         send_http_response(stream, 400, "application/json", &json);
@@ -189,12 +197,15 @@ pub fn handle_delete_js(
     }
 
     let hooks_dir = std::env::var("SKILLET_HOOKS_DIR").unwrap_or_else(|_| "hooks".to_string());
-    
+
     match delete_js_file(&hooks_dir, &delete_request.filename) {
         Ok(_) => {
             let response = DeleteJSResponse {
                 success: true,
-                message: format!("JavaScript function file '{}' deleted successfully", delete_request.filename),
+                message: format!(
+                    "JavaScript function file '{}' deleted successfully",
+                    delete_request.filename
+                ),
                 error: None,
             };
             let json = serde_json::to_string(&response).unwrap_or_default();
@@ -231,14 +242,13 @@ pub fn handle_upload_js(
         }
     };
 
-    // Validate filename ends with .js
-    if !upload_request.filename.ends_with(".js") {
+    if let Err((message, error)) = check_hook_filename(&upload_request.filename) {
         let response = UploadJSResponse {
             success: false,
-            message: "Filename must end with .js extension".to_string(),
+            message,
             function_name: None,
             validation_results: None,
-            error: Some("Invalid file extension".to_string()),
+            error: Some(error),
         };
         let json = serde_json::to_string(&response).unwrap_or_default();
         send_http_response(stream, 400, "application/json", &json);
@@ -246,7 +256,10 @@ pub fn handle_upload_js(
     }
 
     // Extract JS code from either js_code field or file_content field
-    let js_code = match (upload_request.js_code.as_ref(), upload_request.file_content.as_ref()) {
+    let js_code = match (
+        upload_request.js_code.as_ref(),
+        upload_request.file_content.as_ref(),
+    ) {
         (Some(code), _) => code.clone(),
         (None, Some(content)) => content.clone(),
         (None, None) => {
@@ -267,12 +280,16 @@ pub fn handle_upload_js(
     match validate_js_function(&js_code) {
         Ok((js_func, validation_results)) => {
             // Save file to hooks directory
-            let hooks_dir = std::env::var("SKILLET_HOOKS_DIR").unwrap_or_else(|_| "hooks".to_string());
+            let hooks_dir =
+                std::env::var("SKILLET_HOOKS_DIR").unwrap_or_else(|_| "hooks".to_string());
             match save_js_file(&hooks_dir, &upload_request.filename, &js_code) {
                 Ok(_) => {
                     let response = UploadJSResponse {
                         success: true,
-                        message: format!("JavaScript function '{}' uploaded and validated successfully", js_func.name()),
+                        message: format!(
+                            "JavaScript function '{}' uploaded and validated successfully",
+                            js_func.name()
+                        ),
                         function_name: Some(js_func.name().to_string()),
                         validation_results: Some(validation_results),
                         error: None,
@@ -293,13 +310,13 @@ pub fn handle_upload_js(
                 }
             }
         }
-        Err(e) => {
+        Err((message, error)) => {
             let response = UploadJSResponse {
                 success: false,
-                message: "JavaScript function validation failed".to_string(),
+                message,
                 function_name: None,
                 validation_results: None,
-                error: Some(e),
+                error: Some(error),
             };
             let json = serde_json::to_string(&response).unwrap_or_default();
             send_http_response(stream, 400, "application/json", &json);
@@ -319,9 +336,8 @@ pub fn handle_reload_hooks(
     }
 
     let hooks_dir = std::env::var("SKILLET_HOOKS_DIR").unwrap_or_else(|_| "hooks".to_string());
-    let js_loader = JSPluginLoader::new(hooks_dir);
 
-    match js_loader.auto_register() {
+    match reload_hooks(hooks_dir) {
         Ok(count) => {
             let response = ReloadHooksResponse {
                 success: true,
@@ -345,7 +361,31 @@ pub fn handle_reload_hooks(
     }
 }
 
-fn validate_js_function(js_code: &str) -> Result<(JavaScriptFunction, ValidationResults), String> {
+/// Makes the registry match the hooks on disk (BL-077). Every custom function in this server
+/// comes from a hook, so a registered name that no longer loads from a file is removed. A
+/// directory that cannot be read changes nothing; new versions replace old ones before stale
+/// names go, so a hook still on disk is never missing. Cached results may name either, so the
+/// result cache is cleared.
+fn reload_hooks(hooks_dir: String) -> Result<usize, skillet::Error> {
+    let functions = JSPluginLoader::new(hooks_dir).load_functions()?;
+    let count = functions.len();
+    let loaded: HashSet<String> = functions.iter().map(|f| f.name().to_uppercase()).collect();
+    for function in functions {
+        skillet::register_function(function)?;
+    }
+    for name in skillet::list_custom_functions() {
+        if !loaded.contains(&name) {
+            skillet::unregister_function(&name);
+        }
+    }
+    clear_cache();
+    Ok(count)
+}
+
+/// Parse and test a hook. The error is `(message, error)` for the 400 response.
+fn validate_js_function(
+    js_code: &str,
+) -> Result<(JavaScriptFunction, ValidationResults), (String, String)> {
     let mut validation_results = ValidationResults {
         syntax_valid: false,
         structure_valid: false,
@@ -362,9 +402,17 @@ fn validate_js_function(js_code: &str) -> Result<(JavaScriptFunction, Validation
             func
         }
         Err(e) => {
-            return Err(format!("Syntax/structure validation failed: {}", e));
+            return Err((
+                "JavaScript function validation failed".to_string(),
+                format!("Syntax/structure validation failed: {}", e),
+            ));
         }
     };
+
+    // A hook may not replace a builtin (ADR-0024).
+    if let Err(e) = js_func.check_name_not_reserved() {
+        return Err((e.message, "Reserved function name".to_string()));
+    }
 
     // Step 2: Test the example if provided
     if let Some(example) = js_func.example() {
@@ -397,7 +445,10 @@ fn test_js_function_example(js_func: &JavaScriptFunction, example: &str) -> Resu
         let expected_result = expected_part.trim();
 
         // Parse the function call to get arguments
-        if let Some(args_str) = function_call.strip_prefix(&format!("{}(", js_func.name())).and_then(|s| s.strip_suffix(')')) {
+        if let Some(args_str) = function_call
+            .strip_prefix(&format!("{}(", js_func.name()))
+            .and_then(|s| s.strip_suffix(')'))
+        {
             // Simple argument parsing - this could be enhanced
             let args = parse_function_arguments(args_str)?;
 
@@ -405,15 +456,21 @@ fn test_js_function_example(js_func: &JavaScriptFunction, example: &str) -> Resu
             match js_func.execute(args) {
                 Ok(result) => {
                     let result_str = format_value_for_comparison(&result);
-                    if result_str == expected_result || format!("\"{}\"", result_str) == expected_result {
-                        Ok(format!("Expected: {}, Got: {} ✓", expected_result, result_str))
+                    if result_str == expected_result
+                        || format!("\"{}\"", result_str) == expected_result
+                    {
+                        Ok(format!(
+                            "Expected: {}, Got: {} ✓",
+                            expected_result, result_str
+                        ))
                     } else {
-                        Err(format!("Expected: {}, Got: {}", expected_result, result_str))
+                        Err(format!(
+                            "Expected: {}, Got: {}",
+                            expected_result, result_str
+                        ))
                     }
                 }
-                Err(e) => {
-                    Err(format!("Function execution failed: {}", e))
-                }
+                Err(e) => Err(format!("Function execution failed: {}", e)),
             }
         } else {
             Err("Invalid example format: cannot parse function call".to_string())
@@ -436,7 +493,7 @@ fn parse_function_arguments(args_str: &str) -> Result<Vec<Value>, String> {
 
         if arg.starts_with('"') && arg.ends_with('"') {
             // String argument
-            let string_val = &arg[1..arg.len()-1]; // Remove quotes
+            let string_val = &arg[1..arg.len() - 1]; // Remove quotes
             args.push(Value::String(string_val.to_string()));
         } else if arg == "true" {
             args.push(Value::Boolean(true));
@@ -453,9 +510,10 @@ fn parse_function_arguments(args_str: &str) -> Result<Vec<Value>, String> {
     Ok(args)
 }
 
+#[allow(deprecated)] // `Currency` is read as a Number (ADR-0033); `Json` until 0.8 (ADR-0030)
 fn format_value_for_comparison(value: &Value) -> String {
     match value {
-        Value::Number(n) => {
+        Value::Number(n) | Value::Currency(n) => {
             if n.fract() == 0.0 {
                 format!("{}", *n as i64)
             } else {
@@ -469,14 +527,42 @@ fn format_value_for_comparison(value: &Value) -> String {
             let items: Vec<String> = arr.iter().map(format_value_for_comparison).collect();
             format!("[{}]", items.join(", "))
         }
-        Value::Currency(c) => format!("{}", c),
         Value::DateTime(dt) => dt.to_string(),
         Value::Json(json) => json.clone(),
+        // `Value` is #[non_exhaustive]: a later variant compares by its Debug text
+        _ => format!("{:?}", value),
+    }
+}
+
+/// Hook files are managed by plain name only: `^[A-Za-z0-9_-]+\.js$`, so a request can only
+/// touch files directly inside the hooks directory. Returns `(message, error)` for a 400.
+fn check_hook_filename(filename: &str) -> Result<(), (String, String)> {
+    let Some(stem) = filename.strip_suffix(".js") else {
+        return Err((
+            "Filename must end with .js extension".to_string(),
+            "Invalid file extension".to_string(),
+        ));
+    };
+    let plain = !stem.is_empty()
+        && stem
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-');
+    if plain {
+        Ok(())
+    } else {
+        Err((
+            "Filename must be a plain name of letters, digits, '_' or '-' ending in .js \
+             (no directories)"
+                .to_string(),
+            "Invalid filename".to_string(),
+        ))
     }
 }
 
 fn save_js_file(hooks_dir: &str, filename: &str, js_code: &str) -> Result<(), String> {
     use std::path::Path;
+
+    check_hook_filename(filename).map_err(|(message, _)| message)?;
 
     // Ensure hooks directory exists
     let hooks_path = Path::new(hooks_dir);
@@ -487,14 +573,15 @@ fn save_js_file(hooks_dir: &str, filename: &str, js_code: &str) -> Result<(), St
 
     // Save the file
     let file_path = hooks_path.join(filename);
-    fs::write(&file_path, js_code)
-        .map_err(|e| format!("Failed to write JS file: {}", e))?;
+    fs::write(&file_path, js_code).map_err(|e| format!("Failed to write JS file: {}", e))?;
 
     Ok(())
 }
 
 fn delete_js_file(hooks_dir: &str, filename: &str) -> Result<(), String> {
     use std::path::Path;
+
+    check_hook_filename(filename).map_err(|(message, _)| message)?;
 
     let hooks_path = Path::new(hooks_dir);
     let file_path = hooks_path.join(filename);
@@ -505,8 +592,7 @@ fn delete_js_file(hooks_dir: &str, filename: &str) -> Result<(), String> {
     }
 
     // Delete the file
-    fs::remove_file(&file_path)
-        .map_err(|e| format!("Failed to delete JS file: {}", e))?;
+    fs::remove_file(&file_path).map_err(|e| format!("Failed to delete JS file: {}", e))?;
 
     Ok(())
 }
@@ -524,7 +610,17 @@ fn list_js_functions(hooks_dir: &str) -> Result<Vec<JSFunctionInfo>, String> {
     let mut functions = Vec::new();
 
     // Recursively scan directory for JS files
-    scan_directory_for_js(hooks_path, hooks_path, &mut functions)?;
+    let real_root = hooks_path
+        .canonicalize()
+        .map_err(|e| format!("Failed to read hooks directory: {}", e))?;
+    let mut visited = std::collections::HashSet::from([real_root.clone()]);
+    scan_directory_for_js(
+        hooks_path,
+        hooks_path,
+        &real_root,
+        &mut visited,
+        &mut functions,
+    )?;
 
     // Sort by filename for consistent ordering
     functions.sort_by(|a, b| a.filename.cmp(&b.filename));
@@ -532,37 +628,48 @@ fn list_js_functions(hooks_dir: &str) -> Result<Vec<JSFunctionInfo>, String> {
     Ok(functions)
 }
 
+/// Entries are resolved first: anything that resolves outside `real_root` is skipped, and each
+/// directory is read once.
 fn scan_directory_for_js(
     current_dir: &std::path::Path,
     hooks_root: &std::path::Path,
-    functions: &mut Vec<JSFunctionInfo>
+    real_root: &std::path::Path,
+    visited: &mut std::collections::HashSet<std::path::PathBuf>,
+    functions: &mut Vec<JSFunctionInfo>,
 ) -> Result<(), String> {
-
-    let entries = fs::read_dir(current_dir)
-        .map_err(|e| format!("Failed to read directory: {}", e))?;
+    let entries =
+        fs::read_dir(current_dir).map_err(|e| format!("Failed to read directory: {}", e))?;
 
     for entry in entries {
-        let entry = entry
-            .map_err(|e| format!("Failed to read directory entry: {}", e))?;
+        let entry = entry.map_err(|e| format!("Failed to read directory entry: {}", e))?;
 
         let path = entry.path();
+        let real = match path.canonicalize() {
+            Ok(real) if real.starts_with(real_root) => real,
+            _ => continue,
+        };
 
-        if path.is_dir() {
+        if real.is_dir() {
             // Recursively scan subdirectories
-            scan_directory_for_js(&path, hooks_root, functions)?;
+            if visited.insert(real) {
+                scan_directory_for_js(&path, hooks_root, real_root, visited, functions)?;
+            }
         } else if path.extension().and_then(|s| s.to_str()) == Some("js") {
             // Get relative path from hooks root
-            let relative_path = path.strip_prefix(hooks_root)
+            let relative_path = path
+                .strip_prefix(hooks_root)
                 .map_err(|_| "Failed to get relative path".to_string())?;
 
             let filename = relative_path.to_string_lossy().to_string();
 
             // Get file metadata
-            let metadata = entry.metadata()
+            let metadata = entry
+                .metadata()
                 .map_err(|e| format!("Failed to get file metadata: {}", e))?;
 
             let file_size = metadata.len();
-            let last_modified = metadata.modified()
+            let last_modified = metadata
+                .modified()
                 .map(|time| {
                     use std::time::UNIX_EPOCH;
                     let duration = time.duration_since(UNIX_EPOCH).unwrap_or_default();
@@ -573,24 +680,37 @@ fn scan_directory_for_js(
                 .unwrap_or_else(|_| "Unknown".to_string());
 
             // Try to parse the JS function to get metadata
-            let (function_name, description, example, min_args, max_args, is_valid, validation_error) =
-                match fs::read_to_string(&path) {
-                    Ok(content) => {
-                        match JavaScriptFunction::parse_js_function(&content) {
-                            Ok(js_func) => (
-                                Some(js_func.name().to_string()),
-                                js_func.description().map(|s| s.to_string()),
-                                js_func.example().map(|s| s.to_string()),
-                                Some(js_func.min_args()),
-                                js_func.max_args(),
-                                true,
-                                None,
-                            ),
-                            Err(e) => (None, None, None, None, None, false, Some(e.to_string())),
-                        }
-                    }
-                    Err(e) => (None, None, None, None, None, false, Some(format!("Failed to read file: {}", e))),
-                };
+            let (
+                function_name,
+                description,
+                example,
+                min_args,
+                max_args,
+                is_valid,
+                validation_error,
+            ) = match fs::read_to_string(&real) {
+                Ok(content) => match JavaScriptFunction::parse_js_function(&content) {
+                    Ok(js_func) => (
+                        Some(js_func.name().to_string()),
+                        js_func.description().map(|s| s.to_string()),
+                        js_func.example().map(|s| s.to_string()),
+                        Some(js_func.min_args()),
+                        js_func.max_args(),
+                        true,
+                        None,
+                    ),
+                    Err(e) => (None, None, None, None, None, false, Some(e.to_string())),
+                },
+                Err(e) => (
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    false,
+                    Some(format!("Failed to read file: {}", e)),
+                ),
+            };
 
             functions.push(JSFunctionInfo {
                 filename,
@@ -613,21 +733,24 @@ fn scan_directory_for_js(
 fn parse_upload_request(request: &str) -> Result<UploadJSRequest, String> {
     // Extract Content-Type header
     let content_type = extract_content_type(request).unwrap_or_default();
-    
+
     if is_multipart_request(&content_type) {
         // Parse multipart form data
         let boundary = extract_boundary_from_content_type(&content_type)
             .ok_or("Missing boundary in multipart Content-Type")?;
-        
+
         let body = extract_request_body(request)?;
         let multipart_data = parse_multipart_data(&body, &boundary)?;
-        
+
         // Extract filename from form field
-        let filename = multipart_data.get_text_field("filename")
+        let filename = multipart_data
+            .get_text_field("filename")
             .ok_or("Missing 'filename' field in multipart data")?;
-        
+
         // Check for JS code in text field or file field
-        let (js_code, file_content) = if let Some(js_text) = multipart_data.get_text_field("js_code") {
+        let (js_code, file_content) = if let Some(js_text) =
+            multipart_data.get_text_field("js_code")
+        {
             // JS code provided as text field
             (Some(js_text), None)
         } else if let Some(file_field) = multipart_data.get_file_field("file") {
@@ -636,9 +759,11 @@ fn parse_upload_request(request: &str) -> Result<UploadJSRequest, String> {
                 .map_err(|_| "Uploaded file contains invalid UTF-8")?;
             (None, Some(file_content))
         } else {
-            return Err("Either 'js_code' text field or 'file' upload field must be provided".to_string());
+            return Err(
+                "Either 'js_code' text field or 'file' upload field must be provided".to_string(),
+            );
         };
-        
+
         Ok(UploadJSRequest {
             filename,
             js_code,
@@ -653,21 +778,24 @@ fn parse_upload_request(request: &str) -> Result<UploadJSRequest, String> {
 fn parse_update_request(request: &str) -> Result<UpdateJSRequest, String> {
     // Extract Content-Type header
     let content_type = extract_content_type(request).unwrap_or_default();
-    
+
     if is_multipart_request(&content_type) {
         // Parse multipart form data
         let boundary = extract_boundary_from_content_type(&content_type)
             .ok_or("Missing boundary in multipart Content-Type")?;
-        
+
         let body = extract_request_body(request)?;
         let multipart_data = parse_multipart_data(&body, &boundary)?;
-        
+
         // Extract filename from form field
-        let filename = multipart_data.get_text_field("filename")
+        let filename = multipart_data
+            .get_text_field("filename")
             .ok_or("Missing 'filename' field in multipart data")?;
-        
+
         // Check for JS code in text field or file field
-        let (js_code, file_content) = if let Some(js_text) = multipart_data.get_text_field("js_code") {
+        let (js_code, file_content) = if let Some(js_text) =
+            multipart_data.get_text_field("js_code")
+        {
             // JS code provided as text field
             (Some(js_text), None)
         } else if let Some(file_field) = multipart_data.get_file_field("file") {
@@ -676,9 +804,11 @@ fn parse_update_request(request: &str) -> Result<UpdateJSRequest, String> {
                 .map_err(|_| "Uploaded file contains invalid UTF-8")?;
             (None, Some(file_content))
         } else {
-            return Err("Either 'js_code' text field or 'file' upload field must be provided".to_string());
+            return Err(
+                "Either 'js_code' text field or 'file' upload field must be provided".to_string(),
+            );
         };
-        
+
         Ok(UpdateJSRequest {
             filename,
             js_code,

@@ -1,57 +1,52 @@
-use std::net::TcpStream;
-use std::io::{Read, Write};
 use serde::de::DeserializeOwned;
 use serde_json;
+use std::io::{Read, Write};
+use std::net::TcpStream;
 
 use super::cache::{get_pooled_buffer, return_pooled_buffer};
+use super::cors;
+use super::request_limits::{DeadlineReader, DeadlineWriter, MAX_REQUEST_SIZE};
 
-pub fn sanitize_json_key(key: &str) -> String {
-    // Fast path: if key is already valid, return as-is (no allocation)
-    if key.chars().all(|c| c.is_alphanumeric() || c == '_') {
-        return key.to_string();
-    }
-
-    // Slow path: sanitize invalid characters
-    key.chars()
-        .map(|c| {
-            if c.is_alphanumeric() || c == '_' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect()
+/// A request over `MAX_REQUEST_SIZE`; `ErrorKind::FileTooLarge` marks it so the caller can
+/// answer 413 without matching on the message.
+fn too_large(message: &str) -> std::io::Error {
+    std::io::Error::new(std::io::ErrorKind::FileTooLarge, message)
 }
 
-pub fn read_complete_http_request(stream: &mut TcpStream) -> Result<String, std::io::Error> {
-    // Set socket timeouts to prevent hanging connections
-    stream.set_read_timeout(Some(std::time::Duration::from_secs(30)))?;
-    stream.set_write_timeout(Some(std::time::Duration::from_secs(10)))?;
-    
+/// The status and error message for a failed request read: 413 over the size limit, 408 past
+/// the read deadline (BL-049), 400 for a request that is not UTF-8.
+pub fn read_error_status(e: &std::io::Error) -> (u16, String) {
+    match e.kind() {
+        std::io::ErrorKind::FileTooLarge => (413, e.to_string()),
+        std::io::ErrorKind::TimedOut => (408, e.to_string()),
+        std::io::ErrorKind::InvalidData => (400, e.to_string()),
+        _ => (500, "Internal Server Error".to_string()),
+    }
+}
+
+/// Read one HTTP request of at most `MAX_REQUEST_SIZE` bytes from `reader`. The whole request
+/// must arrive within its deadline (BL-037); a slow client cannot extend it read by read.
+pub fn read_complete_http_request(
+    reader: &mut DeadlineReader<'_>,
+) -> Result<String, std::io::Error> {
     let mut buffer = get_pooled_buffer();
     let mut temp_buffer = [0; 4096]; // Increased buffer size for better performance
     let mut headers_complete = false;
     let mut content_length: usize = 0;
     let mut headers_end_pos = 0;
-    
-    // Maximum request size limit (1MB)
-    const MAX_REQUEST_SIZE: usize = 1024 * 1024;
 
     // First, read until we have complete headers
     while !headers_complete {
-        let bytes_read = stream.read(&mut temp_buffer)?;
+        let bytes_read = reader.read(&mut temp_buffer)?;
         if bytes_read == 0 {
             break;
         }
 
         buffer.extend_from_slice(&temp_buffer[..bytes_read]);
-        
+
         // Check request size limit
         if buffer.len() > MAX_REQUEST_SIZE {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "Request too large (max 1MB)"
-            ));
+            return Err(too_large("Request too large (max 1MB)"));
         }
 
         // Check if we have complete headers (ending with \r\n\r\n)
@@ -62,13 +57,10 @@ pub fn read_complete_http_request(stream: &mut TcpStream) -> Result<String, std:
             // Parse the headers to get Content-Length
             let headers_str = String::from_utf8_lossy(&buffer[..pos]);
             content_length = parse_content_length(&headers_str);
-            
+
             // Validate content length
             if content_length > MAX_REQUEST_SIZE {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "Request body too large (max 1MB)"
-                ));
+                return Err(too_large("Request body too large (max 1MB)"));
             }
         }
     }
@@ -80,26 +72,23 @@ pub fn read_complete_http_request(stream: &mut TcpStream) -> Result<String, std:
     if remaining_bytes > 0 {
         // Reserve space in buffer to avoid multiple reallocations
         buffer.reserve(remaining_bytes);
-        
+
         let mut temp_body_buffer = [0; 8192]; // Larger read buffer
         let mut total_read = 0;
 
         while total_read < remaining_bytes {
             let to_read = std::cmp::min(temp_body_buffer.len(), remaining_bytes - total_read);
-            let bytes_read = stream.read(&mut temp_body_buffer[..to_read])?;
+            let bytes_read = reader.read(&mut temp_body_buffer[..to_read])?;
             if bytes_read == 0 {
                 break; // Connection closed by client
             }
-            
+
             buffer.extend_from_slice(&temp_body_buffer[..bytes_read]);
             total_read += bytes_read;
-            
+
             // Additional safety check
             if buffer.len() > MAX_REQUEST_SIZE {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "Request exceeded size limit during body read"
-                ));
+                return Err(too_large("Request exceeded size limit during body read"));
             }
         }
     }
@@ -116,7 +105,9 @@ pub fn read_complete_http_request(stream: &mut TcpStream) -> Result<String, std:
 
 fn find_headers_end(buffer: &[u8]) -> Option<usize> {
     let pattern = b"\r\n\r\n";
-    buffer.windows(pattern.len()).position(|window| window == pattern)
+    buffer
+        .windows(pattern.len())
+        .position(|window| window == pattern)
 }
 
 fn parse_content_length(headers: &str) -> usize {
@@ -130,41 +121,68 @@ fn parse_content_length(headers: &str) -> usize {
     0
 }
 
-pub fn send_http_response(stream: &mut TcpStream, status: u16, content_type: &str, body: &str) {
+pub fn send_http_response(stream: &TcpStream, status: u16, content_type: &str, body: &str) {
     let status_text = match status {
         200 => "OK",
         400 => "Bad Request",
         401 => "Unauthorized",
+        403 => "Forbidden",
         408 => "Request Timeout",
-        413 => "Payload Too Large",
         404 => "Not Found",
+        413 => "Payload Too Large",
+        415 => "Unsupported Media Type",
         500 => "Internal Server Error",
         _ => "Unknown",
     };
 
-    // Pre-allocate response buffer with estimated size to avoid reallocations
-    let estimated_size = 256 + body.len(); // Headers ~256 bytes + body
-    let mut response = String::with_capacity(estimated_size);
-
-    use std::fmt::Write;
-    let _ = write!(
-        &mut response,
+    // Headers and body are written separately, so a large body is not copied again.
+    let headers = format!(
         "HTTP/1.1 {} {}\r\n\
-         Access-Control-Allow-Origin: *\r\n\
-         Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS\r\n\
-         Access-Control-Allow-Headers: Content-Type, Authorization\r\n\
+         {}\
          Content-Type: {}\r\n\
          Content-Length: {}\r\n\
          Connection: close\r\n\
-         \r\n\
-         {}",
-        status, status_text, content_type, body.len(), body
+         \r\n",
+        status,
+        status_text,
+        cors::response_headers(),
+        content_type,
+        body.len(),
     );
 
-    let _ = stream.write_all(response.as_bytes());
+    // The whole response must be written within `WRITE_TIMEOUT` (BL-047).
+    let mut out = DeadlineWriter::new(stream);
+    let _ = out
+        .write_all(headers.as_bytes())
+        .and_then(|()| out.write_all(body.as_bytes()));
 }
 
-pub fn send_http_error(stream: &mut TcpStream, status: u16, message: &str) {
+/// Serialize `value` into a string allocated once at its exact size: a first pass counts the
+/// bytes, so a large response never holds two growing copies (ADR-0011 amendment 2).
+pub fn to_json_exact<T: serde::Serialize>(value: &T) -> String {
+    struct Count(usize);
+    impl std::io::Write for Count {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0 += buf.len();
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut count = Count(0);
+    if serde_json::to_writer(&mut count, value).is_err() {
+        return String::new();
+    }
+    let mut out = Vec::with_capacity(count.0);
+    match serde_json::to_writer(&mut out, value) {
+        // serde_json only writes valid UTF-8.
+        Ok(()) => String::from_utf8(out).unwrap_or_default(),
+        Err(_) => String::new(),
+    }
+}
+
+pub fn send_http_error(stream: &TcpStream, status: u16, message: &str) {
     let error_json = serde_json::json!({
         "success": false,
         "error": message
@@ -172,14 +190,14 @@ pub fn send_http_error(stream: &mut TcpStream, status: u16, message: &str) {
     send_http_response(stream, status, "application/json", &error_json.to_string());
 }
 
+/// `OPTIONS`: the CORS headers when an origin is allowed (ADR-0019), otherwise none, so the
+/// browser refuses the cross-origin request.
 pub fn handle_cors_preflight(stream: &mut TcpStream) {
-    let response = "HTTP/1.1 200 OK\r\n\
-        Access-Control-Allow-Origin: *\r\n\
-        Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS\r\n\
-        Access-Control-Allow-Headers: Content-Type, Authorization\r\n\
-        Content-Length: 0\r\n\
-        \r\n";
-    let _ = stream.write_all(response.as_bytes());
+    let response = format!(
+        "HTTP/1.1 200 OK\r\n{}Content-Length: 0\r\nConnection: close\r\n\r\n",
+        cors::response_headers()
+    );
+    let _ = DeadlineWriter::new(stream).write_all(response.as_bytes());
 }
 
 pub fn parse_json_body<T: DeserializeOwned>(request: &str) -> Result<T, String> {
@@ -193,19 +211,34 @@ pub fn parse_json_body<T: DeserializeOwned>(request: &str) -> Result<T, String> 
     serde_json::from_str(body).map_err(|e| format!("Invalid JSON: {}", e))
 }
 
-pub fn load_html_file() -> String {
-    match std::fs::read_to_string("src/bin/http_server/documentation.html") {
-        Ok(content) => content,
-        Err(_) => {
-            // Fallback HTML if file not found
-            r#"<!DOCTYPE html>
-<html>
-<head><title>Skillet Expression Server</title></head>
-<body>
-    <h1>🥘 Skillet Expression Server</h1>
-    <p>Documentation file not found. Please ensure documentation.html is available.</p>
-</body>
-</html>"#.to_string()
+/// The `GET /` page, embedded at build time so an installed binary serves it from any
+/// working directory (BL-045).
+pub fn load_html_file() -> &'static str {
+    include_str!("documentation.html")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Error, ErrorKind};
+
+    #[test]
+    fn read_errors_map_to_their_status_codes() {
+        let cases = [
+            (too_large("Request too large (max 1MB)"), 413),
+            (
+                Error::new(ErrorKind::TimedOut, "Request read timed out (max 30 s)"),
+                408,
+            ),
+            (Error::new(ErrorKind::InvalidData, "Invalid UTF-8"), 400),
+            (Error::new(ErrorKind::ConnectionReset, "reset"), 500),
+        ];
+        for (e, status) in cases {
+            let (got, message) = read_error_status(&e);
+            assert_eq!(got, status, "{e}");
+            if status != 500 {
+                assert_eq!(message, e.to_string());
+            }
         }
     }
 }

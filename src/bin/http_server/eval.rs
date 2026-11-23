@@ -1,14 +1,24 @@
+use skillet::Value;
 use std::collections::HashMap;
 use std::net::TcpStream;
-use std::sync::{Arc, atomic::{AtomicU64, Ordering}};
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
+};
 use std::time::Instant;
-use skillet::Value;
 
 use super::auth::check_authentication;
-use super::cache::{evaluate_cached, get_cache_stats, clear_cache};
-use super::types::{EvalRequest, EvalResponse, HealthResponse, IncludeVariables, CacheStatsResponse};
-use super::utils::{send_http_response, send_http_error, parse_json_body, sanitize_json_key};
+use super::cache::{clear_cache, evaluate_cached, get_cache_stats, CachedResult};
+use super::eval_limits::server_limits;
+use super::json_keys::{check_json_keys, sanitize_json_key};
+use super::parse_cache;
+use super::response_size;
 use super::stats::ServerStats;
+use super::types::{
+    CacheStatsResponse, EvalRequest, EvalResponse, HealthResponse, IncludeVariables,
+    ParseCacheStatsResponse,
+};
+use super::utils::{parse_json_body, send_http_error, send_http_response, to_json_exact};
 
 pub fn handle_eval_post(
     stream: &mut TcpStream,
@@ -32,8 +42,13 @@ pub fn handle_eval_post(
     };
 
     let response = process_eval_request(eval_request, stats, request_counter);
-    let json = serde_json::to_string(&response).unwrap_or_default();
-    send_http_response(stream, if response.success { 200 } else { 400 }, "application/json", &json);
+    let json = to_json_exact(&response);
+    send_http_response(
+        stream,
+        if response.success { 200 } else { 400 },
+        "application/json",
+        &json,
+    );
 }
 
 pub fn handle_eval_get(
@@ -81,13 +96,7 @@ pub fn handle_eval_get(
                             .split(',')
                             .map(|s| s.trim())
                             .filter(|s| !s.is_empty())
-                            .map(|s| {
-                                if s.starts_with(':') {
-                                    s[1..].to_string()
-                                } else {
-                                    s.to_string()
-                                }
-                            })
+                            .map(|s| s.strip_prefix(':').unwrap_or(s).to_string())
                             .collect();
 
                         if vars.is_empty() {
@@ -106,7 +115,10 @@ pub fn handle_eval_get(
                     } else if decoded_value == "false" {
                         variables.insert(key.to_string(), serde_json::json!(false));
                     } else {
-                        variables.insert(key.to_string(), serde_json::json!(decoded_value.to_string()));
+                        variables.insert(
+                            key.to_string(),
+                            serde_json::json!(decoded_value.to_string()),
+                        );
                     }
                 }
             }
@@ -120,21 +132,30 @@ pub fn handle_eval_get(
 
     let eval_request = EvalRequest {
         expression,
-        arguments: if variables.is_empty() { None } else { Some(variables) },
+        arguments: if variables.is_empty() {
+            None
+        } else {
+            Some(variables)
+        },
         output_json: Some(output_json),
         include_variables: Some(include_variables),
     };
 
     let response = process_eval_request(eval_request, stats, request_counter);
-    let json = serde_json::to_string(&response).unwrap_or_default();
-    send_http_response(stream, if response.success { 200 } else { 400 }, "application/json", &json);
+    let json = to_json_exact(&response);
+    send_http_response(
+        stream,
+        if response.success { 200 } else { 400 },
+        "application/json",
+        &json,
+    );
 }
 
 pub fn handle_health(
     stream: &mut TcpStream,
     stats: &ServerStats,
     request: &str,
-    server_token: Arc<Option<String>>
+    server_token: Arc<Option<String>>,
 ) {
     // Health endpoint doesn't require authentication
     let _ = (request, server_token); // Suppress unused warnings
@@ -154,6 +175,15 @@ pub fn handle_health(
             evictions: cache_stats.evictions,
             total_saved_time_ms: cache_stats.total_saved_time_ms,
         }),
+        parse_cache: {
+            let parse = parse_cache::stats();
+            ParseCacheStatsResponse {
+                hits: parse.hits,
+                misses: parse.misses,
+                hit_rate: parse.hit_rate(),
+                entries: parse.entries,
+            }
+        },
     };
 
     let json = serde_json::to_string(&response).unwrap_or_default();
@@ -171,8 +201,9 @@ pub fn handle_cache_clear(
         return;
     }
 
-    // Clear the expression cache
     clear_cache();
+    // Every worker's parsed trees too: this one's now, the others' at their next request.
+    parse_cache::clear_all();
 
     let response = serde_json::json!({
         "success": true,
@@ -193,17 +224,25 @@ fn process_eval_request(
     // Convert JSON variables to Skillet values with key sanitization
     let vars = match req.arguments {
         Some(json_vars) => {
+            if let Err(e) = check_json_keys(json_vars.keys().map(String::as_str)) {
+                return EvalResponse {
+                    success: false,
+                    result: None,
+                    variables: None,
+                    error: Some(e),
+                    execution_time_ms: start_time.elapsed().as_secs_f64() * 1000.0,
+                    request_id,
+                };
+            }
             // Pre-allocate HashMap with known size + 1 for "arguments"
             let mut result = HashMap::with_capacity(json_vars.len() + 1);
 
-            // Add the original JSON data for JQ function (serialize once)
+            // The original JSON data for the JQ function (serialize once)
             let json_str = serde_json::to_string(&json_vars).unwrap_or_default();
-            result.insert("arguments".to_string(), Value::Json(json_str));
 
             for (key, value) in json_vars {
                 match skillet::json_to_value(value) {
                     Ok(v) => {
-                        // Only sanitize if necessary (fast path optimization)
                         let sanitized_key = sanitize_json_key(&key);
                         result.insert(sanitized_key, v);
                     }
@@ -219,14 +258,29 @@ fn process_eval_request(
                     }
                 }
             }
+            // Inserted last so a request key named `arguments` cannot replace it (BL-077).
+            #[allow(deprecated)] // `Value::Json` until 0.8 (ADR-0030)
+            result.insert("arguments".to_string(), Value::Json(json_str));
             result
         }
         None => HashMap::new(),
     };
 
     // Evaluate expression with caching
-    let include_variables = matches!(req.include_variables, Some(IncludeVariables::All) | Some(IncludeVariables::Selected(_)));
-    let cached_result = evaluate_cached(&req.expression, &vars, include_variables);
+    let include_variables = matches!(
+        req.include_variables,
+        Some(IncludeVariables::All) | Some(IncludeVariables::Selected(_))
+    );
+    // The variables are charged in the evaluation's own budget scope (ADR-0011 amendment 5):
+    // `evaluate_cached` opens the same limits again, which joins this scope.
+    let cached_result =
+        skillet::with_limits(server_limits(), || match skillet::charge_variables(&vars) {
+            Ok(()) => evaluate_cached(&req.expression, &vars, include_variables),
+            Err(e) => CachedResult {
+                result: Err(e.to_string()),
+                variable_context: None,
+            },
+        });
 
     let (result, variable_context) = match cached_result.result {
         Ok(value) => (Ok(value), cached_result.variable_context),
@@ -237,8 +291,22 @@ fn process_eval_request(
     let execution_time_ms = execution_time.as_secs_f64() * 1000.0;
     stats.record_request(execution_time.as_micros() as u64);
 
+    let failed = |error: String| EvalResponse {
+        success: false,
+        result: None,
+        variables: None,
+        error: Some(error),
+        execution_time_ms,
+        request_id,
+    };
+
     match result {
         Ok(val) => {
+            // Size the response before building it: escaping can make it up to 6x the value.
+            let mut response_bytes = response_size::json_size(&val, false);
+            if let Err(e) = response_size::check(response_bytes, server_limits().max_bytes) {
+                return failed(e);
+            }
             let result_json = if req.output_json.unwrap_or(false) {
                 format_structured_output(&val, execution_time_ms)
             } else {
@@ -262,11 +330,23 @@ fn process_eval_request(
                         };
 
                         if should_include {
+                            response_bytes = response_bytes
+                                .saturating_add(key.len() as u64 + 4)
+                                .saturating_add(response_size::json_size(&value, false));
+                            if let Err(e) =
+                                response_size::check(response_bytes, server_limits().max_bytes)
+                            {
+                                return failed(e);
+                            }
                             json_vars.insert(key, format_simple_output(&value));
                         }
                     }
                 }
-                if json_vars.is_empty() { None } else { Some(json_vars) }
+                if json_vars.is_empty() {
+                    None
+                } else {
+                    Some(json_vars)
+                }
             } else {
                 None
             };
@@ -280,35 +360,28 @@ fn process_eval_request(
                 request_id,
             }
         }
-        Err(e) => EvalResponse {
-            success: false,
-            result: None,
-            variables: None,
-            error: Some(e.to_string()),
-            execution_time_ms,
-            request_id,
-        },
+        Err(e) => failed(e.to_string()),
     }
 }
 
+#[allow(deprecated)] // `Currency` is read as a Number (ADR-0033); `Json` until 0.8 (ADR-0030)
 fn format_structured_output(val: &Value, execution_time_ms: f64) -> serde_json::Value {
     let (result_value, type_name) = match val {
-        Value::Number(n) => (serde_json::json!(n), "Number"),
+        Value::Number(n) | Value::Currency(n) => (serde_json::json!(n), "Number"),
         Value::String(s) => (serde_json::json!(s), "String"),
         Value::Boolean(b) => (serde_json::json!(b), "Boolean"),
-        Value::Currency(c) => (serde_json::json!(c), "Currency"),
         Value::DateTime(dt) => (serde_json::json!(dt), "DateTime"),
         Value::Array(arr) => {
             let json_arr: Vec<serde_json::Value> = arr.iter().map(format_simple_output).collect();
             (serde_json::json!(json_arr), "Array")
-        },
-        Value::Null => (serde_json::json!(null), "Null"),
-        Value::Json(s) => {
-            match serde_json::from_str(s) {
-                Ok(parsed) => (parsed, "Json"),
-                Err(_) => (serde_json::json!(s), "Json")
-            }
         }
+        Value::Null => (serde_json::json!(null), "Null"),
+        Value::Json(s) => match serde_json::from_str(s) {
+            Ok(parsed) => (parsed, "Json"),
+            Err(_) => (serde_json::json!(s), "Json"),
+        },
+        // `Value` is #[non_exhaustive]: a later variant is sent as its Debug text
+        _ => (serde_json::json!(format!("{:?}", val)), "Unknown"),
     };
 
     serde_json::json!({
@@ -318,18 +391,20 @@ fn format_structured_output(val: &Value, execution_time_ms: f64) -> serde_json::
     })
 }
 
+#[allow(deprecated)] // `Currency` is read as a Number (ADR-0033); `Json` until 0.8 (ADR-0030)
 fn format_simple_output(val: &Value) -> serde_json::Value {
     match val {
-        Value::Number(n) => serde_json::json!(n),
+        Value::Number(n) | Value::Currency(n) => serde_json::json!(n),
         Value::String(s) => serde_json::json!(s),
         Value::Boolean(b) => serde_json::json!(b),
-        Value::Currency(c) => serde_json::json!(c),
         Value::DateTime(dt) => serde_json::json!(dt.to_string()),
         Value::Array(arr) => {
             let json_arr: Vec<serde_json::Value> = arr.iter().map(format_simple_output).collect();
             serde_json::json!(json_arr)
-        },
+        }
         Value::Null => serde_json::json!(null),
         Value::Json(s) => serde_json::from_str(s).unwrap_or_else(|_| serde_json::json!(s)),
+        // `Value` is #[non_exhaustive]: a later variant is sent as its Debug text
+        _ => serde_json::json!(format!("{:?}", val)),
     }
 }

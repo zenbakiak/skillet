@@ -44,15 +44,9 @@ impl<'de> Deserialize<'de> for IncludeVariables {
                     .split(',')
                     .map(|s| s.trim())
                     .filter(|s| !s.is_empty())
-                    .map(|s| {
-                        if s.starts_with(':') {
-                            s[1..].to_string()
-                        } else {
-                            s.to_string()
-                        }
-                    })
+                    .map(|s| s.strip_prefix(':').unwrap_or(s).to_string())
                     .collect();
-                
+
                 if vars.is_empty() {
                     Ok(IncludeVariables::None)
                 } else {
@@ -146,6 +140,16 @@ pub struct HealthResponse {
     pub requests_processed: u64,
     pub avg_execution_time_ms: f64,
     pub cache_stats: Option<CacheStatsResponse>,
+    pub parse_cache: ParseCacheStatsResponse,
+}
+
+/// Parse-cache counters, summed over the worker threads (BL-067).
+#[derive(Debug, Serialize)]
+pub struct ParseCacheStatsResponse {
+    pub hits: u64,
+    pub misses: u64,
+    pub hit_rate: f64,
+    pub entries: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -158,6 +162,7 @@ pub struct CacheStatsResponse {
     pub total_saved_time_ms: f64,
 }
 
+#[cfg(feature = "plugins")]
 #[derive(Debug, Deserialize)]
 pub struct UploadJSRequest {
     pub filename: String,
@@ -167,6 +172,7 @@ pub struct UploadJSRequest {
     pub file_content: Option<String>, // For file uploads as base64 or direct content
 }
 
+#[cfg(feature = "plugins")]
 #[derive(Debug, Serialize)]
 pub struct UploadJSResponse {
     pub success: bool,
@@ -176,6 +182,7 @@ pub struct UploadJSResponse {
     pub error: Option<String>,
 }
 
+#[cfg(feature = "plugins")]
 #[derive(Debug, Deserialize)]
 pub struct UpdateJSRequest {
     pub filename: String,
@@ -185,6 +192,7 @@ pub struct UpdateJSRequest {
     pub file_content: Option<String>, // For file uploads as base64 or direct content
 }
 
+#[cfg(feature = "plugins")]
 #[derive(Debug, Serialize)]
 pub struct UpdateJSResponse {
     pub success: bool,
@@ -194,11 +202,13 @@ pub struct UpdateJSResponse {
     pub error: Option<String>,
 }
 
+#[cfg(feature = "plugins")]
 #[derive(Debug, Deserialize)]
 pub struct DeleteJSRequest {
     pub filename: String,
 }
 
+#[cfg(feature = "plugins")]
 #[derive(Debug, Serialize)]
 pub struct DeleteJSResponse {
     pub success: bool,
@@ -206,6 +216,7 @@ pub struct DeleteJSResponse {
     pub error: Option<String>,
 }
 
+#[cfg(feature = "plugins")]
 #[derive(Debug, Serialize)]
 pub struct JSFunctionInfo {
     pub filename: String,
@@ -220,6 +231,7 @@ pub struct JSFunctionInfo {
     pub validation_error: Option<String>,
 }
 
+#[cfg(feature = "plugins")]
 #[derive(Debug, Serialize)]
 pub struct ListJSResponse {
     pub success: bool,
@@ -228,6 +240,7 @@ pub struct ListJSResponse {
     pub error: Option<String>,
 }
 
+#[cfg(feature = "plugins")]
 #[derive(Debug, Serialize)]
 pub struct ReloadHooksResponse {
     pub success: bool,
@@ -236,6 +249,7 @@ pub struct ReloadHooksResponse {
     pub error: Option<String>,
 }
 
+#[cfg(feature = "plugins")]
 #[derive(Debug, Serialize)]
 pub struct ValidationResults {
     pub syntax_valid: bool,

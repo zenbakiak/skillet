@@ -1,6 +1,9 @@
 use crate::error::Error;
+use crate::limits;
+use crate::runtime::text::{scalar_text, ScalarText};
 use crate::runtime::utils::is_blank;
 use crate::types::Value;
+use std::borrow::Cow;
 
 /// Get the byte offset corresponding to a character index, without collecting into Vec<char>.
 #[inline]
@@ -17,24 +20,150 @@ fn char_count(s: &str) -> usize {
     s.chars().count()
 }
 
+/// A scalar as Excel's text functions (`LEN`, `FIND`) see it: its text form (ADR-0034) for a
+/// String, Number, Boolean or NULL. A DateTime, array or JSON object is `None` (ADR-0031 A4).
+#[allow(deprecated)] // `Value::Currency` is read as a Number (ADR-0033)
+fn excel_text(v: &Value) -> Option<ScalarText<'_>> {
+    match v {
+        Value::String(_)
+        | Value::Number(_)
+        | Value::Currency(_)
+        | Value::Boolean(_)
+        | Value::Null => scalar_text(v),
+        Value::Array(_) | Value::DateTime(_) | Value::Json(_) => None,
+    }
+}
+
+/// Flatten `v` into `out` as text (ADR-0034), for `TEXTJOIN`.
+fn textjoin_parts<'v>(v: &'v Value, out: &mut Vec<Cow<'v, str>>) -> Result<(), Error> {
+    match v {
+        Value::Array(items) => items.iter().try_for_each(|it| textjoin_parts(it, out)),
+        _ => {
+            limits::tick_item(out.len())?;
+            out.push(scalar_text(v).map(ScalarText::into_cow).unwrap_or_default());
+            Ok(())
+        }
+    }
+}
+
+/// Excel `TEXTJOIN(delimiter, ignore_empty, text1, ...)`. Arrays are flattened. With
+/// `ignore_empty` TRUE, empty strings and NULLs are skipped. An array delimiter is used in turn
+/// between items, as in Excel. The output is charged before it is built (ADR-0011).
+fn textjoin(args: &[Value]) -> Result<Value, Error> {
+    let [delimiter, ignore_empty, texts @ ..] = args else {
+        return Err(Error::new(
+            "TEXTJOIN expects delimiter, ignore_empty, text1, [text2], ...",
+            None,
+        ));
+    };
+    if texts.is_empty() {
+        return Err(Error::new(
+            "TEXTJOIN expects delimiter, ignore_empty, text1, [text2], ...",
+            None,
+        ));
+    }
+    let mut delimiters = Vec::new();
+    textjoin_parts(delimiter, &mut delimiters)?;
+    if delimiters.is_empty() {
+        delimiters.push(Cow::Borrowed(""));
+    }
+    let ignore_empty = match ignore_empty {
+        Value::Boolean(b) => *b,
+        Value::Number(n) => *n != 0.0,
+        _ => {
+            return Err(Error::new(
+                "TEXTJOIN ignore_empty must be TRUE or FALSE",
+                None,
+            ))
+        }
+    };
+    let mut parts = Vec::new();
+    for t in texts {
+        textjoin_parts(t, &mut parts)?;
+    }
+    if ignore_empty {
+        parts.retain(|p| !p.is_empty());
+    }
+    let seps = parts.len().saturating_sub(1);
+    let total = parts
+        .iter()
+        .map(|p| p.len())
+        .chain(delimiters.iter().cycle().take(seps).map(|d| d.len()))
+        .fold(0usize, usize::saturating_add);
+    limits::charge_string(total)?;
+    let mut out = String::with_capacity(total);
+    for (i, part) in parts.iter().enumerate() {
+        limits::tick_item(i)?;
+        if i > 0 {
+            out.push_str(&delimiters[(i - 1) % delimiters.len()]);
+        }
+        out.push_str(part);
+    }
+    Ok(Value::String(out))
+}
+
+/// Excel `FIND(find_text, within_text, [start_num])`: the 1-based character position of the
+/// first case-sensitive match at or after `start_num` (default 1; truncated). Not found, or
+/// `start_num` below 1 or past the end of `within_text`, is an error (Excel `#VALUE!`). An empty
+/// `find_text` matches at `start_num`. `FIND(array, lambda)` is the evaluator's array search.
+pub(crate) fn find_text(args: &[Value]) -> Result<Value, Error> {
+    let (needle, haystack) = match args {
+        [Value::String(n), h] | [Value::String(n), h, _] => (n, h),
+        _ => {
+            return Err(Error::new(
+                "FIND expects find_text, within_text, [start_num]",
+                None,
+            ))
+        }
+    };
+    let haystack =
+        excel_text(haystack).ok_or_else(|| Error::new("FIND expects within_text as text", None))?;
+    let start = match args.get(2) {
+        None | Some(Value::Null) => 1.0,
+        Some(Value::Number(n)) => n.trunc(),
+        Some(_) => return Err(Error::new("FIND start_num must be a number", None)),
+    };
+    let len = char_count(&haystack);
+    // NaN fails both comparisons, so it is rejected too.
+    if !(start >= 1.0 && start <= len as f64) {
+        return Err(Error::new(
+            "FIND start_num must be between 1 and the length of within_text",
+            None,
+        ));
+    }
+    let from = char_byte_offset(&haystack, start as usize - 1);
+    match haystack[from..].find(needle.as_str()) {
+        Some(byte) => {
+            let pos = start as usize + char_count(&haystack[from..from + byte]);
+            Ok(Value::Number(pos as f64))
+        }
+        None => Err(Error::new("FIND: find_text not found in within_text", None)),
+    }
+}
+
+/// Collect split parts, charging `48 + part.len` for each one while collecting (ADR-0011).
+pub(crate) fn split_charged<'s>(parts: impl Iterator<Item = &'s str>) -> Result<Value, Error> {
+    let mut out = Vec::new();
+    for p in parts {
+        limits::charge_string(p.len())?;
+        out.push(Value::String(p.to_string()));
+    }
+    Ok(Value::Array(out))
+}
+
+#[allow(deprecated)] // `Value::Currency` is read as a Number (ADR-0033)
 pub fn exec_string(name: &str, args: &[Value]) -> Result<Value, Error> {
     match name {
-        "SUBSTITUTE" => {
-            // SUBSTITUTE(text, substr, replacement)
-            match (args.get(0), args.get(1), args.get(2)) {
-                (Some(Value::String(text)), Some(Value::String(substr)), Some(Value::String(repl))) => {
-                    Ok(Value::String(text.replace(substr, repl)))
-                }
-                _ => Err(Error::new(
-                    "SUBSTITUTE expects (text: string, substr: string, replacement: string)",
-                    None,
-                )),
-            }
-        }
+        "SUBSTITUTE" => substitute(args),
         "SUBSTITUTEM" => {
             // SUBSTITUTEM(text, substr, replacement) - replace all occurrences (alias of SUBSTITUTE)
-            match (args.get(0), args.get(1), args.get(2)) {
-                (Some(Value::String(text)), Some(Value::String(substr)), Some(Value::String(repl))) => {
+            match (args.first(), args.get(1), args.get(2)) {
+                (
+                    Some(Value::String(text)),
+                    Some(Value::String(substr)),
+                    Some(Value::String(repl)),
+                ) => {
+                    limits::charge_replace(text, substr, repl)?;
                     Ok(Value::String(text.replace(substr, repl)))
                 }
                 _ => Err(Error::new(
@@ -43,141 +172,34 @@ pub fn exec_string(name: &str, args: &[Value]) -> Result<Value, Error> {
                 )),
             }
         }
-        "LEFT" => {
-            // LEFT(String, [NumberOfCharacters]) -> default 1 character if omitted
-            if args.is_empty() {
-                return Err(Error::new("LEFT expects string, [num_chars]", None));
-            }
-            let s = match args.get(0) {
-                Some(Value::String(st)) => st,
-                _ => return Err(Error::new("LEFT expects string as first argument", None)),
-            };
-            let n = match args.get(1) {
-                Some(Value::Number(n)) => *n,
-                Some(_) => return Err(Error::new("LEFT expects number as second argument", None)),
-                None => 1.0,
-            };
-            let take = if n.is_finite() && n > 0.0 { n as usize } else { 0usize };
-            let byte_end = char_byte_offset(s, take);
-            Ok(Value::String(s[..byte_end].to_string()))
-        }
-        "RIGHT" => {
-            // RIGHT(String, [NumberOfCharacters]) -> default 1 character if omitted
-            if args.is_empty() {
-                return Err(Error::new("RIGHT expects string, [num_chars]", None));
-            }
-            let s = match args.get(0) {
-                Some(Value::String(st)) => st,
-                _ => return Err(Error::new("RIGHT expects string as first argument", None)),
-            };
-            let n = match args.get(1) {
-                Some(Value::Number(n)) => *n,
-                Some(_) => return Err(Error::new("RIGHT expects number as second argument", None)),
-                None => 1.0,
-            };
-            let take = if n.is_finite() && n > 0.0 { n as usize } else { 0usize };
-            let len = char_count(s);
-            let start_char = len.saturating_sub(take);
-            let byte_start = char_byte_offset(s, start_char);
-            Ok(Value::String(s[byte_start..].to_string()))
-        }
-        "MID" => {
-            // MID(String, StartingPosition [, NumberOfCharacters])
-            // StartingPosition is 1-based (Excel-like). If NumberOfCharacters omitted, go to end.
-            if args.len() < 2 {
-                return Err(Error::new(
-                    "MID expects string, start, [num_chars]",
-                    None,
-                ));
-            }
-            let s = match args.get(0) {
-                Some(Value::String(st)) => st,
-                _ => return Err(Error::new("MID expects string as first argument", None)),
-            };
-            let start_num = match args.get(1) {
-                Some(Value::Number(n)) => *n,
-                _ => return Err(Error::new("MID expects number as second argument", None)),
-            };
-            let len_opt = match args.get(2) {
-                Some(Value::Number(n)) => Some(*n),
-                Some(_) => return Err(Error::new("MID expects number as third argument", None)),
-                None => None,
-            };
-
-            let total = char_count(s);
-            // Excel-like: 1-based start; clamp below 1 to 1
-            let start_index = if start_num.is_finite() {
-                let s1 = if start_num < 1.0 { 1.0 } else { start_num.floor() } as usize;
-                s1.saturating_sub(1).min(total)
-            } else {
-                0usize
-            };
-            let end_index = if let Some(n) = len_opt {
-                let take = if n.is_finite() && n > 0.0 { n as usize } else { 0usize };
-                start_index.saturating_add(take).min(total)
-            } else {
-                total
-            };
-            if start_index >= total || start_index >= end_index {
-                Ok(Value::String(String::new()))
-            } else {
-                let byte_start = char_byte_offset(s, start_index);
-                let byte_end = char_byte_offset(s, end_index);
-                Ok(Value::String(s[byte_start..byte_end].to_string()))
-            }
-        }
-        "LENGTH" => match args.get(0) {
+        "LEFT" | "RIGHT" => left_right(name, args),
+        "MID" => mid(args),
+        "LENGTH" => match args.first() {
             Some(Value::Array(items)) => Ok(Value::Number(items.len() as f64)),
             Some(Value::String(s)) => Ok(Value::Number(s.chars().count() as f64)),
             Some(Value::Null) => Ok(Value::Number(0.0)),
             Some(_) | None => Err(Error::new("LENGTH expects array or string", None)),
         },
-        "CONCAT" => {
-            let mut out = String::new();
-            fn push_val(s: &mut String, v: &Value) -> Result<(), Error> {
-                match v {
-                    Value::String(st) => {
-                        s.push_str(st);
-                        Ok(())
-                    }
-                    Value::Number(n) => {
-                        s.push_str(&n.to_string());
-                        Ok(())
-                    }
-                    Value::Array(arr) => {
-                        for it in arr {
-                            push_val(s, it)?;
-                        }
-                        Ok(())
-                    }
-                    Value::Boolean(b) => {
-                        s.push_str(if *b { "TRUE" } else { "FALSE" });
-                        Ok(())
-                    }
-                    Value::Null => Ok(()),
-                    Value::Currency(_) => Ok(()),
-                    Value::DateTime(_) => Ok(()),
-                    Value::Json(_) => Ok(()),
-                }
-            }
-            for a in args {
-                if let Value::Null = a { /* skip */
-                } else {
-                    push_val(&mut out, a)?;
-                }
-            }
-            Ok(Value::String(out))
-        }
-        "UPPER" => match args.get(0) {
-            Some(Value::String(s)) => Ok(Value::String(s.to_uppercase())),
+        // Charged before it is built (ADR-0011 amendment 2); text forms per ADR-0034.
+        "CONCAT" => crate::runtime::text::concat(args.iter()).map(Value::String),
+        "UPPER" => match args.first() {
+            Some(Value::String(s)) => Ok(Value::String(limits::case_mapped(s, true)?)),
             _ => Err(Error::new("UPPER expects string", None)),
         },
-        "LOWER" => match args.get(0) {
-            Some(Value::String(s)) => Ok(Value::String(s.to_lowercase())),
+        "LOWER" => match args.first() {
+            Some(Value::String(s)) => Ok(Value::String(limits::case_mapped(s, false)?)),
             _ => Err(Error::new("LOWER expects string", None)),
         },
-        "TRIM" => match args.get(0) {
-            Some(Value::String(s)) => Ok(Value::String(s.trim().to_string())),
+        // Excel TRIM: drop leading and trailing spaces and collapse inner runs of spaces to one.
+        // Only the space character (U+0020) counts, as in Excel. The `.trim()` method keeps
+        // Ruby semantics (all whitespace at both ends, inner runs kept).
+        "TRIM" => match args.first() {
+            Some(Value::String(s)) => Ok(Value::String(
+                s.split(' ')
+                    .filter(|w| !w.is_empty())
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            )),
             _ => Err(Error::new("TRIM expects string", None)),
         },
         "SUBSTRING" => {
@@ -187,7 +209,7 @@ pub fn exec_string(name: &str, args: &[Value]) -> Result<Value, Error> {
                     None,
                 ));
             }
-            let string = match args.get(0) {
+            let string = match args.first() {
                 Some(Value::String(s)) => s,
                 _ => {
                     return Err(Error::new(
@@ -226,89 +248,224 @@ pub fn exec_string(name: &str, args: &[Value]) -> Result<Value, Error> {
                 Ok(Value::String(string[byte_start..byte_end].to_string()))
             }
         }
-        "SPLIT" => match (args.get(0), args.get(1)) {
-            (Some(Value::String(s)), Some(Value::String(sep))) => Ok(Value::Array(
-                s.split(sep).map(|p| Value::String(p.to_string())).collect(),
-            )),
-            (Some(Value::String(s)), None) => Ok(Value::Array(
-                s.split(',')
-                    .map(|p| Value::String(p.trim().to_string()))
-                    .collect(),
-            )),
+        "SPLIT" => match (args.first(), args.get(1)) {
+            (Some(Value::String(s)), Some(Value::String(sep))) => {
+                split_charged(s.split(sep.as_str()))
+            }
+            (Some(Value::String(s)), None) => split_charged(s.split(',').map(str::trim)),
             _ => Err(Error::new("SPLIT expects string, [separator]", None)),
         },
-        "REPLACE" => {
-            // Excel-like: REPLACE(old_text, start_num, num_chars, new_text)
-            // start_num is 1-based; num_chars may be 0; count by Unicode scalar values
-            if args.len() != 4 {
-                return Err(Error::new(
-                    "REPLACE expects (old_text: string, start_num: number, num_chars: number, new_text: string)",
-                    None,
-                ));
-            }
-            let old_text = match args.get(0) { Some(Value::String(s)) => s, _ => return Err(Error::new("REPLACE expects string as first argument", None)) };
-            let start_num = match args.get(1) { Some(Value::Number(n)) => *n, _ => return Err(Error::new("REPLACE expects number as second argument", None)) };
-            let num_chars = match args.get(2) { Some(Value::Number(n)) => *n, _ => return Err(Error::new("REPLACE expects number as third argument", None)) };
-            let new_text = match args.get(3) { Some(Value::String(s)) => s, _ => return Err(Error::new("REPLACE expects string as fourth argument", None)) };
-
-            let len = char_count(old_text);
-
-            // Clamp start (1-based) to [1, len+1]
-            let start_idx_1b = if start_num.is_finite() { start_num.floor().max(1.0) as usize } else { 1usize };
-            let start_idx = start_idx_1b.saturating_sub(1).min(len);
-
-            let take = if num_chars.is_finite() && num_chars > 0.0 { num_chars.floor() as usize } else { 0usize };
-            let end_idx = start_idx.saturating_add(take).min(len);
-
-            let byte_start = char_byte_offset(old_text, start_idx);
-            let byte_end = char_byte_offset(old_text, end_idx);
-
-            let mut out = String::with_capacity(old_text.len() + new_text.len());
-            out.push_str(&old_text[..byte_start]);
-            out.push_str(new_text);
-            out.push_str(&old_text[byte_end..]);
-            Ok(Value::String(out))
-        }
-        "REVERSE" => match args.get(0) {
-            Some(Value::String(s)) => Ok(Value::String(s.chars().rev().collect())),
-            _ => Err(Error::new("REVERSE expects string", None)),
+        "REPLACE" => replace(args),
+        "ISBLANK" => match args.first() {
+            Some(v) => Ok(Value::Boolean(is_blank(v))),
+            None => Ok(Value::Boolean(true)),
         },
-        "ISBLANK" => {
-            match args.get(0) {
-                Some(v) => Ok(Value::Boolean(is_blank(v))),
-                None => Ok(Value::Boolean(true)),
-            }
-        }
-        "ISNUMBER" => {
-            Ok(Value::Boolean(matches!(
-                args.get(0),
-                Some(Value::Number(_) | Value::Currency(_))
-            )))
-        }
-        "ISTEXT" => {
-            Ok(Value::Boolean(matches!(args.get(0), Some(Value::String(_)))))
-        }
+        "ISNUMBER" => Ok(Value::Boolean(matches!(
+            args.first(),
+            Some(Value::Number(_) | Value::Currency(_))
+        ))),
+        "ISTEXT" => Ok(Value::Boolean(matches!(
+            args.first(),
+            Some(Value::String(_))
+        ))),
         "INCLUDES" => {
             // INCLUDES(string, substring) -> boolean
             if args.len() != 2 {
                 return Err(Error::new("INCLUDES expects string, substring", None));
             }
-            match (args.get(0), args.get(1)) {
+            match (args.first(), args.get(1)) {
                 (Some(Value::String(s)), Some(Value::String(substring))) => {
                     Ok(Value::Boolean(s.contains(substring)))
                 }
-                (Some(Value::String(_)), Some(_)) => {
-                    Err(Error::new("INCLUDES expects string as second argument", None))
-                }
-                (Some(_), Some(_)) => {
-                    Err(Error::new("INCLUDES expects string as first argument", None))
-                }
+                (Some(Value::String(_)), Some(_)) => Err(Error::new(
+                    "INCLUDES expects string as second argument",
+                    None,
+                )),
+                (Some(_), Some(_)) => Err(Error::new(
+                    "INCLUDES expects string as first argument",
+                    None,
+                )),
                 _ => Err(Error::new("INCLUDES expects string, substring", None)),
             }
         }
+        "LEN" => match args {
+            [v] => {
+                let text = excel_text(v).ok_or_else(|| Error::new("LEN expects text", None))?;
+                Ok(Value::Number(char_count(&text) as f64))
+            }
+            _ => Err(Error::new("LEN expects 1 argument: text", None)),
+        },
+        "TEXTJOIN" => textjoin(args),
         _ => Err(Error::new(
             format!("Unknown string function: {}", name),
             None,
         )),
+    }
+}
+
+/// Excel's `num_chars`: a number of characters, truncated. Negative or not a finite number is
+/// Excel's `#VALUE!`. A length past the end of the text is clamped by the caller.
+fn count_arg(func: &str, v: &Value) -> Result<usize, Error> {
+    match v {
+        Value::Number(n) if n.is_finite() && *n >= 0.0 => Ok(n.trunc() as usize),
+        Value::Number(_) => Err(Error::new(
+            format!("{func} num_chars must not be negative (#VALUE!)"),
+            None,
+        )),
+        _ => Err(Error::new(
+            format!("{func} expects number as num_chars"),
+            None,
+        )),
+    }
+}
+
+/// Excel's 1-based `start_num`, truncated, as a 0-based index. Below 1 is Excel's `#VALUE!`.
+fn start_arg(func: &str, v: &Value) -> Result<usize, Error> {
+    match v {
+        Value::Number(n) if n.is_finite() && n.trunc() >= 1.0 => Ok(n.trunc() as usize - 1),
+        Value::Number(_) => Err(Error::new(
+            format!("{func} start_num must be at least 1 (#VALUE!)"),
+            None,
+        )),
+        _ => Err(Error::new(
+            format!("{func} expects number as start_num"),
+            None,
+        )),
+    }
+}
+
+/// The first argument of a text function, which must be a string (excel-compat X-9).
+fn text_arg<'a>(func: &str, args: &'a [Value]) -> Result<&'a str, Error> {
+    match args.first() {
+        Some(Value::String(s)) => Ok(s),
+        _ => Err(Error::new(
+            format!("{func} expects string as first argument"),
+            None,
+        )),
+    }
+}
+
+/// Excel `LEFT(text, [num_chars])` / `RIGHT(text, [num_chars])`: `num_chars` defaults to 1.
+fn left_right(name: &str, args: &[Value]) -> Result<Value, Error> {
+    if args.is_empty() {
+        return Err(Error::new(
+            format!("{name} expects string, [num_chars]"),
+            None,
+        ));
+    }
+    let s = text_arg(name, args)?;
+    let take = match args.get(1) {
+        Some(v) => count_arg(name, v)?,
+        None => 1,
+    };
+    let len = char_count(s);
+    let (from, to) = if name == "LEFT" {
+        (0, take.min(len))
+    } else {
+        (len.saturating_sub(take), len)
+    };
+    Ok(Value::String(
+        s[char_byte_offset(s, from)..char_byte_offset(s, to)].to_string(),
+    ))
+}
+
+/// Excel `MID(text, start_num, num_chars)`. A start past the end gives `""`; a length past the
+/// end is clamped. Leaving out `num_chars` (to the end) is a Skillet extension.
+fn mid(args: &[Value]) -> Result<Value, Error> {
+    let [_, start, rest @ ..] = args else {
+        return Err(Error::new("MID expects string, start, [num_chars]", None));
+    };
+    let s = text_arg("MID", args)?;
+    let start = start_arg("MID", start)?;
+    let total = char_count(s);
+    let end = match rest.first() {
+        Some(v) => start.saturating_add(count_arg("MID", v)?).min(total),
+        None => total,
+    };
+    if start >= end {
+        return Ok(Value::String(String::new()));
+    }
+    Ok(Value::String(
+        s[char_byte_offset(s, start)..char_byte_offset(s, end)].to_string(),
+    ))
+}
+
+/// Excel `REPLACE(old_text, start_num, num_chars, new_text)`. A start past the end appends
+/// `new_text`; `num_chars` past the end is clamped.
+fn replace(args: &[Value]) -> Result<Value, Error> {
+    let [_, start, count, new_text] = args else {
+        return Err(Error::new(
+            "REPLACE expects (old_text: string, start_num: number, num_chars: number, new_text: string)",
+            None,
+        ));
+    };
+    let old_text = text_arg("REPLACE", args)?;
+    let start = start_arg("REPLACE", start)?;
+    let count = count_arg("REPLACE", count)?;
+    let Value::String(new_text) = new_text else {
+        return Err(Error::new(
+            "REPLACE expects string as fourth argument",
+            None,
+        ));
+    };
+    let len = char_count(old_text);
+    let start = start.min(len);
+    let end = start.saturating_add(count).min(len);
+    let byte_start = char_byte_offset(old_text, start);
+    let byte_end = char_byte_offset(old_text, end);
+    let mut out = String::with_capacity(old_text.len() + new_text.len());
+    out.push_str(&old_text[..byte_start]);
+    out.push_str(new_text);
+    out.push_str(&old_text[byte_end..]);
+    Ok(Value::String(out))
+}
+
+/// Excel `SUBSTITUTE(text, old_text, new_text, [instance_num])`: replace every occurrence, or
+/// only the `instance_num`-th (1-based, truncated). An empty `old_text` leaves the text unchanged.
+fn substitute(args: &[Value]) -> Result<Value, Error> {
+    let (text, old, new) = match (args.first(), args.get(1), args.get(2), args.len()) {
+        (Some(Value::String(t)), Some(Value::String(o)), Some(Value::String(n)), 3 | 4) => {
+            (t, o, n)
+        }
+        _ => {
+            return Err(Error::new(
+                "SUBSTITUTE expects (text: string, old_text: string, new_text: string, [instance_num: number])",
+                None,
+            ))
+        }
+    };
+    let instance = match args.get(3) {
+        None => None,
+        Some(Value::Number(n)) if *n >= 1.0 => Some(n.trunc()),
+        Some(_) => {
+            return Err(Error::new(
+                "SUBSTITUTE instance_num must be a number >= 1 (#VALUE!)",
+                None,
+            ))
+        }
+    };
+    if old.is_empty() {
+        return Ok(Value::String(text.clone()));
+    }
+    match instance {
+        None => {
+            limits::charge_replace(text, old, new)?;
+            Ok(Value::String(text.replace(old.as_str(), new)))
+        }
+        Some(k) => {
+            let hit = text
+                .match_indices(old.as_str())
+                .nth((k as usize).saturating_sub(1));
+            Ok(Value::String(match hit {
+                Some((at, _)) => {
+                    let mut out = String::with_capacity(text.len() + new.len());
+                    out.push_str(&text[..at]);
+                    out.push_str(new);
+                    out.push_str(&text[at + old.len()..]);
+                    out
+                }
+                None => text.clone(),
+            }))
+        }
     }
 }

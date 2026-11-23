@@ -1,7 +1,12 @@
+// 3.14 etc. are ROUND() expectations, not approximations of PI.
+#![allow(clippy::approx_constant)]
+
 use skillet::{evaluate, evaluate_with, Value};
 use std::collections::HashMap;
 
-fn approxv(v: Value, b: f64) -> bool { matches!(v, Value::Number(a) if (a - b).abs() < 1e-9) }
+fn approxv(v: Value, b: f64) -> bool {
+    matches!(v, Value::Number(a) if (a - b).abs() < 1e-9)
+}
 
 #[test]
 fn precedence_and_parentheses() {
@@ -9,14 +14,18 @@ fn precedence_and_parentheses() {
     assert!(approxv(evaluate("(2 + 3) * 4").unwrap(), 20.0));
 }
 
+/// Excel: `^` is left-associative (BL-054, D-10; was right-associative, 512).
 #[test]
-fn exponent_right_associative() {
-    assert!(approxv(evaluate("2 ^ 3 ^ 2").unwrap(), 512.0));
+fn exponent_left_associative() {
+    assert!(approxv(evaluate("2 ^ 3 ^ 2").unwrap(), 64.0));
+    assert!(approxv(evaluate("2 ^ (3 ^ 2)").unwrap(), 512.0));
 }
 
+/// Excel: negation binds tighter than `^` (BL-054, D-10; `-3 ^ 2` was -9).
 #[test]
 fn unary_and_equals_prefix() {
-    assert!(approxv(evaluate("-3 ^ 2").unwrap(), -9.0));
+    assert!(approxv(evaluate("-3 ^ 2").unwrap(), 9.0));
+    assert!(approxv(evaluate("-(3 ^ 2)").unwrap(), -9.0));
     assert!(approxv(evaluate("(-3) ^ 2").unwrap(), 9.0));
     assert!(approxv(evaluate("= 10 + 20 * 3").unwrap(), 70.0));
 }
@@ -26,8 +35,14 @@ fn variables_and_sum_function() {
     let mut vars = HashMap::new();
     vars.insert("x".to_string(), Value::Number(3.0));
     vars.insert("y".to_string(), Value::Number(10.0));
-    assert!(approxv(evaluate_with("=SUM(:x, 5, 7)", &vars).unwrap(), 15.0));
-    assert!(approxv(evaluate_with(":y + SUM(1, 2) * 3", &vars).unwrap(), 19.0));
+    assert!(approxv(
+        evaluate_with("=SUM(:x, 5, 7)", &vars).unwrap(),
+        15.0
+    ));
+    assert!(approxv(
+        evaluate_with(":y + SUM(1, 2) * 3", &vars).unwrap(),
+        19.0
+    ));
     assert!(approxv(evaluate_with("SUM()", &vars).unwrap(), 0.0));
 }
 
@@ -35,8 +50,14 @@ fn variables_and_sum_function() {
 fn arrays_and_sum_arrays() {
     assert!(approxv(evaluate("SUM([1, 2, 3])").unwrap(), 6.0));
     let mut vars = HashMap::new();
-    vars.insert("nums".to_string(), Value::Array(vec![Value::Number(1.0), Value::Number(4.0)]));
-    assert!(approxv(evaluate_with("SUM(:nums, [5, 10])", &vars).unwrap(), 20.0));
+    vars.insert(
+        "nums".to_string(),
+        Value::Array(vec![Value::Number(1.0), Value::Number(4.0)]),
+    );
+    assert!(approxv(
+        evaluate_with("SUM(:nums, [5, 10])", &vars).unwrap(),
+        20.0
+    ));
 }
 
 #[test]
@@ -63,14 +84,32 @@ fn math_builtins() {
 #[test]
 fn comparisons_logical_ternary() {
     // Comparisons
-    match evaluate("2 > 1").unwrap() { Value::Boolean(true) => {}, _ => panic!("expected true") }
-    match evaluate("2 == 2").unwrap() { Value::Boolean(true) => {}, _ => panic!("expected true") }
-    match evaluate("2 < 1").unwrap() { Value::Boolean(false) => {}, _ => panic!("expected false") }
+    match evaluate("2 > 1").unwrap() {
+        Value::Boolean(true) => {}
+        _ => panic!("expected true"),
+    }
+    match evaluate("2 == 2").unwrap() {
+        Value::Boolean(true) => {}
+        _ => panic!("expected true"),
+    }
+    match evaluate("2 < 1").unwrap() {
+        Value::Boolean(false) => {}
+        _ => panic!("expected false"),
+    }
     // Logical AND/OR
-    match evaluate("(2 > 1) AND (1 < 2)").unwrap() { Value::Boolean(true) => {}, _ => panic!("expected true") }
-    match evaluate("(2 > 3) || (1 < 2)").unwrap() { Value::Boolean(true) => {}, _ => panic!("expected true") }
+    match evaluate("(2 > 1) AND (1 < 2)").unwrap() {
+        Value::Boolean(true) => {}
+        _ => panic!("expected true"),
+    }
+    match evaluate("(2 > 3) || (1 < 2)").unwrap() {
+        Value::Boolean(true) => {}
+        _ => panic!("expected true"),
+    }
     // NOT
-    match evaluate("! (2 < 1)").unwrap() { Value::Boolean(true) => {}, _ => panic!("expected true") }
+    match evaluate("! (2 < 1)").unwrap() {
+        Value::Boolean(true) => {}
+        _ => panic!("expected true"),
+    }
     // Ternary
     assert!(approxv(evaluate("1 < 2 ? 10 : 20").unwrap(), 10.0));
 }
@@ -80,8 +119,14 @@ fn chaining_methods_numeric_and_array() {
     // Numeric chain
     assert!(approxv(evaluate("(-3.7).abs().round(1)").unwrap(), 3.7));
     // Array accessors
-    match evaluate("[1,2,3,4].length().positive?").unwrap() { Value::Boolean(true) => {}, _ => panic!("expected true") }
-    assert!(approxv(evaluate("[1,2,2,3].unique().sort().sum() ").unwrap(), 6.0));
+    match evaluate("[1,2,3,4].length().positive?").unwrap() {
+        Value::Boolean(true) => {}
+        _ => panic!("expected true"),
+    }
+    assert!(approxv(
+        evaluate("[1,2,2,3].unique().sort().sum() ").unwrap(),
+        6.0
+    ));
     assert!(approxv(evaluate("[5,1,9].min()").unwrap(), 1.0));
     assert!(approxv(evaluate("[5,1,9].max()").unwrap(), 9.0));
 }
@@ -91,8 +136,14 @@ fn array_index_and_slice() {
     use Value::*;
     assert!(approxv(evaluate("[10,20,30][0]").unwrap(), 10.0));
     assert!(approxv(evaluate("[10,20,30][-1]").unwrap(), 30.0));
-    match evaluate("[1,2,3,4,5][1:3]").unwrap() { Value::Array(v) => assert_eq!(v, vec![Number(2.0), Number(3.0)]), _ => panic!() }
-    match evaluate("[1,2,3,4][:2]").unwrap() { Value::Array(v) => assert_eq!(v, vec![Number(1.0), Number(2.0)]), _ => panic!() }
+    match evaluate("[1,2,3,4,5][1:3]").unwrap() {
+        Value::Array(v) => assert_eq!(v, vec![Number(2.0), Number(3.0)]),
+        _ => panic!(),
+    }
+    match evaluate("[1,2,3,4][:2]").unwrap() {
+        Value::Array(v) => assert_eq!(v, vec![Number(1.0), Number(2.0)]),
+        _ => panic!(),
+    }
 }
 
 #[test]
@@ -100,36 +151,80 @@ fn type_casting_minimal() {
     use Value::*;
     assert!(approxv(evaluate("'42'::Integer").unwrap(), 42.0));
     assert!(matches!(evaluate("TRUE::Float").unwrap(), Number(1.0)));
-    assert!(matches!(evaluate("0::Boolean").unwrap(), Value::Boolean(false)));
-    match evaluate("123::String").unwrap() { Value::String(s) => assert_eq!(s, "123"), _ => panic!("expected string") }
+    assert!(matches!(
+        evaluate("0::Boolean").unwrap(),
+        Value::Boolean(false)
+    ));
+    match evaluate("123::String").unwrap() {
+        Value::String(s) => assert_eq!(s, "123"),
+        _ => panic!("expected string"),
+    }
 }
 
 #[test]
 fn sumif_function() {
     // Test SUMIF with greater than criteria
-    assert!(approxv(evaluate("SUMIF([10, 20, 30, 40], \">25\")").unwrap(), 70.0));
-    
+    assert!(approxv(
+        evaluate("SUMIF([10, 20, 30, 40], \">25\")").unwrap(),
+        70.0
+    ));
+
     // Test SUMIF with less than criteria
-    assert!(approxv(evaluate("SUMIF([10, 20, 30, 40], \"<25\")").unwrap(), 30.0));
-    
+    assert!(approxv(
+        evaluate("SUMIF([10, 20, 30, 40], \"<25\")").unwrap(),
+        30.0
+    ));
+
     // Test SUMIF with equals criteria
-    assert!(approxv(evaluate("SUMIF([10, 20, 30, 40], \"=20\")").unwrap(), 20.0));
-    
+    assert!(approxv(
+        evaluate("SUMIF([10, 20, 30, 40], \"=20\")").unwrap(),
+        20.0
+    ));
+
     // Test SUMIF with not equals criteria
-    assert!(approxv(evaluate("SUMIF([10, 20, 30, 40], \"<>20\")").unwrap(), 80.0));
-    
+    assert!(approxv(
+        evaluate("SUMIF([10, 20, 30, 40], \"<>20\")").unwrap(),
+        80.0
+    ));
+
     // Test SUMIF with greater than or equal criteria
-    assert!(approxv(evaluate("SUMIF([10, 20, 30, 40], \">=20\")").unwrap(), 90.0));
-    
+    assert!(approxv(
+        evaluate("SUMIF([10, 20, 30, 40], \">=20\")").unwrap(),
+        90.0
+    ));
+
     // Test SUMIF with less than or equal criteria
-    assert!(approxv(evaluate("SUMIF([10, 20, 30, 40], \"<=20\")").unwrap(), 30.0));
-    
+    assert!(approxv(
+        evaluate("SUMIF([10, 20, 30, 40], \"<=20\")").unwrap(),
+        30.0
+    ));
+
     // Test SUMIF with separate sum range
     let mut vars = HashMap::new();
-    vars.insert("range".to_string(), Value::Array(vec![Value::Number(10.0), Value::Number(30.0), Value::Number(50.0)]));
-    vars.insert("sum_range".to_string(), Value::Array(vec![Value::Number(1.0), Value::Number(2.0), Value::Number(3.0)]));
-    assert!(approxv(evaluate_with("SUMIF(:range, \">20\", :sum_range)", &vars).unwrap(), 5.0));
-    
+    vars.insert(
+        "range".to_string(),
+        Value::Array(vec![
+            Value::Number(10.0),
+            Value::Number(30.0),
+            Value::Number(50.0),
+        ]),
+    );
+    vars.insert(
+        "sum_range".to_string(),
+        Value::Array(vec![
+            Value::Number(1.0),
+            Value::Number(2.0),
+            Value::Number(3.0),
+        ]),
+    );
+    assert!(approxv(
+        evaluate_with("SUMIF(:range, \">20\", :sum_range)", &vars).unwrap(),
+        5.0
+    ));
+
     // Test SUMIF with numeric criteria (no string)
-    assert!(approxv(evaluate("SUMIF([10, 20, 30, 40], 20)").unwrap(), 20.0));
+    assert!(approxv(
+        evaluate("SUMIF([10, 20, 30, 40], 20)").unwrap(),
+        20.0
+    ));
 }

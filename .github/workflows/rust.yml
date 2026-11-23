@@ -1,25 +1,116 @@
-name: Rust
+name: CI
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "develop" ]
   pull_request:
-    branches: [ "main" ]
+    # release/* and hotfix/* PRs need the checks the "development branches" ruleset requires.
+    branches: [ "main", "develop", "release/**", "hotfix/**" ]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
+  # Toolchain the gate runs on. Clippy runs with -D warnings, so this is pinned
+  # (a floating `stable` would break CI whenever a new lint ships). Bump it
+  # together with the local toolchain. The MSRV (ADR-0012) is checked by the msrv job.
+  RUST_TOOLCHAIN: "1.89.0"
 
 jobs:
-  build:
-
+  gate:
+    name: harness gate (./harness/check.sh)
     runs-on: ubuntu-latest
-
+    timeout-minutes: 45
     steps:
-    - uses: actions/checkout@v4
-    - name: Build
-      run: cargo build --verbose
-    - name: Run tests
-      run: cargo test --verbose
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Install Rust ${{ env.RUST_TOOLCHAIN }}
+        uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master (2026-11-15)
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+
+      # Fails if Cargo.lock is missing or out of date, so every later cargo
+      # command in check.sh builds exactly the locked dependency set.
+      - name: Fetch dependencies (locked)
+        run: cargo fetch --locked
+
+      # Full mode: includes the slow sk_concurrency / sk_performance suites,
+      # both feature sets (default and --no-default-features), strict clippy and fmt.
+      - name: Run harness gate
+        run: ./harness/check.sh
+
+  audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Install Rust ${{ env.RUST_TOOLCHAIN }}
+        uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master (2026-11-15)
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2.90.8
+        with:
+          tool: cargo-audit
+
+      # Checks Cargo.lock against the RustSec advisory database. Vulnerabilities
+      # fail the job; "unmaintained"/"unsound" warnings are reported only.
+      # To accept an advisory, add `--ignore RUSTSEC-YYYY-NNNN` here with a
+      # comment and a backlog item (security-reviewer decision).
+      - name: cargo audit
+        run: cargo audit
+
+  msrv:
+    name: MSRV build (Rust 1.85, ADR-0012)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      # Pinned by SHA, so the version goes in `toolchain:` instead of the `@1.85.0` branch.
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master (2026-11-15)
+        with:
+          toolchain: 1.85.0
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: msrv
+      - name: Build all targets on the MSRV (locked)
+        run: cargo build --locked --all-targets
+
+  # BL-062: build the sk_http_server image and smoke-test it. Loaded into the runner's
+  # Docker only, never pushed. Not a required check in the branch ruleset (maintainer's call).
+  docker:
+    name: docker image
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      # mode=max also caches the builder stage, where the cargo build happens.
+      - name: Build image (load only, no push)
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          file: Dockerfile
+          tags: skillet-http:ci
+          load: true
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Same script humans run (docs/ops/docker.md). It removes its containers on exit.
+      - name: Smoke test the image
+        run: ./scripts/docker_smoke.sh skillet-http:ci

@@ -1,0 +1,43 @@
+# Fuzz targets for Skillet (BL-019, ADR-0028). Dev-only, nightly-only, not published.
+# Its own workspace, so `cargo build --all-targets` at the root never builds it.
+# Run from the repo root: `cargo +nightly fuzz run -a <target>` (see harness/roles/security-reviewer.md, "Fuzzing").
+[package]
+name = "skillet-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+# No `plugins`: QuickJS has its own limits (ADR-0017) and would slow every run.
+skillet = { path = "..", default-features = false }
+
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "parse"
+path = "fuzz_targets/parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "evaluate"
+path = "fuzz_targets/evaluate.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "json_vars"
+path = "fuzz_targets/json_vars.rs"
+test = false
+doc = false
+bench = false

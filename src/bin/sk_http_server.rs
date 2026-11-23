@@ -1,24 +1,41 @@
 mod http_server;
 
+#[cfg(feature = "plugins")]
 use skillet::JSPluginLoader;
-use scalar_doc::Documentation;
 use std::net::{TcpListener, TcpStream};
-use std::sync::{Arc, atomic::{AtomicU64, Ordering}};
-use threadpool::ThreadPool;
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
+};
+use threadpool::Builder as ThreadPoolBuilder;
 
 use http_server::auth::TokenConfig;
-use http_server::daemon::{setup_signal_handlers, write_pid_file};
-use http_server::eval::{handle_eval_post, handle_eval_get, handle_health, handle_cache_clear};
-use http_server::js_management::{handle_list_js, handle_update_js, handle_delete_js, handle_upload_js, handle_reload_hooks};
+use http_server::cache::return_pooled_buffer;
+use http_server::conn_limit::{self, Admission, ConnLimiter};
+use http_server::daemon::{setup_signal_handlers, wake_address};
+use http_server::eval::{handle_cache_clear, handle_eval_get, handle_eval_post, handle_health};
+use http_server::eval_limits;
+#[cfg(feature = "plugins")]
+use http_server::js_management::{
+    handle_delete_js, handle_list_js, handle_reload_hooks, handle_update_js, handle_upload_js,
+};
+use http_server::pid_file::write_pid_file;
+use http_server::request_limits::{close_after_reject, DeadlineReader, MAX_REQUEST_SIZE};
+
+/// The result cache, held once per process: 1000 entries of at most 64 KiB each by the cost
+/// model (`http_server/cache.rs`).
+const RESULT_CACHE_BYTES: u64 = 1000 * 64 * 1024;
 use http_server::stats::ServerStats;
-use http_server::utils::{read_complete_http_request, send_http_response, send_http_error, handle_cors_preflight, load_html_file};
+use http_server::utils::{
+    handle_cors_preflight, load_html_file, read_complete_http_request, read_error_status,
+    send_http_error, send_http_response,
+};
 
 #[cfg(unix)]
 use http_server::daemon::daemonize;
 
 /// HTTP-compatible Skillet evaluation server
 /// Works with all standard HTTP clients
-
 fn handle_http_request(
     mut stream: TcpStream,
     stats: Arc<ServerStats>,
@@ -26,29 +43,40 @@ fn handle_http_request(
     server_token: Arc<Option<String>>,
     server_admin_token: Arc<Option<String>>,
 ) {
-    // Read the complete HTTP request properly
-    let request = match read_complete_http_request(&mut stream) {
+    let mut reader = DeadlineReader::new(&stream);
+    let request = match read_complete_http_request(&mut reader) {
         Ok(req) => req,
         Err(e) => {
-            // Log error for debugging but don't panic
             eprintln!("HTTP request read error: {}", e);
-            // Send proper HTTP error response
-            let error_msg = match e.kind() {
-                std::io::ErrorKind::InvalidData => {
-                    if e.to_string().contains("too large") {
-                        "413 Payload Too Large"
-                    } else {
-                        "400 Bad Request"
-                    }
-                }
-                std::io::ErrorKind::TimedOut => "408 Request Timeout",
-                _ => "500 Internal Server Error",
-            };
-            send_http_error(&mut stream, 400, error_msg);
+            let (status, message) = read_error_status(&e);
+            send_http_error(&stream, status, &message);
+            // Unread input left at close would reset the connection and can drop the error.
+            close_after_reject(&stream, &mut reader);
             return;
         }
     };
 
+    dispatch(
+        &mut stream,
+        &request,
+        stats,
+        request_counter,
+        server_token,
+        server_admin_token,
+    );
+    // Back to this worker's pool, so the next request reuses the allocation (BL-057).
+    return_pooled_buffer(request.into_bytes());
+}
+
+/// Route one complete request to its handler.
+fn dispatch(
+    stream: &mut TcpStream,
+    request: &str,
+    stats: Arc<ServerStats>,
+    request_counter: Arc<AtomicU64>,
+    server_token: Arc<Option<String>>,
+    server_admin_token: Arc<Option<String>>,
+) {
     // Parse HTTP request
     let lines: Vec<&str> = request.lines().collect();
     if lines.is_empty() {
@@ -58,7 +86,7 @@ fn handle_http_request(
     let request_line = lines[0];
     let parts: Vec<&str> = request_line.split_whitespace().collect();
     if parts.len() < 3 {
-        send_http_error(&mut stream, 400, "Bad Request");
+        send_http_error(stream, 400, "Bad Request");
         return;
     }
 
@@ -68,40 +96,81 @@ fn handle_http_request(
     // Handle paths that might have query parameters
     let path_only = path.split('?').next().unwrap_or(path);
 
+    // Before dispatch, so no handler runs for a browser in development mode or parses a body
+    // that is not JSON (ADR-0019).
+    if let Err(message) =
+        http_server::cors::check_browser_admin(path_only, request, server_admin_token.is_some())
+    {
+        send_http_error(stream, 403, message);
+        return;
+    }
+    if let Err(message) = http_server::cors::check_content_type(method, path_only, request) {
+        send_http_error(stream, 415, message);
+        return;
+    }
+
     match (method, path_only) {
-        ("GET", "/health") => handle_health(&mut stream, &stats, &request, server_token),
-        ("GET", "/") => handle_root(&mut stream),
-        ("GET", "/docs") => handle_api_docs(&mut stream),
-        ("GET", "/openapi.yml") => handle_openapi_spec(&mut stream),
-        ("POST", "/eval") => handle_eval_post(&mut stream, &request, stats, request_counter, server_token),
-        ("GET", "/eval") => handle_eval_get(&mut stream, &request, stats, request_counter, server_token),
-        ("POST", "/upload-js") => handle_upload_js(&mut stream, &request, server_admin_token),
-        ("PUT", "/update-js") => handle_update_js(&mut stream, &request, server_admin_token),
-        ("DELETE", "/delete-js") => handle_delete_js(&mut stream, &request, server_admin_token),
-        ("GET", "/list-js") => handle_list_js(&mut stream, &request, server_admin_token),
-        ("POST", "/reload-hooks") => handle_reload_hooks(&mut stream, &request, server_admin_token),
-        ("DELETE", "/cache") => handle_cache_clear(&mut stream, &request, server_admin_token),
-        ("OPTIONS", _) => handle_cors_preflight(&mut stream),
-        _ => send_http_error(&mut stream, 404, "Not Found"),
+        ("GET", "/health") => handle_health(stream, &stats, request, server_token),
+        ("GET", "/") => handle_root(stream),
+        ("GET", "/docs") => handle_api_docs(stream),
+        ("GET", "/openapi.yml") => handle_openapi_spec(stream),
+        ("POST", "/eval") => {
+            handle_eval_post(stream, request, stats, request_counter, server_token)
+        }
+        ("GET", "/eval") => handle_eval_get(stream, request, stats, request_counter, server_token),
+        #[cfg(feature = "plugins")]
+        ("POST", "/upload-js") => handle_upload_js(stream, request, server_admin_token),
+        #[cfg(feature = "plugins")]
+        ("PUT", "/update-js") => handle_update_js(stream, request, server_admin_token),
+        #[cfg(feature = "plugins")]
+        ("DELETE", "/delete-js") => handle_delete_js(stream, request, server_admin_token),
+        #[cfg(feature = "plugins")]
+        ("GET", "/list-js") => handle_list_js(stream, request, server_admin_token),
+        #[cfg(feature = "plugins")]
+        ("POST", "/reload-hooks") => handle_reload_hooks(stream, request, server_admin_token),
+        #[cfg(not(feature = "plugins"))]
+        (_, "/upload-js" | "/update-js" | "/delete-js" | "/list-js" | "/reload-hooks") => {
+            handle_js_disabled(stream, request, server_admin_token)
+        }
+        ("DELETE", "/cache") => handle_cache_clear(stream, request, server_admin_token),
+        ("OPTIONS", _) => handle_cors_preflight(stream),
+        _ => send_http_error(stream, 404, "Not Found"),
     }
 }
 
+/// JS management endpoints in a build without the `plugins` feature: same admin
+/// check as the real handlers, then 404 with a message saying why.
+#[cfg(not(feature = "plugins"))]
+fn handle_js_disabled(
+    stream: &mut TcpStream,
+    request: &str,
+    server_admin_token: Arc<Option<String>>,
+) {
+    if let Some(error_response) =
+        http_server::auth::check_admin_authentication(request, &server_admin_token)
+    {
+        send_http_response(stream, 401, "application/json", &error_response);
+        return;
+    }
+    send_http_error(
+        stream,
+        404,
+        "JavaScript plugins are not enabled in this build",
+    );
+}
+
 fn handle_root(stream: &mut TcpStream) {
-    let html = load_html_file();
-    send_http_response(stream, 200, "text/html", &html);
+    send_http_response(stream, 200, "text/html", load_html_file());
 }
 
 fn handle_api_docs(stream: &mut TcpStream) {
-    // Generate Scalar documentation HTML that points to our OpenAPI spec endpoint
-    let docs_html = match Documentation::new("Skillet HTTP Server API", "/openapi.yml").build() {
-        Ok(html) => html,
-        Err(e) => {
-            eprintln!("Error generating documentation: {}", e);
-            format!("<!DOCTYPE html><html><head><title>Documentation Error</title></head><body><h1>Error</h1><p>Failed to generate documentation: {}</p></body></html>", e)
-        }
-    };
-    
-    send_http_response(stream, 200, "text/html", &docs_html);
+    // Static Scalar page that loads our OpenAPI spec from /openapi.yml (ADR-0020).
+    send_http_response(
+        stream,
+        200,
+        "text/html",
+        include_str!("http_server/api_docs.html"),
+    );
 }
 
 fn handle_openapi_spec(stream: &mut TcpStream) {
@@ -123,55 +192,107 @@ fn main() {
         std::process::exit(1);
     });
 
-    // Parse command line arguments
-    let (mut auth_token, mut admin_token, daemon_mode, pid_file, bind_host, thread_count) = parse_args(&args[2..]);
+    let ServerArgs {
+        auth_token,
+        admin_token,
+        cors_origin,
+        daemon_mode,
+        pid_file,
+        bind_host,
+        thread_count,
+        max_conns_per_ip,
+        eval_limits: limits,
+    } = parse_args(&args[2..]);
+    eval_limits::install(limits);
 
     // Apply intelligent token logic
     let token_config = TokenConfig::new(auth_token, admin_token);
-    auth_token = token_config.auth_token.clone();
-    admin_token = token_config.admin_token.clone();
+    let auth_token = token_config.auth_token.clone();
+    let admin_token = token_config.admin_token.clone();
+
+    let allowed_origin =
+        http_server::cors::allowed_origin(cors_origin.as_deref(), auth_token.is_some());
+    http_server::cors::init(allowed_origin.as_deref());
 
     // Handle daemon mode before any output
     if daemon_mode {
         handle_daemon_mode(port, &bind_host, &pid_file, &token_config, thread_count);
     }
 
-    // Setup signal handlers
-    let running = setup_signal_handlers();
-
     // Load JavaScript functions
     load_js_functions(daemon_mode);
 
-    // Start server
+    // Start server, then the shutdown handler (it needs the bound address to wake `accept`)
     let listener = start_server(port, &bind_host);
+    let running = match listener.local_addr() {
+        Ok(addr) => setup_signal_handlers(wake_address(addr)),
+        Err(e) => {
+            eprintln!("Error: Failed to read the listening address: {}", e);
+            std::process::exit(1);
+        }
+    };
     let stats = Arc::new(ServerStats::new());
     let request_counter = Arc::new(AtomicU64::new(0));
     let server_token = Arc::new(auth_token.clone());
     let server_admin_token = Arc::new(admin_token.clone());
+    let limiter = max_conns_per_ip.map(ConnLimiter::new);
 
-    // Create thread pool
-    let pool = ThreadPool::new(thread_count);
+    // Create thread pool. Workers get a 16 MB stack (default 2 MB) so expressions up to
+    // MAX_NESTING_DEPTH have headroom in debug builds too (BL-017).
+    let pool = ThreadPoolBuilder::new()
+        .num_threads(thread_count)
+        .thread_stack_size(16 * 1024 * 1024)
+        .build();
 
     // Print startup messages
-    print_startup_messages(daemon_mode, port, &bind_host, &auth_token, &admin_token, &token_config, thread_count);
+    print_startup_messages(
+        daemon_mode,
+        port,
+        &bind_host,
+        &token_config,
+        allowed_origin.as_deref(),
+        thread_count,
+    );
+    if let (false, Some(max)) = (daemon_mode, max_conns_per_ip) {
+        eprintln!("🚦 Max connections per IP: {}", max);
+    }
 
-    // Accept loop
-    while running.load(Ordering::Relaxed) {
-        match listener.accept() {
+    // Accept loop. `accept` blocks (no polling delay, BL-039); the shutdown handler clears
+    // `running` and connects once to wake it, and that connection is dropped unserved.
+    loop {
+        let accepted = listener.accept();
+        if !running.load(Ordering::SeqCst) {
+            break;
+        }
+        match accepted {
             Ok((stream, _addr)) => {
+                // Counted before the connection is queued, so a rejected one never reaches a
+                // worker (ADR-0025).
+                let guard = match conn_limit::admit(limiter.as_ref(), &stream) {
+                    Admission::Accept(guard) => guard,
+                    Admission::Reject(max) => {
+                        conn_limit::reject(stream, too_many_connections(max).as_bytes());
+                        continue;
+                    }
+                };
                 let stats = Arc::clone(&stats);
                 let request_counter = Arc::clone(&request_counter);
                 let server_token = Arc::clone(&server_token);
                 let server_admin_token = Arc::clone(&server_admin_token);
 
                 pool.execute(move || {
-                    handle_http_request(stream, stats, request_counter, server_token, server_admin_token);
+                    let _guard = guard; // released when the connection is closed
+                    handle_http_request(
+                        stream,
+                        stats,
+                        request_counter,
+                        server_token,
+                        server_admin_token,
+                    );
                 });
             }
-            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                std::thread::sleep(std::time::Duration::from_millis(1));
-            }
             Err(e) => {
+                // e.g. out of file descriptors: back off instead of spinning
                 if !daemon_mode {
                     eprintln!("Error accepting connection: {}", e);
                 }
@@ -185,18 +306,80 @@ fn main() {
     }
 }
 
+/// The full HTTP 429 response for a connection over the per-IP limit.
+fn too_many_connections(max: usize) -> String {
+    let body = conn_limit::rejection_json(max);
+    format!(
+        "HTTP/1.1 429 Too Many Requests\r\n\
+         {}\
+         Content-Type: application/json\r\n\
+         Content-Length: {}\r\n\
+         Connection: close\r\n\
+         \r\n\
+         {}",
+        http_server::cors::response_headers(),
+        body.len(),
+        body
+    )
+}
+
+/// Start-up lines for the configured evaluation limits and the worst-case memory they allow.
+fn print_eval_limits(thread_count: usize) {
+    let limits = eval_limits::server_limits();
+    eprintln!(
+        "⏱️  Eval timeout: {} (--eval-timeout or SKILLET_EVAL_TIMEOUT)",
+        eval_limits::describe_timeout(&limits)
+    );
+    eprintln!(
+        "💾 Eval budget: {} per evaluation, request variables included (--max-eval-bytes or SKILLET_MAX_EVAL_BYTES)",
+        eval_limits::describe_bytes(limits.max_bytes),
+    );
+    eprintln!(
+        "🧮 {}",
+        eval_limits::describe_worst_case(
+            &limits,
+            thread_count,
+            MAX_REQUEST_SIZE,
+            RESULT_CACHE_BYTES
+        )
+    );
+}
+
 fn print_usage() {
     eprintln!("Usage: sk_http_server <port> [options]");
-    eprintln!("");
+    eprintln!();
     eprintln!("Options:");
     eprintln!("  -d, --daemon         Run as daemon (background process)");
     eprintln!("  -H, --host <addr>    Bind host/interface (default: 127.0.0.1)");
     eprintln!("  -t, --threads <num>  Number of worker threads (default: CPU count)");
     eprintln!("  --pid-file <file>    Write PID to file (default: skillet-http-server.pid)");
     eprintln!("  --log-file <file>    Write logs to file (daemon mode only)");
-    eprintln!("  --token <value>      Require token for eval requests");
-    eprintln!("  --admin-token <val>  Require admin token for JS function management");
-    eprintln!("");
+    eprintln!("  --token <value>      Require token for eval requests (or set SKILLET_AUTH_TOKEN;");
+    eprintln!("                       the flag wins)");
+    eprintln!("  --admin-token <val>  Require admin token for JS function management and");
+    eprintln!("                       DELETE /cache (or set SKILLET_ADMIN_TOKEN; the flag wins)");
+    eprintln!("  --cors-origin <org>  Access-Control-Allow-Origin value, e.g. https://app.example");
+    eprintln!("                       or * (or set SKILLET_CORS_ORIGIN; the flag wins). Default:");
+    eprintln!("                       * when a token is set, otherwise no CORS headers");
+    eprintln!("  --max-connections-per-ip <n>");
+    eprintln!("                       Open connections allowed from one IP address; more get");
+    eprintln!("                       429 (or set SKILLET_MAX_CONNECTIONS_PER_IP; the flag wins).");
+    eprintln!("                       Default: no limit");
+    eprintln!(
+        "  --eval-timeout <s>   Wall-clock limit for one evaluation, in whole seconds (or set"
+    );
+    eprintln!("                       SKILLET_EVAL_TIMEOUT; the flag wins). Default: 20");
+    eprintln!("  --max-eval-bytes <n> Budget of values one evaluation may create, in bytes; K, M,");
+    eprintln!(
+        "                       G mean KiB, MiB, GiB (or set SKILLET_MAX_EVAL_BYTES; the flag"
+    );
+    eprintln!(
+        "                       wins). Default: 256M. Worst-case memory is about threads x this"
+    );
+    eprintln!();
+    eprintln!("Requests with a body must send Content-Type: application/json (415 otherwise);");
+    eprintln!("/upload-js and /update-js also accept multipart/form-data.");
+    eprintln!();
     eprintln!("Examples:");
     eprintln!("  sk_http_server 5074");
     eprintln!("  sk_http_server 5074 --host 0.0.0.0 --threads 8");
@@ -205,116 +388,163 @@ fn print_usage() {
     eprintln!("  sk_http_server 5074 --token secret123 --admin-token admin456");
     eprintln!("  sk_http_server 5074 -d --pid-file /var/run/skillet-http.pid --threads 12");
     eprintln!("  sk_http_server 5074 -d --host 0.0.0.0 --token secret123 --admin-token admin456");
-    eprintln!("");
+    eprintln!();
     eprintln!("Endpoints:");
-    eprintln!("  GET  /health          - Health check with cache stats");
+    eprintln!("  GET  /health          - Health check with result and parse cache stats");
     eprintln!("  GET  /                - API documentation");
     eprintln!("  POST /eval            - Evaluate expressions (JSON)");
     eprintln!("  GET  /eval?expr=...   - Evaluate expressions (query params)");
-    eprintln!("  DELETE /cache         - Clear expression cache (admin token required)");
+    eprintln!("  DELETE /cache         - Clear result and parse caches (admin token required)");
 }
 
-fn parse_args(args: &[String]) -> (Option<String>, Option<String>, bool, String, String, usize) {
-    let mut auth_token: Option<String> = None;
-    let mut admin_token: Option<String> = None;
-    let mut daemon_mode = false;
-    let mut pid_file = "skillet-http-server.pid".to_string();
-    let mut bind_host = "127.0.0.1".to_string();
-    let mut thread_count = num_cpus::get();
-    let mut _log_file: Option<String> = None;
+struct ServerArgs {
+    auth_token: Option<String>,
+    admin_token: Option<String>,
+    cors_origin: Option<String>,
+    daemon_mode: bool,
+    pid_file: String,
+    bind_host: String,
+    thread_count: usize,
+    max_conns_per_ip: Option<usize>,
+    eval_limits: skillet::EvalLimits,
+}
+
+fn exit_with(message: &str) -> ! {
+    eprintln!("Error: {message}");
+    std::process::exit(1);
+}
+
+/// The value after flag `args[*i]`; advances `i` past it.
+fn flag_value(args: &[String], i: &mut usize, what: &str) -> String {
+    *i += 1;
+    match args.get(*i) {
+        Some(value) => value.clone(),
+        None => exit_with(&format!("{} requires {what}", args[*i - 1])),
+    }
+}
+
+fn parse_args(args: &[String]) -> ServerArgs {
+    let mut parsed = ServerArgs {
+        auth_token: None,
+        admin_token: None,
+        cors_origin: None,
+        daemon_mode: false,
+        pid_file: "skillet-http-server.pid".to_string(),
+        bind_host: "127.0.0.1".to_string(),
+        thread_count: num_cpus::get(),
+        max_conns_per_ip: None,
+        eval_limits: eval_limits::defaults(),
+    };
+    let mut max_conns_flag: Option<String> = None;
+    let mut timeout_flag: Option<String> = None;
+    let mut bytes_flag: Option<String> = None;
     let mut i = 0;
 
     while i < args.len() {
         match args[i].as_str() {
-            "-d" | "--daemon" => daemon_mode = true,
-            "-H" | "--host" => {
-                if i + 1 < args.len() {
-                    bind_host = args[i + 1].clone();
-                    i += 1;
-                } else {
-                    eprintln!("Error: --host requires an address");
-                    std::process::exit(1);
-                }
-            }
+            "-d" | "--daemon" => parsed.daemon_mode = true,
+            "-H" | "--host" => parsed.bind_host = flag_value(args, &mut i, "an address"),
             "-t" | "--threads" => {
-                if i + 1 < args.len() {
-                    thread_count = args[i + 1].parse().unwrap_or_else(|_| {
-                        eprintln!("Error: Invalid thread count");
-                        std::process::exit(1);
-                    });
-                    if thread_count == 0 {
-                        eprintln!("Error: Thread count must be greater than 0");
-                        std::process::exit(1);
-                    }
-                    i += 1;
-                } else {
-                    eprintln!("Error: --threads requires a number");
-                    std::process::exit(1);
+                let n = flag_value(args, &mut i, "a number");
+                parsed.thread_count = n
+                    .parse()
+                    .unwrap_or_else(|_| exit_with("Invalid thread count"));
+                if parsed.thread_count == 0 {
+                    exit_with("Thread count must be greater than 0");
                 }
             }
-            "--pid-file" => {
-                if i + 1 < args.len() {
-                    pid_file = args[i + 1].clone();
-                    i += 1;
-                } else {
-                    eprintln!("Error: --pid-file requires a filename");
-                    std::process::exit(1);
-                }
+            "--pid-file" => parsed.pid_file = flag_value(args, &mut i, "a filename"),
+            // Accepted for compatibility; logs go to stderr.
+            "--log-file" => drop(flag_value(args, &mut i, "a filename")),
+            "--token" => parsed.auth_token = Some(flag_value(args, &mut i, "a value")),
+            "--admin-token" => parsed.admin_token = Some(flag_value(args, &mut i, "a value")),
+            "--cors-origin" => parsed.cors_origin = Some(flag_value(args, &mut i, "an origin")),
+            conn_limit::FLAG => max_conns_flag = Some(flag_value(args, &mut i, "a number")),
+            eval_limits::TIMEOUT_FLAG => {
+                timeout_flag = Some(flag_value(args, &mut i, "a number of seconds"))
             }
-            "--log-file" => {
-                if i + 1 < args.len() {
-                    _log_file = Some(args[i + 1].clone());
-                    i += 1;
-                } else {
-                    eprintln!("Error: --log-file requires a filename");
-                    std::process::exit(1);
-                }
-            }
-            "--token" => {
-                if i + 1 < args.len() {
-                    auth_token = Some(args[i + 1].clone());
-                    i += 1;
-                } else {
-                    eprintln!("Error: --token requires a value");
-                    std::process::exit(1);
-                }
-            }
-            "--admin-token" => {
-                if i + 1 < args.len() {
-                    admin_token = Some(args[i + 1].clone());
-                    i += 1;
-                } else {
-                    eprintln!("Error: --admin-token requires a value");
-                    std::process::exit(1);
-                }
-            }
-            _ => {
-                eprintln!("Error: Unknown argument: {}", args[i]);
-                std::process::exit(1);
-            }
+            eval_limits::BYTES_FLAG => bytes_flag = Some(flag_value(args, &mut i, "a size")),
+            other => exit_with(&format!("Unknown argument: {other}")),
         }
         i += 1;
     }
 
-    (auth_token, admin_token, daemon_mode, pid_file, bind_host, thread_count)
+    // Same as sk_server: the flag wins, the env var is the fallback.
+    env_fallback(&mut parsed.auth_token, "SKILLET_AUTH_TOKEN");
+    env_fallback(&mut parsed.admin_token, "SKILLET_ADMIN_TOKEN");
+    env_fallback(&mut parsed.cors_origin, "SKILLET_CORS_ORIGIN");
+
+    // An empty token would match a request with no token, so auth would be off while the
+    // banner says it is on (BL-048).
+    for (flag, token) in [
+        ("--token", &parsed.auth_token),
+        ("--admin-token", &parsed.admin_token),
+    ] {
+        if token.as_deref() == Some("") {
+            exit_with(&format!("{flag} must not be empty"));
+        }
+    }
+    if let Some(origin) = &parsed.cors_origin {
+        if !http_server::cors::valid_origin(origin) {
+            exit_with(
+                "--cors-origin must be a non-empty origin without spaces or control characters",
+            );
+        }
+    }
+    parsed.max_conns_per_ip =
+        conn_limit::resolve(max_conns_flag.as_deref()).unwrap_or_else(|e| exit_with(&e));
+    // Same rules: the flag wins; 0, empty or invalid stops start-up (ADR-0011 amendment 4).
+    parsed.eval_limits = eval_limits::resolve(timeout_flag.as_deref(), bytes_flag.as_deref())
+        .unwrap_or_else(|e| exit_with(&e));
+    parsed
+}
+
+/// Fill `slot` from env var `var` when no flag set it. An empty value is an error: it must
+/// not silently turn a setting off (BL-048).
+fn env_fallback(slot: &mut Option<String>, var: &str) {
+    if slot.is_some() {
+        return;
+    }
+    if let Ok(value) = std::env::var(var) {
+        if value.is_empty() {
+            exit_with(&format!(
+                "{var} must not be empty; give a non-empty value or unset it"
+            ));
+        }
+        *slot = Some(value);
+    }
 }
 
 #[cfg(unix)]
-fn handle_daemon_mode(port: u16, bind_host: &str, pid_file: &str, token_config: &TokenConfig, thread_count: usize) {
+fn handle_daemon_mode(
+    port: u16,
+    bind_host: &str,
+    pid_file: &str,
+    token_config: &TokenConfig,
+    thread_count: usize,
+) {
     // Print startup message before daemonizing
     eprintln!("Starting Skillet HTTP server as daemon...");
-    eprintln!("Port: {}, Host: {}, Threads: {}, PID file: {}", port, bind_host, thread_count, pid_file);
-    if token_config.auth_token.is_some() { eprintln!("Eval token auth: enabled"); }
-    if token_config.admin_token.is_some() { eprintln!("Admin token auth: enabled"); }
-    
+    eprintln!(
+        "Port: {}, Host: {}, Threads: {}, PID file: {}",
+        port, bind_host, thread_count, pid_file
+    );
+    if token_config.auth_token.is_some() {
+        eprintln!("Eval token auth: enabled");
+    }
+    if token_config.admin_token.is_some() {
+        eprintln!("Admin token auth: enabled");
+    }
+    print_eval_limits(thread_count);
+
     // Print warnings before daemonizing
     token_config.print_warnings();
-    
+
     if let Err(e) = daemonize() {
         eprintln!("Failed to daemonize: {}", e);
         std::process::exit(1);
     }
-    
+
     // Write PID file after successful daemonization
     if let Err(_e) = write_pid_file(pid_file) {
         // Log to syslog or a file since we can't use stderr
@@ -323,11 +553,21 @@ fn handle_daemon_mode(port: u16, bind_host: &str, pid_file: &str, token_config: 
 }
 
 #[cfg(not(unix))]
-fn handle_daemon_mode(_port: u16, _bind_host: &str, _pid_file: &str, _token_config: &TokenConfig, _thread_count: usize) {
+fn handle_daemon_mode(
+    _port: u16,
+    _bind_host: &str,
+    _pid_file: &str,
+    _token_config: &TokenConfig,
+    _thread_count: usize,
+) {
     eprintln!("Error: Daemon mode not supported on this platform");
     std::process::exit(1);
 }
 
+#[cfg(not(feature = "plugins"))]
+fn load_js_functions(_daemon_mode: bool) {}
+
+#[cfg(feature = "plugins")]
 fn load_js_functions(daemon_mode: bool) {
     let hooks_dir = std::env::var("SKILLET_HOOKS_DIR").unwrap_or_else(|_| "hooks".to_string());
     let js_loader = JSPluginLoader::new(hooks_dir);
@@ -347,40 +587,81 @@ fn load_js_functions(daemon_mode: bool) {
 }
 
 fn start_server(port: u16, bind_host: &str) -> TcpListener {
-    let listener = TcpListener::bind(format!("{}:{}", bind_host, port))
-        .unwrap_or_else(|e| {
-            eprintln!("Error: Failed to bind to {}:{}: {}", bind_host, port, e);
-            std::process::exit(1);
-        });
-
-    listener.set_nonblocking(true).unwrap_or_else(|e| {
-        eprintln!("Error: Failed to set non-blocking mode: {}", e);
+    TcpListener::bind(format!("{}:{}", bind_host, port)).unwrap_or_else(|e| {
+        eprintln!("Error: Failed to bind to {}:{}: {}", bind_host, port, e);
         std::process::exit(1);
-    });
-
-    listener
+    })
 }
 
 fn print_startup_messages(
     daemon_mode: bool,
     port: u16,
     bind_host: &str,
-    auth_token: &Option<String>,
-    admin_token: &Option<String>,
     token_config: &TokenConfig,
+    allowed_origin: Option<&str>,
     thread_count: usize,
 ) {
     if !daemon_mode {
-        eprintln!("🚀 Skillet HTTP Server started on http://{}:{}", bind_host, port);
+        eprintln!(
+            "🚀 Skillet HTTP Server started on http://{}:{}",
+            bind_host, port
+        );
         eprintln!("🧵 Worker threads: {}", thread_count);
-        if auth_token.is_some() { eprintln!("🔒 Eval token auth: enabled"); }
-        if admin_token.is_some() { eprintln!("🔐 Admin token auth: enabled"); }
-        
+        if token_config.auth_token.is_some() {
+            eprintln!("🔒 Eval token auth: enabled");
+        }
+        if token_config.admin_token.is_some() {
+            eprintln!("🔐 Admin token auth: enabled");
+        }
+        match allowed_origin {
+            Some(origin) => eprintln!("🌍 CORS: Access-Control-Allow-Origin: {}", origin),
+            None => eprintln!("🌍 CORS: off (no token, no --cors-origin)"),
+        }
+
+        print_eval_limits(thread_count);
+
         // Print security warnings
         token_config.print_warnings();
-        
+
         eprintln!("🌐 Ready for HTTP requests");
-        eprintln!("📖 Visit http://{}:{} for API documentation", bind_host, port);
-        eprintln!("");
+        eprintln!(
+            "📖 Visit http://{}:{} for API documentation",
+            bind_host, port
+        );
+        eprintln!();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use http_server::cache::pooled_buffer_count;
+    use std::io::{Read, Write};
+
+    /// A served request hands its buffer back to the worker's pool (BL-057).
+    #[test]
+    fn request_buffer_returns_to_the_pool() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let client = std::thread::spawn(move || {
+            let mut s = TcpStream::connect(addr).unwrap();
+            s.write_all(b"GET /health HTTP/1.1\r\nHost: localhost\r\n\r\n")
+                .unwrap();
+            let mut resp = String::new();
+            s.read_to_string(&mut resp).unwrap();
+            resp
+        });
+        let (stream, _) = listener.accept().unwrap();
+        let before = pooled_buffer_count();
+        handle_http_request(
+            stream,
+            Arc::new(ServerStats::new()),
+            Arc::new(AtomicU64::new(0)),
+            Arc::new(None),
+            Arc::new(None),
+        );
+        let resp = client.join().unwrap();
+        assert!(resp.starts_with("HTTP/1.1 200"), "{resp}");
+        assert_eq!(pooled_buffer_count(), before + 1);
     }
 }

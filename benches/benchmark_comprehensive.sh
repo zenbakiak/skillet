@@ -76,7 +76,7 @@ done
 
 echo
 
-# Category 3: Variable Assignment (tests copy-on-write)
+# Category 3: Variable Assignment
 echo "3. Variable Assignment & Context:"
 variable_assignment=(
     ":x := 10; :y := :x * 2; :x + :y"
@@ -192,42 +192,39 @@ echo
 echo "=== OPTIMIZATION IMPACT ANALYSIS ==="
 echo
 echo "Phase 1 Improvements (Lexer/Parser/AST):"
-echo "  ✅ String interning for keywords (TRUE, FALSE, NULL)"
 echo "  ✅ Optimized integer parsing (direct byte-to-number)"
 echo "  ✅ AST memory optimization (Box<Expr> → Rc<Expr>)"
 echo "  ✅ Parser lookahead buffering"
-echo "  → Estimated 30-50% improvement in basic parsing"
+echo "  → Estimated 30-50% improvement in basic parsing (unverified, see BL-005)"
 echo
 echo "Phase 2 Improvements (Runtime/Evaluation):"
 echo "  ✅ Consolidated evaluator (eliminated 850+ lines duplicate code)"
-echo "  ✅ Copy-on-write variable context optimization"
+echo "  • Variable context: lambdas borrow the parent variables since BL-030 (earlier"
+echo "    copy-on-write claims were not true for lambdas; assignments copy inputs once)"
 echo "  ✅ O(1) function dispatch vs sequential module search"
-echo "  ✅ Unified trait-based evaluation architecture"
-echo "  → Estimated 20-30% improvement in function execution"
+echo "  → Estimated 20-30% improvement in function execution (unverified, see BL-005)"
 echo
 echo "Phase 3 Improvements (Code Quality/Architecture):"
 echo "  ✅ Replaced 327 unwrap()/expect() calls with proper error handling"
 echo "  ✅ Refactored 1000+ line method_calls.rs into focused modules"
-echo "  ✅ Added comprehensive trait abstractions for extensibility"
 echo "  ✅ Modular architecture with clear separation of concerns"
 echo "  → Improved maintainability, robustness, and extensibility"
 echo
 echo "=== PERFORMANCE COMPARISON ==="
 echo
-echo "Estimated Original Performance (pre-optimization): ~300ms"
+echo "Estimated Original Performance (pre-optimization): ~300ms (unverified, no reproducible run; see BL-005)"
 echo "Current Performance (all phases): ~$(echo "scale=0; $total_time * 1000 / $total_expressions" | bc -l)ms"
-echo "Performance Improvement: $(echo "scale=0; (300 - $total_time * 1000 / $total_expressions) * 100 / 300" | bc -l)% faster"
+echo "Performance Improvement (vs unverified 300ms estimate): $(echo "scale=0; (300 - $total_time * 1000 / $total_expressions) * 100 / 300" | bc -l)% faster"
 echo
 echo "Memory optimizations:"
 echo "  • Reduced heap allocations through Rc<Expr> sharing"
-echo "  • Copy-on-write variable contexts eliminate unnecessary HashMap clones"
-echo "  • String interning reduces duplicate keyword allocations"
+echo "  • Lambdas bind :x/:acc in a local scope over borrowed variables (BL-030)"
 echo "  • Function dispatch tables pre-computed at startup"
 echo
 echo "Code quality improvements:"
 echo "  • Zero panics from unwrap()/expect() in normal operation"
 echo "  • Modular architecture supports easy feature additions"
-echo "  • Comprehensive trait system enables plugin development"
+echo "  • CustomFunction trait and JS plugins enable extensions"
 echo "  • Clear separation between parsing, evaluation, and dispatch"
 echo
 echo "=== BENCHMARK COMPLETE ==="

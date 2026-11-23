@@ -1,38 +1,65 @@
-use crate::types::Value;
 use crate::error::Error;
-use jsonpath_rust::JsonPath;
+use crate::limits;
+use crate::types::Value;
+use jsonpath_rust::parser::model::{JpQuery, Segment, Selector};
+use jsonpath_rust::parser::parse_json_path;
+use jsonpath_rust::query::js_path_process;
 
-/// Apply JSONPath query to a JSON string or JSON Value
+/// Apply a JSONPath query to a JSON value.
+///
+/// The result shape follows the parsed path, never the data (ADR-0014, RFC 9535 §2.3.5.1):
+/// a singular path (only name and index selectors) returns the matched value, or `Null`
+/// when nothing matches; any other path returns an array of every match, possibly empty.
 pub fn apply_jsonpath(json_data: &Value, path: &str) -> Result<Value, Error> {
-    // Convert Value to serde_json::Value
     let json_value = value_to_json(json_data)?;
+    let query = parse_json_path(path).map_err(jsonpath_error)?;
+    let results = js_path_process(&query, &json_value).map_err(jsonpath_error)?;
 
-    // Apply JSONPath query - returns Vec<&serde_json::Value>
-    let results = json_value.query(path)
-        .map_err(|e| Error::new(format!("JSONPath error: {}", e), None))?;
-
-    // Handle special cases for better usability
-    if results.is_empty() {
-        Ok(Value::Array(vec![]))
-    } else if results.len() == 1 {
-        // Single-element -> unwrap for easier arithmetic
-        json_to_value(results[0].clone())
-    } else {
-        // Multiple results -> array
-        let mut arr = Vec::with_capacity(results.len());
-        for r in results {
-            arr.push(json_to_value(r.clone())?);
-        }
-        Ok(Value::Array(arr))
+    if is_singular(&query) {
+        return match results.into_iter().next() {
+            Some(r) => {
+                let node = r.val();
+                limits::charge_json_node(node)?;
+                json_to_value(node.clone())
+            }
+            None => Ok(Value::Null),
+        };
     }
+
+    // Each match is charged before it is cloned out (ADR-0011).
+    let mut arr = Vec::with_capacity(results.len());
+    for r in results {
+        let node = r.val();
+        limits::charge_json_node(node)?;
+        arr.push(json_to_value(node.clone())?);
+    }
+    Ok(Value::Array(arr))
+}
+
+fn jsonpath_error(e: impl std::fmt::Display) -> Error {
+    Error::new(format!("JSONPath error: {}", e), None)
+}
+
+/// A singular query (RFC 9535 §2.3.5.1) uses only child name and index selectors, so it can
+/// select at most one node. Wildcards, `..`, slices, filters and unions are not singular.
+fn is_singular(query: &JpQuery) -> bool {
+    query.segments.iter().all(|seg| {
+        matches!(
+            seg,
+            Segment::Selector(Selector::Name(_)) | Segment::Selector(Selector::Index(_))
+        )
+    })
 }
 
 /// Convert our Value type to serde_json::Value
+#[allow(deprecated)] // `Value::Currency` is read as a Number (ADR-0033)
 fn value_to_json(value: &Value) -> Result<serde_json::Value, Error> {
     match value {
         Value::Number(n) => {
             if n.fract() == 0.0 && *n >= i64::MIN as f64 && *n <= i64::MAX as f64 {
-                Ok(serde_json::Value::Number(serde_json::Number::from(*n as i64)))
+                Ok(serde_json::Value::Number(serde_json::Number::from(
+                    *n as i64,
+                )))
             } else {
                 serde_json::Number::from_f64(*n)
                     .map(serde_json::Value::Number)
@@ -49,13 +76,12 @@ fn value_to_json(value: &Value) -> Result<serde_json::Value, Error> {
             }
             Ok(serde_json::Value::Array(json_arr))
         }
-        Value::Currency(n) => {
-            serde_json::Number::from_f64(*n)
-                .map(serde_json::Value::Number)
-                .ok_or_else(|| Error::new("Invalid currency for JSON conversion", None))
-        }
+        Value::Currency(n) => serde_json::Number::from_f64(*n)
+            .map(serde_json::Value::Number)
+            .ok_or_else(|| Error::new("Invalid number for JSON conversion", None)),
         Value::DateTime(ts) => Ok(serde_json::Value::Number(serde_json::Number::from(*ts))),
         Value::Json(json_str) => {
+            limits::charge_json_parse(json_str)?;
             serde_json::from_str(json_str)
                 .map_err(|e| Error::new(format!("Invalid JSON string: {}", e), None))
         }
@@ -63,6 +89,7 @@ fn value_to_json(value: &Value) -> Result<serde_json::Value, Error> {
 }
 
 /// Convert serde_json::Value to our Value type
+#[allow(deprecated)] // `Value::Json` until objects become `Value::Object` in 0.8 (ADR-0030)
 fn json_to_value(json: serde_json::Value) -> Result<Value, Error> {
     match json {
         serde_json::Value::Null => Ok(Value::Null),
@@ -99,6 +126,7 @@ pub fn is_jsonpath(s: &str) -> bool {
 }
 
 /// Extract values from JSONPath result for aggregation functions like SUM
+#[allow(deprecated)] // `Value::Currency` is read as a Number (ADR-0033)
 pub fn extract_numeric_values(value: &Value) -> Vec<f64> {
     let mut numbers = Vec::new();
 
@@ -124,6 +152,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[allow(deprecated)] // `Value::Json` until objects become `Value::Object` in 0.8 (ADR-0030)
     fn test_jsonpath_basic() {
         let json_str = r#"{"accounts": [{"amount": 100.0}, {"amount": 200.0}]}"#;
         let json_value = Value::Json(json_str.to_string());
@@ -135,6 +164,33 @@ mod tests {
             assert_eq!(values[1], Value::Number(200.0));
         } else {
             panic!("Expected array result");
+        }
+    }
+
+    #[test]
+    fn singular_paths_are_classified_from_the_parsed_path() {
+        let singular = |p: &str| is_singular(&parse_json_path(p).unwrap());
+        for p in [
+            "$",
+            "$.a",
+            "$.a.b",
+            "$['a']",
+            "$[0]",
+            "$.a[-1]",
+            "$['a'][2].b",
+        ] {
+            assert!(singular(p), "{p} should be singular");
+        }
+        for p in [
+            "$.a[*]",
+            "$.*",
+            "$..a",
+            "$.a[0:1]",
+            "$.a[?@.x == 1]",
+            "$['a','b']",
+            "$[0,1]",
+        ] {
+            assert!(!singular(p), "{p} should not be singular");
         }
     }
 

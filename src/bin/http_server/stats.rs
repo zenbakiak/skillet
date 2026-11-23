@@ -15,7 +15,8 @@ impl ServerStats {
 
     pub fn record_request(&self, execution_time_us: u64) {
         self.requests_processed.fetch_add(1, Ordering::Relaxed);
-        self.total_execution_time.fetch_add(execution_time_us, Ordering::Relaxed);
+        self.total_execution_time
+            .fetch_add(execution_time_us, Ordering::Relaxed);
     }
 
     pub fn get_stats(&self) -> (u64, f64) {
@@ -23,7 +24,9 @@ impl ServerStats {
         let total_time = self.total_execution_time.load(Ordering::Relaxed);
         let avg_time_ms = if count > 0 {
             total_time as f64 / count as f64 / 1000.0
-        } else { 0.0 };
+        } else {
+            0.0
+        };
         (count, avg_time_ms)
     }
 }

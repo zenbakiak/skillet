@@ -43,7 +43,7 @@ Skillet is a **high-performance, embeddable expression language** written in Rus
 
 ### Key Differentiators
 
-- **Sub-3ms evaluation time** (100x+ faster than original design)
+- **Low-latency evaluation** (no measured baseline yet; see BL-005 / `benches/BASELINE.md`)
 - **Null-safe by design** with `&.` operator and conversion methods
 - **Runtime extensible** via JavaScript plugins (no recompilation needed)
 - **Production-ready servers** with authentication, caching, and daemon mode
@@ -67,9 +67,9 @@ Skillet is a **high-performance, embeddable expression language** written in Rus
 
 #### 3. **Performance Matters**
 - Zero-cost abstractions where possible
-- String interning for repeated identifiers
-- Memory pooling for AST nodes
-- HashMap reuse in loops (no per-iteration clones)
+- Shared `Rc<Expr>` AST nodes (no arena or pool)
+- Lambdas bind `:x`/`:acc` in a small local scope over the borrowed parent scope (no per-item copy of the variables)
+- Measure before claiming: numbers go in `benches/` (BL-005)
 
 #### 4. **Extensibility by Design**
 - JavaScript plugins for runtime customization
@@ -116,11 +116,14 @@ pub enum Value {
     Boolean(bool),     // true/false
     String(String),    // UTF-8 strings
     Null,             // Explicit null type
-    Currency(f64),    // Special formatting, same as Number
+    Currency(f64),    // Deprecated in 0.7 (ADR-0033), read as a Number; removed in 0.8
     DateTime(i64),    // Unix timestamp
-    Json(String),     // JSON object as string
+    Json(String),     // JSON object as string; deprecated in 0.7 (ADR-0030), Value::Object in 0.8
 }
 ```
+
+`Value` is `#[non_exhaustive]` (BL-092), as are `lexer::Token`, `ast::Expr`, `ast::BinaryOp`,
+`ast::UnaryOp` and `ast::TypeName`: a `match` outside the crate needs a `_` arm.
 
 **Type Coercion Rules:**
 1. Numbers coerce to strings in concatenation
@@ -183,13 +186,13 @@ pub enum Value {
 Input String
     ↓
 ┌─────────────────┐
-│ Lexer           │  Tokenization with string interning
+│ Lexer           │  Tokenization
 ├─────────────────┤
 │ Token Stream    │
 └─────────────────┘
     ↓
 ┌─────────────────┐
-│ Parser          │  Builds AST with memory pooling
+│ Parser          │  Builds AST (recursive descent)
 ├─────────────────┤
 │ AST (Expr)      │
 └─────────────────┘
@@ -210,19 +213,13 @@ skillet/
 │   ├── types.rs                  # Value enum definition
 │   ├── error.rs                  # Error type with position tracking
 │   ├── ast.rs                    # Abstract syntax tree nodes
-│   ├── lexer.rs                  # Tokenizer with string interning
+│   ├── lexer.rs                  # Tokenizer
 │   ├── parser.rs                 # Recursive descent parser
-│   ├── memory_pool.rs            # Arena allocator for AST nodes
 │   ├── custom.rs                 # CustomFunction trait & registry
 │   ├── js_plugin.rs              # JavaScript plugin loader (rquickjs)
-│   ├── concurrent_registry.rs    # Thread-safe function registry
 │   │
 │   ├── runtime/
-│   │   ├── evaluator.rs          # Main evaluation engine
-│   │   ├── evaluation/
-│   │   │   ├── core.rs           # Core expression evaluation
-│   │   │   ├── higher_order.rs   # FILTER/MAP/REDUCE/FIND/SUMIF/AVGIF/COUNTIF
-│   │   │   └── assignments.rs    # Variable assignment logic
+│   │   ├── evaluator.rs          # The evaluator (expressions, lambdas, assignments)
 │   │   │
 │   │   ├── method_calls/
 │   │   │   ├── mod.rs            # Method dispatch hub
@@ -262,10 +259,9 @@ skillet/
 
 ### 5.1 Lexer (`src/lexer.rs`)
 
-**Purpose:** Tokenize input into a stream of tokens with string interning.
+**Purpose:** Tokenize input into a stream of tokens.
 
 **Key Features:**
-- **String Interning**: Reuse identical identifier strings to reduce allocations
 - **Position Tracking**: Track line/column for error reporting
 - **Operator Recognition**: Multi-character operators (`>=`, `<=`, `!=`, `::`, `&.`)
 
@@ -279,7 +275,7 @@ pub enum Token {
     LeftParen, RightParen, LeftBracket, RightBracket,
     Greater, Less, GreaterEqual, LessEqual, Equal, NotEqual,
     And, Or, Not, AndAnd, OrOr,
-    Comma, Colon, ColonEqual, Dot, Question, Spread,
+    Comma, Colon, ColonEqual, Dot, Question, Ellipsis, // `...` (spread)
     SafeNav,       // &.
     TypeCast,      // ::
     // ...
@@ -307,9 +303,8 @@ postfix       → primary ( method_call | array_access | property_access )*
 primary       → NUMBER | STRING | IDENT | LPAREN expression RPAREN | array | object
 ```
 
-**Memory Pooling:**
-- Uses `typed_arena::Arena` for AST node allocations
-- Reduces allocation overhead for large expressions
+**AST allocation:** nodes are ordinary heap allocations shared through `Rc<Expr>` (ADR-0002);
+there is no arena or pool.
 
 ### 5.3 Evaluator (`src/runtime/evaluator.rs`)
 
@@ -386,7 +381,7 @@ pub fn call_method(receiver: &Value, method_name: &str, args: Vec<Value>) -> Res
 }
 ```
 
-### 5.5 Higher-Order Functions (`src/runtime/evaluation/higher_order.rs`)
+### 5.5 Higher-Order Functions (`src/runtime/evaluator.rs`)
 
 **Purpose:** Implement FILTER, MAP, REDUCE, FIND, SUMIF, AVGIF, COUNTIF as standalone functions.
 
@@ -519,7 +514,6 @@ curl -X POST http://localhost:5074/eval \
 - Use `&[Value]` slices for read-only array access
 - Pre-allocate `Vec` with `Vec::with_capacity(n)` when size is known
 - Reuse `HashMap` across loop iterations
-- Use string interning for repeated identifiers
 - Match on references (`match &value`) to avoid clones
 
 #### ❌ DON'T:
@@ -531,6 +525,10 @@ curl -X POST http://localhost:5074/eval \
 
 ### 7.3 Benchmarking Results (Phase 2)
 
+> **Unverified.** These numbers predate the current code and no script in the repo reproduces
+> them. The measured baseline is BL-005 (`benches/BASELINE.md`); `cargo bench --bench lambda_scope`
+> is the one reproducible benchmark today.
+
 | Operation | Before | After | Improvement |
 |-----------|--------|-------|-------------|
 | FILTER (100 items) | 15.2ms | 1.8ms | **8.4x** |
@@ -538,7 +536,6 @@ curl -X POST http://localhost:5074/eval \
 | String ops | 850µs | 120µs | **7.0x** |
 | Array reverse | 450µs | 80µs | **5.6x** |
 
-**Overall:** ~3ms average evaluation time (100x+ improvement from original 300ms baseline)
 
 ---
 
@@ -716,7 +713,7 @@ fn test_cube() {
 }
 ```
 
-4. **Document in `API_REFERENCE.md`:**
+4. **Document in `docs/reference/api.md`:**
 ```markdown
 #### `CUBE(number)`
 Cube a number (n³).
@@ -907,8 +904,8 @@ When making changes:
    - Test error messages
 
 4. **Documentation**
-   - Update `DOCUMENTATION.md` for user-facing features
-   - Update `API_REFERENCE.md` for function/method additions
+   - Update `docs/guide/` (e.g. `docs/guide/user-guide.md`) for user-facing features
+   - Update `docs/reference/api.md` for function/method additions
    - Update this `DEVELOPMENT_GUIDE.md` for architecture changes
 
 5. **Error Messages**
@@ -957,7 +954,7 @@ bash scripts/benchmark_server.sh 8080 10000 8
 |------|-----------------|
 | Add function | `runtime/arithmetic.rs`, `builtin_functions.rs`, `tests/*_tests.rs` |
 | Add method | `method_calls/mod.rs`, `method_calls/*_methods.rs`, tests |
-| Add operator | `lexer.rs`, `parser.rs`, `evaluation/core.rs`, tests |
+| Add operator | `lexer.rs`, `parser.rs`, `runtime/evaluator.rs`, tests |
 | Fix performance | Profile → identify hot path → optimize (see §7) |
 | Add JS plugin | Create `hooks/my_function.js` |
 

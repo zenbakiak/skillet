@@ -16,6 +16,71 @@ info:
     - **Admin Token**: Required authentication for JavaScript function management endpoints
     
     Tokens are passed via the `Authorization` header.
+
+    ## Server configuration (`sk_http_server`)
+    | Flag | Environment variable | Meaning |
+    |---|---|---|
+    | `--token` | `SKILLET_AUTH_TOKEN` | Eval token |
+    | `--admin-token` | `SKILLET_ADMIN_TOKEN` | Admin token (JS management, `DELETE /cache`) |
+    | `--cors-origin` | `SKILLET_CORS_ORIGIN` | `Access-Control-Allow-Origin` value |
+    | `--max-connections-per-ip` | `SKILLET_MAX_CONNECTIONS_PER_IP` | Open connections allowed from one IP address (default: no limit) |
+    | `--eval-timeout` | `SKILLET_EVAL_TIMEOUT` | Wall-clock limit for one evaluation, whole seconds from 1 to 86400 (default: 20) |
+    | `--max-eval-bytes` | `SKILLET_MAX_EVAL_BYTES` | Budget of values one evaluation may create, in bytes; suffixes `K`, `M`, `G` mean KiB, MiB, GiB (default: `256M`, the library's `MAX_EVAL_BYTES`) |
+
+    The flag wins over the environment variable. An empty value is refused at start-up, and so
+    are `0` and invalid numbers for the numeric settings. If only one token is set, the other
+    one inherits it. Worst-case memory for evaluations is about threads × `--max-eval-bytes`
+    (8 threads × 256 MiB = 2 GiB with the default budget); size the host for it. ADR-0011
+    amendment 4.
+
+    ## Cross-origin requests (CORS)
+    `Access-Control-Allow-Origin` is the configured origin (any value, `*` included). Without
+    one, it is `*` when a token is configured, and absent in development mode (no token), so
+    pages on other origins cannot read responses. `OPTIONS` (preflight) answers 200 with the
+    same `Access-Control-Allow-Origin`, `Access-Control-Allow-Methods: GET, POST, PUT,
+    DELETE, OPTIONS` and `Access-Control-Allow-Headers: Authorization, Content-Type`, or with
+    no CORS headers in development mode. See ADR-0019.
+
+    ## Request bodies
+    A request with a body (`Content-Length` over 0) other than `GET`/`OPTIONS` must send
+    `Content-Type: application/json` (parameters such as `; charset=utf-8` are allowed; the
+    media type is case-insensitive). Otherwise the server answers HTTP 415 with
+    `"error": "Content-Type must be application/json"`, before checking tokens.
+    `/upload-js` and `/update-js` also accept `multipart/form-data`.
+
+    ## Browser requests in development mode
+    With no admin token configured, the admin endpoints (`/upload-js`, `/update-js`,
+    `/delete-js`, `/list-js`, `/reload-hooks`, `DELETE /cache`) answer HTTP 403 to any request
+    with an `Origin` header, whatever its method and body, with an error that says to set an
+    admin token.
+
+    ## Request limits
+    - A request (headers + body) may be at most 1 MB (1,048,576 bytes). A larger request, or a
+      `Content-Length` over 1 MB, gets HTTP 413 on any path.
+    - The whole request must arrive within 30 s of the first read. Otherwise the server answers
+      HTTP 408 on any path.
+    - After a 413 or 408 the server reads and discards the rest of the request until the client
+      closes or the 30 s pass, then closes, so the client receives the error.
+    - Writing one response may take at most 10 s in total. If the client reads more slowly, the
+      server stops writing and closes the connection: the client gets a body shorter than
+      `Content-Length` and no error message. Reading the largest results (up to the evaluation
+      budget, 256 MiB by default) in time needs about 25 MB/s.
+    - Evaluation limits (nesting depth, the budget and the evaluation deadline, 256 MiB and 20 s
+      by default) are described on `/eval` and in docs/guide/limits.md. The 30 s read and 10 s
+      write limits do not change with them.
+
+    ## Connection limit
+    With `--max-connections-per-ip N` (or `SKILLET_MAX_CONNECTIONS_PER_IP`), a connection from
+    an IP address that already has N open connections is answered at once with HTTP 429 and
+    `"error": "Too many connections from this address (max N)"`, then closed; it never reaches
+    a worker. `0`, an empty value or text is refused at start-up. Without the setting there is
+    no limit. Behind a reverse proxy every client has the proxy's address, so set the limit at
+    the proxy instead. See ADR-0025.
+
+    ## Builds without the `plugins` feature
+    The JavaScript endpoints (`/upload-js`, `/update-js`, `/delete-js`, `/list-js`,
+    `/reload-hooks`) check the admin token, then answer HTTP 404 with
+    `"error": "JavaScript plugins are not enabled in this build"`, for any method.
   version: 0.4.1
   contact:
     name: Skillet Lang
@@ -50,6 +115,8 @@ paths:
               schema:
                 type: string
                 example: "<!DOCTYPE html><html>..."
+        '429':
+          $ref: '#/components/responses/TooManyConnections'
 
   /health:
     get:
@@ -78,6 +145,13 @@ paths:
                   entries: 150
                   evictions: 12
                   total_saved_time_ms: 1248.67
+                parse_cache:
+                  hits: 640
+                  misses: 46
+                  hit_rate: 0.933
+                  entries: 38
+        '429':
+          $ref: '#/components/responses/TooManyConnections'
 
   /eval:
     post:
@@ -149,7 +223,13 @@ paths:
                     execution_time_ms: 2.15
                     request_id: 43
         '400':
-          description: Invalid expression or request format
+          description: |
+            Invalid expression or request format, or an evaluation limit was hit:
+            `Expression nested too deeply (max 128)`, `Evaluation budget exceeded (max 256 MB)`
+            (also returned when the serialized result would exceed the budget), or
+            `Evaluation timed out (max 20 s)`. The numbers are the server's configured limits
+            (`--max-eval-bytes`, `--eval-timeout`; shown here with the defaults). See
+            docs/guide/limits.md.
           content:
             application/json:
               schema:
@@ -160,12 +240,14 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '408':
+          $ref: '#/components/responses/RequestTimeout'
         '413':
-          description: Request payload too large (>1MB)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '429':
+          $ref: '#/components/responses/TooManyConnections'
 
     get:
       tags: [evaluation]
@@ -220,11 +302,19 @@ paths:
                 type: string
                 example: "14"
         '400':
-          description: Missing or invalid expression
+          description: |
+            Missing or invalid expression, or an evaluation limit was hit (same texts as
+            POST /eval). See docs/guide/limits.md.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '408':
+          $ref: '#/components/responses/RequestTimeout'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyConnections'
 
   /upload-js:
     post:
@@ -232,6 +322,9 @@ paths:
       summary: Upload JavaScript function
       description: |
         Upload and validate a new JavaScript function. Supports both JSON and multipart form-data uploads.
+
+        `filename` must be a plain name matching `^[A-Za-z0-9_-]+\.js$`; the file is saved
+        directly in the hooks directory. Any other name gets HTTP 400 (see the 400 example).
         
         ## JavaScript Function Format
         Functions must include metadata comments:
@@ -266,7 +359,8 @@ paths:
               properties:
                 filename:
                   type: string
-                  description: Name of the JavaScript file (must end with .js)
+                  pattern: '^[A-Za-z0-9_-]+\.js$'
+                  description: 'Plain file name matching `^[A-Za-z0-9_-]+\.js$` (letters, digits, `_`, `-`, ending in `.js`; no directories). Anything else gets HTTP 400.'
                   example: "add_numbers.js"
                 js_code:
                   type: string
@@ -294,17 +388,52 @@ paths:
                   example_test_passed: true
                   example_result: "Expected: 8, Got: 8 ✓"
         '400':
-          description: Invalid function or validation failed
+          description: |
+            Invalid filename, invalid function, reserved function name, or validation failed.
+            A name that does not end in `.js` gets `"message": "Filename must end with .js
+            extension"` and `"error": "Invalid file extension"`; any other name outside the
+            pattern (a dot or `/` in the stem, an empty stem) gets the `invalidFilename`
+            example. An `@name` that is a builtin name or alias in any case (`SUM`, `sum`,
+            `STDEV.P`) gets the `reservedName` example, with the name upper-cased; hooks cannot
+            replace builtins (ADR-0024). Nothing is written in either case.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/UploadJSResponse'
+              examples:
+                invalidFilename:
+                  value:
+                    success: false
+                    message: "Filename must be a plain name of letters, digits, '_' or '-' ending in .js (no directories)"
+                    function_name: null
+                    validation_results: null
+                    error: "Invalid filename"
+                reservedName:
+                  value:
+                    success: false
+                    message: "Function name SUM is reserved by a builtin"
+                    function_name: null
+                    validation_results: null
+                    error: "Reserved function name"
         '401':
           description: Admin authentication required
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: JavaScript plugins are not enabled in this build (server built without the `plugins` feature)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                error: "JavaScript plugins are not enabled in this build"
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '429':
+          $ref: '#/components/responses/TooManyConnections'
 
   /update-js:
     put:
@@ -313,6 +442,10 @@ paths:
       description: |
         Update an existing JavaScript function. The file must already exist.
         Supports both JSON and multipart form-data formats.
+
+        `filename` must be a plain name matching `^[A-Za-z0-9_-]+\.js$`, so only files
+        directly in the hooks directory can be updated. Hooks in subdirectories are still
+        loaded and listed by `/list-js`, but this endpoint answers 400 for them.
       security:
         - adminToken: []
       requestBody:
@@ -326,7 +459,8 @@ paths:
               properties:
                 filename:
                   type: string
-                  description: Name of the JavaScript file to update
+                  pattern: '^[A-Za-z0-9_-]+\.js$'
+                  description: 'Name of the JavaScript file to update. Plain file name matching `^[A-Za-z0-9_-]+\.js$` (letters, digits, `_`, `-`, ending in `.js`; no directories). Anything else gets HTTP 400.'
                 js_code:
                   type: string
                   description: Updated JavaScript function code
@@ -344,23 +478,51 @@ paths:
               schema:
                 $ref: '#/components/schemas/UpdateJSResponse'
         '400':
-          description: Invalid function or validation failed
+          description: |
+            Invalid filename, invalid function, reserved function name, or validation failed;
+            same messages as `/upload-js`. A reserved `@name` (any case) leaves the existing file
+            unchanged (ADR-0024).
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/UpdateJSResponse'
+              examples:
+                invalidFilename:
+                  value:
+                    success: false
+                    message: "Filename must be a plain name of letters, digits, '_' or '-' ending in .js (no directories)"
+                    function_name: null
+                    validation_results: null
+                    error: "Invalid filename"
+                reservedName:
+                  value:
+                    success: false
+                    message: "Function name SUM is reserved by a builtin"
+                    function_name: null
+                    validation_results: null
+                    error: "Reserved function name"
         '404':
-          description: Function file not found
+          description: |
+            Function file not found, or JavaScript plugins are not enabled in this build
+            (`"error": "JavaScript plugins are not enabled in this build"`).
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/UpdateJSResponse'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '429':
+          $ref: '#/components/responses/TooManyConnections'
 
   /delete-js:
     delete:
       tags: [javascript]
       summary: Delete JavaScript function
-      description: Delete an existing JavaScript function file from the hooks directory
+      description: |
+        Delete an existing JavaScript function file from the hooks directory.
+        `filename` must be a plain name matching `^[A-Za-z0-9_-]+\.js$`, so only files
+        directly in the hooks directory can be deleted. Hooks in subdirectories are still
+        loaded and listed by `/list-js`, but this endpoint answers 400 for them.
       security:
         - adminToken: []
       requestBody:
@@ -379,17 +541,42 @@ paths:
               schema:
                 $ref: '#/components/schemas/DeleteJSResponse'
         '400':
-          description: Invalid filename
+          description: Invalid filename (same messages as `/upload-js`)
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/DeleteJSResponse'
+              example:
+                success: false
+                message: "Filename must be a plain name of letters, digits, '_' or '-' ending in .js (no directories)"
+                error: "Invalid filename"
         '404':
-          description: Function file not found
+          description: |
+            JavaScript plugins are not enabled in this build (server built without the
+            `plugins` feature). The body has no `message` field.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                error: "JavaScript plugins are not enabled in this build"
+        '500':
+          description: |
+            The file does not exist or could not be deleted. A missing file is a 500, not a
+            404: the 404 above only means the plugins are not built in.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/DeleteJSResponse'
+              example:
+                success: false
+                message: "Failed to delete file 'old_function.js'"
+                error: "File 'old_function.js' does not exist"
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '429':
+          $ref: '#/components/responses/TooManyConnections'
 
   /list-js:
     get:
@@ -398,6 +585,9 @@ paths:
       description: |
         List all JavaScript functions in the hooks directory with detailed metadata,
         including validation status, function signatures, and file information.
+        Subdirectories are included; their `filename` is the relative path
+        (for example `math/double_it.js`). Such files cannot be updated or deleted through
+        `/update-js` or `/delete-js`.
       security:
         - adminToken: []
       responses:
@@ -435,6 +625,17 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: JavaScript plugins are not enabled in this build (server built without the `plugins` feature)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                error: "JavaScript plugins are not enabled in this build"
+        '429':
+          $ref: '#/components/responses/TooManyConnections'
 
   /reload-hooks:
     post:
@@ -443,6 +644,11 @@ paths:
       description: |
         Reload all JavaScript functions from the hooks directory.
         This refreshes the function registry without restarting the server.
+        Afterwards the registry holds exactly the hooks that load from disk: a function whose
+        file was deleted (or no longer loads) is removed, and the result cache is cleared. If
+        the hooks directory cannot be read, the answer is 500 and nothing changes.
+        A file whose `@name` is a builtin name (any case) is skipped with a warning on the
+        server's stderr and is not counted in `functions_loaded` (ADR-0024).
       security:
         - adminToken: []
       requestBody:
@@ -463,14 +669,34 @@ paths:
                 success: true
                 message: "Successfully reloaded 3 JavaScript function(s)"
                 functions_loaded: 3
+        '404':
+          description: JavaScript plugins are not enabled in this build (server built without the `plugins` feature)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                error: "JavaScript plugins are not enabled in this build"
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '429':
+          $ref: '#/components/responses/TooManyConnections'
 
   /cache:
     delete:
       tags: [cache]
       summary: Clear expression cache
       description: |
-        Clear the expression evaluation cache to force re-evaluation of all expressions.
-        Useful for development and testing scenarios.
+        Clear the expression evaluation cache to force re-evaluation of all expressions
+        (the result cache: keyed by the expression, the variables and `include_variables`;
+        results of expressions that read the clock, such as `NOW()` and `TODAY()`, and errors
+        are never stored),
+        and the parse cache: the parsed trees of every worker thread, and its `/health`
+        counters. The worker that answers drops its trees at once; each other worker drops
+        its own before its next request (a parsed tree cannot be shared between threads, see
+        ADR-0021), so `parse_cache.entries` can stay above 0 until every worker has served a
+        request. Useful for development and testing scenarios.
       security:
         - adminToken: []
       responses:
@@ -488,19 +714,67 @@ paths:
                 example:
                   success: true
                   message: "Expression cache cleared successfully"
+        '429':
+          $ref: '#/components/responses/TooManyConnections'
 
 components:
+  responses:
+    TooManyConnections:
+      description: |
+        Only when the server runs with `--max-connections-per-ip N` (or
+        `SKILLET_MAX_CONNECTIONS_PER_IP`): this address already has N open connections. Sent
+        before the request is read, with `Connection: close`. See "Connection limit".
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error: "Too many connections from this address (max 2)"
+    PayloadTooLarge:
+      description: |
+        The request (headers + body) is over 1 MB, or its `Content-Length` is. Any path.
+        See "Request limits".
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error: "Request body too large (max 1MB)"
+    RequestTimeout:
+      description: |
+        The whole request did not arrive within 30 s of the first read. Any path.
+        See "Request limits".
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error: "Request read timed out (max 30 s)"
+    UnsupportedMediaType:
+      description: |
+        The request has a body but its `Content-Type` is not `application/json` (or, on
+        `/upload-js` and `/update-js`, `multipart/form-data`). See "Request bodies".
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error: "Content-Type must be application/json"
   securitySchemes:
     evalToken:
       type: apiKey
       in: header
       name: Authorization
-      description: Token for expression evaluation endpoints (if enabled)
+      description: Token for expression evaluation endpoints, if enabled (`--token` or `SKILLET_AUTH_TOKEN`)
     adminToken:
       type: apiKey
       in: header
       name: Authorization
-      description: Admin token for JavaScript function management endpoints
+      description: Admin token for JavaScript function management endpoints and `DELETE /cache` (`--admin-token` or `SKILLET_ADMIN_TOKEN`)
 
   schemas:
     EvalRequest:
@@ -512,7 +786,10 @@ components:
           example: ":x + :y * 2"
         arguments:
           type: object
-          description: Variables to use in the expression
+          description: >-
+            Variables to use in the expression. The whole object is also available as
+            `:arguments` (for `JQ`); a key named `arguments` does not replace it and is read
+            as `:arguments.arguments`.
           additionalProperties: true
           example:
             x: 10
@@ -578,11 +855,14 @@ components:
           description: Average execution time across all requests
         cache_stats:
           $ref: '#/components/schemas/CacheStatsResponse'
+        parse_cache:
+          $ref: '#/components/schemas/ParseCacheStatsResponse'
       required:
         - status
         - version
         - requests_processed
         - avg_execution_time_ms
+        - parse_cache
 
     CacheStatsResponse:
       type: object
@@ -601,17 +881,47 @@ components:
           description: Current number of cached entries
         evictions:
           type: integer
-          description: Number of cache evictions
+          description: |
+            Entries dropped because the cache was full (1,000 entries, least recently used
+            first). Replacing an entry that is already cached is not counted. Reset by
+            `DELETE /cache`.
         total_saved_time_ms:
           type: number
           description: Total time saved by caching
+
+    ParseCacheStatsResponse:
+      type: object
+      description: |
+        The cache of parsed expressions, summed over the worker threads. Each worker keeps
+        its own (at most 256 expressions, 128 KiB of text). A lookup is a hit when the exact
+        expression text was parsed before by that worker; a request answered from the result
+        cache does not reach the parse cache. Reset by `DELETE /cache`.
+      properties:
+        hits:
+          type: integer
+          description: Lookups that reused a parsed tree
+        misses:
+          type: integer
+          description: Lookups that parsed the expression (parse errors included)
+        hit_rate:
+          type: number
+          description: hits / (hits + misses), 0.0 when there were none
+        entries:
+          type: integer
+          description: Parsed trees stored, summed over the worker threads
+      required:
+        - hits
+        - misses
+        - hit_rate
+        - entries
 
     UploadJSRequest:
       type: object
       properties:
         filename:
           type: string
-          description: JavaScript filename (must end with .js)
+          pattern: '^[A-Za-z0-9_-]+\.js$'
+          description: 'Plain file name matching `^[A-Za-z0-9_-]+\.js$` (letters, digits, `_`, `-`, ending in `.js`; no directories). Anything else gets HTTP 400.'
           example: "my_function.js"
         js_code:
           type: string
@@ -645,7 +955,8 @@ components:
       properties:
         filename:
           type: string
-          description: JavaScript filename to update
+          pattern: '^[A-Za-z0-9_-]+\.js$'
+          description: 'JavaScript file to update. Plain file name matching `^[A-Za-z0-9_-]+\.js$` (letters, digits, `_`, `-`, ending in `.js`; no directories). Anything else gets HTTP 400.'
         js_code:
           type: string
           description: Updated JavaScript function code
@@ -677,7 +988,8 @@ components:
       properties:
         filename:
           type: string
-          description: JavaScript filename to delete
+          pattern: '^[A-Za-z0-9_-]+\.js$'
+          description: 'JavaScript file to delete. Plain file name matching `^[A-Za-z0-9_-]+\.js$` (letters, digits, `_`, `-`, ending in `.js`; no directories). Anything else gets HTTP 400.'
       required:
         - filename
 

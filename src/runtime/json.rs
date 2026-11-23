@@ -1,6 +1,7 @@
 use crate::error::Error;
 use crate::types::Value;
 
+#[allow(deprecated)] // `Value::Json` until objects become `Value::Object` in 0.8 (ADR-0030)
 pub fn exec_json(name: &str, args: &[Value]) -> Result<Value, Error> {
     match name {
         "DIG" => {
@@ -11,17 +12,23 @@ pub fn exec_json(name: &str, args: &[Value]) -> Result<Value, Error> {
                     None,
                 ));
             }
-            let json_str = match args.get(0) {
+            let json_str = match args.first() {
                 Some(Value::Json(s)) => s,
                 Some(_) => return Err(Error::new("DIG first argument must be JSON object", None)),
                 None => return Err(Error::new("DIG missing first argument", None)),
             };
             let path_vals = match args.get(1) {
                 Some(Value::Array(v)) => v,
-                _ => return Err(Error::new("DIG second argument must be an array path", None)),
+                _ => {
+                    return Err(Error::new(
+                        "DIG second argument must be an array path",
+                        None,
+                    ))
+                }
             };
 
             // Traverse JSON by keys and indexes
+            crate::limits::charge_json_parse(json_str)?;
             let found = match serde_json::from_str::<serde_json::Value>(json_str) {
                 Ok(parsed) => {
                     let mut cur = &parsed;
@@ -43,7 +50,11 @@ pub fn exec_json(name: &str, args: &[Value]) -> Result<Value, Error> {
                             }
                             Value::Number(n) => {
                                 if let serde_json::Value::Array(arr) = cur {
-                                    let idx = if n.is_finite() { n.floor() as isize } else { -1 };
+                                    let idx = if n.is_finite() {
+                                        n.floor() as isize
+                                    } else {
+                                        -1
+                                    };
                                     if idx >= 0 && (idx as usize) < arr.len() {
                                         cur = &arr[idx as usize];
                                     } else {
@@ -61,7 +72,11 @@ pub fn exec_json(name: &str, args: &[Value]) -> Result<Value, Error> {
                             }
                         }
                     }
-                    if ok { Some(cur.clone()) } else { None }
+                    if ok {
+                        Some(cur.clone())
+                    } else {
+                        None
+                    }
                 }
                 Err(e) => return Err(Error::new(format!("Invalid JSON: {}", e), None)),
             };
@@ -74,10 +89,6 @@ pub fn exec_json(name: &str, args: &[Value]) -> Result<Value, Error> {
                 Ok(Value::Null)
             }
         }
-        _ => Err(Error::new(
-            format!("Unknown JSON function: {}", name),
-            None,
-        )),
+        _ => Err(Error::new(format!("Unknown JSON function: {}", name), None)),
     }
 }
-

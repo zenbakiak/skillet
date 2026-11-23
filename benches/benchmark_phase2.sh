@@ -1,7 +1,10 @@
 #!/bin/bash
 
 echo "=== Skillet Phase 2 Performance Benchmark ==="
-echo "Testing consolidated evaluator, copy-on-write optimization, and function dispatch"
+echo "Testing variable assignment, function dispatch and mixed expressions"
+# Historical script (Phase 2, 2025). The optimization list printed at the end is kept as a
+# record of what that phase intended; none of it is measured here. Current numbers:
+# benches/BASELINE.md (BL-005).
 echo
 
 SKILLET_HOOKS_DIR=/nonexistent
@@ -11,7 +14,7 @@ expressions=(
     # Function dispatch optimization
     "SUM([1,2,3,4,5]) + AVG([10,20,30]) * COUNT([1,2,3,4,5])"
     
-    # Copy-on-write variable context optimization
+    # Variable assignment sequence
     ":a := 10; :b := :a * 2; :c := :b + 5; SUM([:a,:b,:c])"
     
     # Consolidated evaluator with mixed operations
@@ -56,11 +59,12 @@ avg_overall=$(echo "scale=3; $total_time * 10 / ${#expressions[@]}" | bc -l)
 echo "=== Phase 2 Benchmark Results ==="
 echo "Average time across all expressions: ${avg_overall}ms"
 echo
-echo "Phase 2 optimizations implemented:"
+echo "Phase 2 optimizations (historical list, not measured by this script; see benches/BASELINE.md):"
 echo "1. ✅ Consolidated evaluator (eliminated 850+ lines of duplicate code)"
-echo "2. ✅ Copy-on-write variable context (reduces HashMap cloning)"
+echo "2. Variable context (historical claim of copy-on-write was not true for lambdas until BL-030;"
+echo "   assignments still copy the input variables once)"
 echo "3. ✅ Function dispatch table (O(1) category lookup vs sequential tries)"
 echo "4. ✅ Unified trait-based evaluation approach"
 echo
-echo "Expected Phase 2 improvement over Phase 1: 20-30% faster function dispatch"
-echo "Expected combined improvement over original: 50-70% faster overall"
+echo "Expected improvements from the 2025 plan (20-30% dispatch, 50-70% overall) were never"
+echo "measured; see benches/BASELINE.md for current numbers."
